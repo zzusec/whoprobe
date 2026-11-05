@@ -572,6 +572,13 @@
     return false;
   }
 
+  function candidateCC(candIp) {
+    if (!candIp) return "";
+    const meta = R.ipMeta?.[candIp] || null;
+    const matchedExit = Object.values(R.exits || {}).find(x => x && x.ip === candIp);
+    return meta?.cc || matchedExit?.cc || (/^240[89ce]:/i.test(candIp) ? "CN" : "");
+  }
+
   function isSameCarrierCandidate(candIp) {
     if (!candIp || !R.ip) return false;
     if (candIp === R.ip) return true;
@@ -581,7 +588,7 @@
     const meta = R.ipMeta?.[candIp] || null;
     if (meta?.hosting) return false;
     const matchedExit = Object.values(R.exits || {}).find(x => x && x.ip === candIp);
-    const candCC = meta?.cc || matchedExit?.cc || (/^240[89ce]:/i.test(candIp) ? "CN" : "");
+    const candCC = candidateCC(candIp);
     if (!candCC || !R.ipCC || candCC !== R.ipCC) return false;
 
     const exitKey = normalizeCarrierKey({
@@ -2116,8 +2123,11 @@
     if (!R.ip) return;
     const leaked = getLeakedWebrtcIps();
     const directSame = pubList.every(x => x === R.ip || netPrefix(x) === netPrefix(R.ip));
+    const lkCC = leaked.length ? candidateCC(leaked[0]) : "";
     const suffix = leaked.length
-      ? " (与当前代理出口不符！)"
+      ? (R.ipCC === "CN" && lkCC && lkCC !== "CN"
+        ? ` (分流至 ${lkCC} 代理，与当前 CN 直连不符！)`
+        : " (与当前代理出口不符！)")
       : directSame
       ? " (与出口一致)"
       : " (同国同运营商双栈/CGNAT，未跨网泄漏)";
@@ -4089,7 +4099,7 @@
     } else if (R.v6mac) {
       out.webrtc = { level: "bad", summary: `高危硬件泄漏：IPv6 地址中直接编码了物理网卡 MAC 地址 (${R.v6mac})！` };
     } else if (leakedRtc.length) {
-      const leakCC = R.rtcMeta?.[leakedRtc[0]]?.cc || "";
+      const leakCC = candidateCC(leakedRtc[0]);
       const reverseSplit = R.ipCC === "CN" && leakCC && leakCC !== "CN";
       out.webrtc = {
         level: "bad",
@@ -4477,7 +4487,7 @@
       case "webrtc": {
         if (R.v6mac) return { single: "IPv6 暴露 MAC" };
         const lk = getLeakedWebrtcIps();
-        const lkCC = lk.length ? (R.rtcMeta?.[lk[0]]?.cc || "") : "";
+        const lkCC = lk.length ? candidateCC(lk[0]) : "";
         if (lkCC && R.ipCC && lkCC !== R.ipCC) {
           return { left: `网页 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: `STUN ${flagEmoji(lkCC)}${lkCC}` };
         }
@@ -5159,7 +5169,7 @@
         else if (checks.split?.level === "bad") { alertTone = "bad"; head = "规则分流漏底：海外走代理，国内直连暴露宽带"; }
         else if (checks.webrtc?.level === "bad") {
           const lk = getLeakedWebrtcIps();
-          const lkCC = lk.length ? (R.rtcMeta?.[lk[0]]?.cc || "") : "";
+          const lkCC = lk.length ? candidateCC(lk[0]) : "";
           alertTone = "bad";
           head = (R.ipCC === "CN" && lkCC && lkCC !== "CN")
             ? "分流规则不一致：当前网页走直连，但 UDP/部分域名走了代理"

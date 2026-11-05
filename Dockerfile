@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="WhoProbe" \
-      org.opencontainers.image.description="128-probe L3-L7 browser & network fingerprint / disguise inspector" \
+      org.opencontainers.image.description="148-probe L3-L7 browser, protocol-stack, Reality :443 & multi-source egress reputation inspector" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -10,6 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY probe.py ./probe.py
+COPY egress_intel.py ./egress_intel.py
 COPY static ./static
 
 # Run built-in verification during build

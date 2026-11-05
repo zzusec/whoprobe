@@ -1,7 +1,7 @@
 {
   "name": "whoprobe",
-  "version": "5.0.0",
-  "description": "128-probe L3–L7 browser & network fingerprint / proxy disguise inspector with passive Linux AF_PACKET TCP SYN & TLS ClientHello sniffing",
+  "version": "6.0.0",
+  "description": "148-probe L3–L7 browser, protocol-stack, :443 Reality & multi-source BGP/DNSBL egress reputation inspector",
   "private": true,
   "license": "MIT",
   "scripts": {

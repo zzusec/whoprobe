@@ -32,6 +32,12 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+import egress_intel  # noqa: E402
+
+ENABLE_ACTIVE_443 = True
 
 # RFC 8701 TLS GREASE 值集合
 GREASE_VALUES = {
@@ -297,6 +303,28 @@ def parse_tcp_options(opts_bytes: bytes) -> tuple[list[str], int | None, int | N
             names.append(f"opt{kind}")
         i += length
     return names, mss, wscale
+
+
+def extract_tcp_tsval(opts_bytes: bytes) -> int | None:
+    """从原始 TCP Options 字节串提取 Kind=8 (Timestamp) 的 32-bit TSval 计数。"""
+    i = 0
+    n = len(opts_bytes)
+    while i < n:
+        kind = opts_bytes[i]
+        if kind == 0:
+            break
+        if kind == 1:
+            i += 1
+            continue
+        if i + 1 >= n:
+            break
+        length = opts_bytes[i + 1]
+        if length < 2 or i + length > n:
+            break
+        if kind == 8 and length == 10:
+            return struct.unpack("!I", opts_bytes[i + 2 : i + 6])[0]
+        i += length
+    return None
 
 
 def guess_tcp_os(init_ttl: int, window: int, opts: list[str]) -> tuple[str, str]:
@@ -569,25 +597,26 @@ class LinuxPacketSniffer:
         """
         insns = [
             (0x28, 0, 0, 12),        #  0: ldh [12] (EtherType)
-            (0x15, 0, 17, 0x0800),   #  1: if != IPv4 -> 19 (drop)
+            (0x15, 0, 18, 0x0800),   #  1: if != IPv4 -> 20 (drop)
             (0x30, 0, 0, 23),        #  2: ldb [23] (IPv4 proto)
-            (0x15, 0, 15, 6),        #  3: if != TCP -> 19 (drop)
+            (0x15, 0, 16, 6),        #  3: if != TCP -> 20 (drop)
             (0x28, 0, 0, 20),        #  4: ldh [20] (frag offset)
-            (0x45, 13, 0, 0x1FFF),   #  5: if fragmented -> 19 (drop)
+            (0x45, 14, 0, 0x1FFF),   #  5: if fragmented -> 20 (drop)
             (0xB1, 0, 0, 14),        #  6: ldxb 4*([14]&0xf) (X = ihl)
             (0x48, 0, 0, 16),        #  7: ldh [x + 16] (tcp.dst_port)
-            (0x15, 0, 10, port),     #  8: if != port -> 19 (drop)
+            (0x15, 0, 11, port),     #  8: if != port -> 20 (drop)
             (0x50, 0, 0, 27),        #  9: ldb [x + 27] (tcp.flags)
-            (0x15, 7, 0, 0x02),      # 10: if pure SYN -> 18 (accept)
-            (0x50, 0, 0, 26),        # 11: ldb [x + 26] (tcp data offset)
-            (0x74, 0, 0, 2),         # 12: rsh #2
-            (0x54, 0, 0, 0x3C),      # 13: and #0x3c (A = tcp_hdr_len)
-            (0x0C, 0, 0, 0),         # 14: add x (A = ihl + tcp_hdr_len)
-            (0x07, 0, 0, 0),         # 15: tax
-            (0x48, 0, 0, 14),        # 16: ldh [x + 14] (payload[0:2], 无载荷包越界自动丢弃)
-            (0x15, 1, 0, 0x1703),    # 17: if TLS AppData (0x1703) -> 19 (drop)
-            (0x06, 0, 0, 4096),      # 18: ret #4096 (accept)
-            (0x06, 0, 0, 0),         # 19: ret #0 (drop)
+            (0x54, 0, 0, 0x3F),      # 10: and #0x3f (兼容携带 ECN ECE/CWR 的 macOS/iOS SYN)
+            (0x15, 7, 0, 0x02),      # 11: if SYN (ACK=0) -> 19 (accept)
+            (0x50, 0, 0, 26),        # 12: ldb [x + 26] (tcp data offset)
+            (0x74, 0, 0, 2),         # 13: rsh #2
+            (0x54, 0, 0, 0x3C),      # 14: and #0x3c (A = tcp_hdr_len)
+            (0x0C, 0, 0, 0),         # 15: add x (A = ihl + tcp_hdr_len)
+            (0x07, 0, 0, 0),         # 16: tax
+            (0x48, 0, 0, 14),        # 17: ldh [x + 14] (payload[0:2], 无载荷包越界自动丢弃)
+            (0x15, 1, 0, 0x1703),    # 18: if TLS AppData (0x1703) -> 20 (drop)
+            (0x06, 0, 0, 4096),      # 19: ret #4096 (accept)
+            (0x06, 0, 0, 0),         # 20: ret #0 (drop)
         ]
         bpf_buf = b"".join(struct.pack("HBBI", code, jt, jf, k) for code, jt, jf, k in insns)
         import ctypes
@@ -613,6 +642,10 @@ class LinuxPacketSniffer:
                 if ihl < 20 or len(pkt) < 14 + ihl + 20:
                     continue
                 frame_end = min(len(pkt), 14 + ip_tot_len)
+                ip_tos = pkt[14 + 1]
+                ip_id = struct.unpack("!H", pkt[14 + 4 : 14 + 6])[0]
+                ip_flags_frag = struct.unpack("!H", pkt[14 + 6 : 14 + 8])[0]
+                df_flag = bool(ip_flags_frag & 0x4000)
                 ttl = pkt[14 + 8]
                 proto = pkt[14 + 9]
                 if proto != 6:
@@ -636,11 +669,12 @@ class LinuxPacketSniffer:
                 rec = dict(existing) if isinstance(existing, dict) else {}
                 prev_tcp = rec.get("tcp") if isinstance(rec.get("tcp"), dict) else {}
 
-                # 1) 纯 TCP SYN 包 (SYN=1, ACK=0)
-                if (flags & 0x12) == 0x02:
-                    syn_cache.set(conn_key, now_mono, ttl_sec=10.0)
+                # 1) 纯 TCP SYN 包 (SYN=1, ACK=0，支持携带 ECN ECE/CWR)
+                if (flags & 0x3F) == 0x02:
                     opts_raw = pkt[tcp_start + 20 : tcp_start + data_offset]
                     opts, mss, wscale = parse_tcp_options(opts_raw)
+                    syn_tsval = extract_tcp_tsval(opts_raw)
+                    syn_cache.set(conn_key, (now_mono, syn_tsval, "ts" in opts), ttl_sec=10.0)
                     init_ttl = infer_initial_ttl(ttl)
                     os_guess, os_family = guess_tcp_os(init_ttl, window, opts)
                     rec["tcp"] = {
@@ -656,6 +690,14 @@ class LinuxPacketSniffer:
                         "ja4t": build_ja4t(window, opts, mss, wscale),
                         "osGuess": os_guess,
                         "osFamily": os_family,
+                        "df": df_flag,
+                        "synIpId": ip_id,
+                        "helloIpId": prev_tcp.get("helloIpId"),
+                        "tos": ip_tos,
+                        "ecn": bool(flags & 0xC0) or ((ip_tos & 0x03) != 0),
+                        "synTsval": syn_tsval,
+                        "tsHz": prev_tcp.get("tsHz"),
+                        "synSpoofSuspect": prev_tcp.get("synSpoofSuspect", False),
                         "handshakeRttMs": prev_tcp.get("handshakeRttMs"),
                         "minHandshakeRttMs": prev_tcp.get("minHandshakeRttMs"),
                         "capturedAt": round(time.time(), 2),
@@ -668,11 +710,15 @@ class LinuxPacketSniffer:
                 if not payload:
                     continue
                 if len(payload) >= 6 and payload[0] == 0x16 and payload[1] == 0x03 and payload[5] == 0x01:
-                    # SYN -> ClientHello 首包时间差即服务端到客户端/代理节点的真实 TCP 往返握手 RTT
-                    syn_t = syn_cache.get(conn_key)
-                    if isinstance(syn_t, float):
+                    # SYN -> ClientHello 首包时间差即服务端到客户端/代理节点的真实 TCP 往返握手 RTT，
+                    # 同时利用同五元组 TSval 增量测算发包端内核物理时钟频率并抓捕无状态 SYN 改包器
+                    hello_tsval = extract_tcp_tsval(pkt[tcp_start + 20 : tcp_start + data_offset])
+                    syn_entry = syn_cache.get(conn_key)
+                    if isinstance(syn_entry, tuple) and len(syn_entry) == 3:
+                        syn_t, syn_tsval, syn_had_ts = syn_entry
                         syn_cache.set(conn_key, None, ttl_sec=0.0)
-                        rtt_ms = round((now_mono - syn_t) * 1000.0, 1)
+                        dt_sec = now_mono - syn_t
+                        rtt_ms = round(dt_sec * 1000.0, 1)
                         if 0.2 <= rtt_ms <= 4000.0 and isinstance(rec.get("tcp"), dict):
                             tcp_obj = dict(rec["tcp"])
                             tcp_obj["handshakeRttMs"] = rtt_ms
@@ -680,6 +726,16 @@ class LinuxPacketSniffer:
                             tcp_obj["minHandshakeRttMs"] = (
                                 min(old_min, rtt_ms) if isinstance(old_min, (int, float)) else rtt_ms
                             )
+                            tcp_obj["helloIpId"] = ip_id
+                            if syn_tsval is not None and hello_tsval is not None and dt_sec >= 0.008:
+                                ts_delta = (hello_tsval - syn_tsval) & 0xFFFFFFFF
+                                ts_hz = round(ts_delta / dt_sec)
+                                tcp_obj["tsHz"] = ts_hz
+                                tcp_obj["synSpoofSuspect"] = bool(
+                                    ts_delta > 5_000_000 or (dt_sec >= 0.02 and ts_hz > 25000)
+                                )
+                            elif syn_had_ts and hello_tsval is None:
+                                tcp_obj["synSpoofSuspect"] = True
                             rec["tcp"] = tcp_obj
                             PACKET_CACHE.set(src_ip, rec)
 
@@ -790,9 +846,30 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         if path.startswith("/who/"):
             path = path[4:]  # "/who/" -> "/", "/who/assets/..." -> "/assets/..."
 
-        # 1) 测速与时钟校准探针
+        # 1) 测速、微脉冲抖动测绘与时钟校准探针
         if path in ("/api/who/ping", "/api/ping"):
-            self._send_json({"ok": True, "serverTimeMs": round(time.time() * 1000, 2)})
+            qs = urllib.parse.parse_qs(parsed.query)
+            seq_raw = (qs.get("seq") or [""])[0]
+            self._send_json({
+                "ok": True,
+                "seq": seq_raw,
+                "serverTimeMs": round(time.time() * 1000, 2),
+                "serverPerfUs": round(time.perf_counter() * 1_000_000),
+            })
+            return
+
+        # 1b) 深度出口情报、BGP/ASN 租赁核验、同段脏邻居与 :443 Reality 反向验真接口
+        if path == "/api/who/intel":
+            qs = urllib.parse.parse_qs(parsed.query)
+            req_ip = (qs.get("ip") or [""])[0].strip()
+            target_ip = req_ip or self._extract_client_ip()
+            is_self_query = not bool(req_ip) or (target_ip == self._extract_client_ip())
+            intel_payload = egress_intel.inspect_ip_intelligence(
+                target_ip,
+                enable_active_443=ENABLE_ACTIVE_443,
+            )
+            intel_payload["isSelfEgress"] = is_self_query
+            self._send_json(intel_payload)
             return
 
         # 2) 无状态 HTTP ETag 缓存追踪演示探针 (零服务端存储)
@@ -910,14 +987,18 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
 
 def run_self_test() -> None:
     # 1) 校验 TCP SYN & TLS ClientHello 解析器纯函数
-    opts, mss, ws = parse_tcp_options(bytes.fromhex("020405b4010303060101080a112233440000000004020000"))
+    sample_opts = bytes.fromhex("020405b4010303060101080a112233440000000004020000")
+    opts, mss, ws = parse_tcp_options(sample_opts)
     assert mss == 1460 and ws == 6 and "mss" in opts and "ts" in opts
+    assert extract_tcp_tsval(sample_opts) == 0x11223344
     ja4t = build_ja4t(65535, opts, mss, ws)
     assert ja4t.startswith("65535_2-1-3-1-1-8-4-0_1460_6"), f"unexpected ja4t: {ja4t}"
     os_label, os_fam = guess_tcp_os(64, 65535, opts)
     assert "macOS" in os_label and os_fam == "apple"
     assert infer_tunnel_from_mss(1460) == "ethernet"
     assert infer_tunnel_from_mss(1380) == "wireguard"
+    assert egress_intel.normalize_public_ip("8.8.8.8") == ("8.8.8.8", 4)
+    assert egress_intel.normalize_public_ip("127.0.0.1") == (None, None)
 
     # 2) 启动临时 HTTP 服务验证所有路由
     server = ThreadingHTTPServer(("127.0.0.1", 0), WhoProbeHandler)
@@ -964,6 +1045,10 @@ def run_self_test() -> None:
             me = json.loads(r5.read().decode("utf-8"))
             assert r5.status == 200 and me.get("ok") is True and "headerOrder" in me
 
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/intel?ip=127.0.0.1", timeout=3) as r6:
+            intel_priv = json.loads(r6.read().decode("utf-8"))
+            assert r6.status == 200 and intel_priv.get("ok") is False
+
         print(f"SELF-TEST OK on 127.0.0.1:{port} | ja4t={ja4t} | etag={et1['etagId']}")
     finally:
         server.shutdown()
@@ -971,18 +1056,22 @@ def run_self_test() -> None:
 
 
 def main() -> None:
-    global SNIFFER
-    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务")
+    global SNIFFER, ENABLE_ACTIVE_443
+    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v6.0)")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8899, help="监听端口 (默认 8899)")
     parser.add_argument("--sniff-iface", default="", help="可选 Linux 网卡名(如 ens5)，开启旁路 TCP SYN/JA4 抓包")
     parser.add_argument("--sniff-port", type=int, default=443, help="旁路抓包目标端口 (默认 443)")
+    parser.add_argument("--no-active-probe", action="store_true", help="禁用针对来访公网 IP:443 的反向 TLS/Reality 证书验真")
     parser.add_argument("--self-test", action="store_true", help="运行自动化自检后退出")
     args = parser.parse_args()
 
     if args.self_test:
         run_self_test()
         return
+
+    ENABLE_ACTIVE_443 = not args.no_active_probe
+    egress_intel.start_cidr_prewarmer()
 
     if args.sniff_iface:
         SNIFFER = LinuxPacketSniffer(args.sniff_iface, args.sniff_port)

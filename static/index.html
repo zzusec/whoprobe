@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <title>WhoProbe · 网站眼里的你 — 128 项 L3–L7 浏览器指纹与伪装风控透视</title>
-  <meta name="description" content="零权限弹窗读取 128 项网络协议栈、TCP/TLS 握手延迟、硬件渲染、扩展注入与跨浏览器追踪信号，精准识别代理分流、环境篡改与指纹浏览器矛盾。">
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=5.0.2">
-  <link rel="stylesheet" href="./assets/style.css?v=5.0.2">
+  <title>WhoProbe · 网站眼里的你 — 148 项 L3–L7 全栈指纹、BGP 出口情报与伪装风控透视</title>
+  <meta name="description" content="零权限弹窗读取 148 项网络协议栈、TCP TSval 时钟、:443 Reality 偷证书反向验真、8 源欺诈/BGP 租赁情报、同 /24 脏邻居、硬件光栅化与 52 项原型谎言，精准评估 6 大业务准入与防关联破绽。">
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=6.0.0">
+  <link rel="stylesheet" href="./assets/style.css?v=6.0.0">
   <script>
     (function () {
       try {
@@ -46,18 +46,24 @@
           <div class="min-w-0">
             <div class="flex items-center gap-2">
               <span class="text-base font-semibold tracking-tight text-gray-900 dark:text-white">WhoProbe</span>
-              <span class="inline-flex items-center gap-x-1.5 py-0.5 px-2 rounded-md text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/70 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20">L3–L7 全栈探针</span>
+              <span class="inline-flex items-center gap-x-1.5 py-0.5 px-2 rounded-md text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/70 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20">v6.0 全栈风控观象台</span>
               <span id="liveStatusPill" class="hidden sm:inline-flex items-center gap-x-1.5 py-0.5 px-2.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-neutral-300">
                 <span id="liveDot" class="size-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                <span id="liveStatusText">正在初始化 128 项无感嗅探…</span>
+                <span id="liveStatusText">正在初始化 148 项无感嗅探与出口情报…</span>
               </span>
             </div>
-            <p class="text-xs text-gray-500 dark:text-neutral-400 truncate">零授权弹窗还原风控视角：TCP/TLS 原始包 · 物理握手测距 · 52 项谎言篡改 · 跨浏览器追踪</p>
+            <p class="text-xs text-gray-500 dark:text-neutral-400 truncate">TCP/IP 深度时钟 · :443 Reality 反向验真 · 8 源欺诈/BGP 租赁与脏邻居 · 148 项硬件与防篡改透视</p>
           </div>
         </div>
 
-        <!-- Scene Switch & Actions Toolbar -->
+        <!-- IP Inspector + Scene Switch + Actions Toolbar -->
         <div class="flex flex-wrap items-center gap-2">
+          <!-- Arbitrary Public IP Reputation Lookup -->
+          <form id="ipQueryForm" class="inline-flex items-center rounded-lg border border-gray-200 bg-gray-50/90 p-0.5 dark:bg-neutral-800 dark:border-neutral-700" aria-label="查询任意公网 IP 信誉与 BGP 情报">
+            <input id="ipQueryInput" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="查任意公网 IP 信誉…" class="w-34 sm:w-40 py-1 px-2.5 text-xs font-mono bg-transparent text-gray-900 placeholder:text-gray-400 focus:outline-hidden dark:text-neutral-100 dark:placeholder:text-neutral-500">
+            <button id="btnQueryIp" type="submit" class="py-1 px-2.5 text-xs font-medium rounded-md bg-white text-gray-800 border border-gray-200/80 shadow-2xs hover:bg-blue-50 hover:text-blue-700 transition dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:text-blue-400">查情报</button>
+          </form>
+
           <!-- Preline Segmented Control -->
           <div id="sceneSwitch" class="inline-flex rounded-lg bg-gray-100 p-0.5 border border-gray-200/80 dark:bg-neutral-800 dark:border-neutral-700" role="tablist" aria-label="检测视角切换">
             <button type="button" data-scene="disguise" role="tab" aria-selected="true" class="scene-btn py-1.5 px-3 inline-flex items-center gap-x-1.5 text-xs font-medium rounded-md bg-white text-gray-900 shadow-2xs transition dark:bg-neutral-900 dark:text-white">
@@ -109,6 +115,22 @@
     </div>
   </div>
 
+  <!-- Arbitrary External IP Inspection Banner (Shown when ?ip=x.x.x.x or manually queried) -->
+  <div id="extIpBanner" hidden class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+    <div class="rounded-xl border border-blue-200 bg-blue-50/80 px-4 py-3 text-xs text-blue-950 flex flex-wrap items-center justify-between gap-3 dark:bg-blue-500/10 dark:border-blue-500/25 dark:text-blue-100">
+      <div class="flex flex-wrap items-center gap-2 min-w-0">
+        <span class="inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-semibold bg-blue-600 text-white">外部 IP 情报检视</span>
+        <span id="extIpVal" class="font-mono font-bold text-sm">--</span>
+        <span id="extPurityBadge" class="inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold bg-white text-gray-800 border border-gray-200 dark:bg-neutral-900 dark:text-neutral-200 dark:border-neutral-700">查询中…</span>
+        <span id="extIpMeta" class="text-blue-900/80 dark:text-blue-200/80 truncate">正在拉取 8 源欺诈库、RDAP 租赁、12 项 DNSBL 与 :443 证书画像…</span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button id="btnJumpRep" type="button" class="py-1 px-2.5 rounded-md bg-white border border-blue-200 text-blue-700 font-medium hover:bg-blue-100 transition dark:bg-neutral-900 dark:border-blue-500/30 dark:text-blue-300">查看 11 项情报明细</button>
+        <button id="btnResetSelfIp" type="button" class="py-1 px-2.5 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 transition">返回检测本机出口</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Main Dashboard Content -->
   <main id="appMain" class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-5">
 
@@ -133,8 +155,8 @@
           </div>
         </div>
         <div class="mt-3.5">
-          <div id="segBar" class="grid grid-cols-14 gap-1 h-2" aria-label="14项核心风控状态条"></div>
-          <p id="scoreSub" class="mt-2 text-xs text-gray-500 dark:text-neutral-400 truncate">正在交叉比对 14 项核心风控维度…</p>
+          <div id="segBar" class="flex items-center gap-1 h-2" aria-label="20项核心风控状态条"></div>
+          <p id="scoreSub" class="mt-2 text-xs text-gray-500 dark:text-neutral-400 truncate">正在交叉比对 20 项核心风控维度…</p>
         </div>
       </div>
 
@@ -160,12 +182,15 @@
         </div>
       </div>
 
-      <!-- KPI 3: Exit Network & Physical Handshake RTT -->
+      <!-- KPI 3: Exit Network, IP Purity Score & Physical Handshake RTT -->
       <div class="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 sm:p-5 shadow-2xs dark:bg-neutral-900 dark:border-neutral-800">
         <div>
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-xs font-medium text-gray-500 dark:text-neutral-400">出口线路与物理测距</span>
-            <span id="ispTypeBadge" class="inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-neutral-300">识别中</span>
+          <div class="flex items-center justify-between gap-1.5">
+            <span class="text-xs font-medium text-gray-500 dark:text-neutral-400 truncate">出口纯净度与测距</span>
+            <div class="flex items-center gap-1 shrink-0">
+              <span id="purityPill" class="inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-mono font-semibold bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-300" title="出口 IP 综合纯净度评分（融合 8 源欺诈投票、12 项 DNSBL、15 项威胁段与同 /24 脏邻居）">信誉 --</span>
+              <span id="ispTypeBadge" class="inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-neutral-300">识别中</span>
+            </div>
           </div>
           <div class="mt-2 min-w-0">
             <div id="kpiExitIp" class="maskable text-lg font-bold font-mono tabular-nums text-gray-900 dark:text-white truncate">读取出口 IP…</div>
@@ -197,6 +222,20 @@
       </div>
     </section>
 
+    <!-- Row 1.5: 6 Business Scenario Suitability Meters -->
+    <section id="scenarioSection" aria-label="六大业务场景准入评估" class="rounded-xl border border-gray-200 bg-white shadow-2xs overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
+      <div class="px-5 py-3 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2 dark:border-neutral-800">
+        <div class="flex flex-wrap items-center gap-2">
+          <h2 class="text-sm font-semibold text-gray-900 dark:text-white">六大业务场景准入与风控通过率模拟</h2>
+          <span id="scenarioTargetBadge" class="inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400">实时融合出口信誉 + 浏览器指纹</span>
+        </div>
+        <span id="scenarioSummaryBadge" class="inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-neutral-300">正在拉取多源信誉与脏邻居数据…</span>
+      </div>
+      <div id="scenarioGrid" class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+        <!-- Populated dynamically with instant skeleton cards -->
+      </div>
+    </section>
+
     <!-- Row 2: Two-Column Core Diagnostic Workspace -->
     <section class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
 
@@ -210,7 +249,7 @@
               <h2 class="text-sm font-semibold text-gray-900 dark:text-white">网站眼里的你</h2>
               <span class="inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400">无感侧写</span>
             </div>
-            <span id="portraitElapsed" class="text-xs font-mono text-gray-400 dark:text-neutral-500">悬停词条可溯源探针</span>
+            <span id="portraitElapsed" class="text-xs font-mono text-gray-400 dark:text-neutral-500">点击词条可溯源探针</span>
           </div>
 
           <div class="p-5 space-y-4">
@@ -219,8 +258,8 @@
               <div class="flex items-start gap-2.5">
                 <span id="wowIcon" class="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-700 font-bold text-[11px] dark:bg-neutral-700 dark:text-neutral-200">…</span>
                 <div class="min-w-0 flex-1">
-                  <p id="wowTitle" class="font-semibold text-gray-900 dark:text-white">正在交叉核验底层协议与浏览器自报身份…</p>
-                  <p id="wowDesc" class="mt-0.5 text-gray-600 dark:text-neutral-400">对比 TCP SYN 操作系统指纹、HTTP 请求头、Worker 线程与多路分流出口。</p>
+                  <p id="wowTitle" class="font-semibold text-gray-900 dark:text-white">正在交叉核验底层协议、出口证书与浏览器自报身份…</p>
+                  <p id="wowDesc" class="mt-0.5 text-gray-600 dark:text-neutral-400">对比 TCP SYN 内核指纹、TSval 时钟、:443 Reality 反向验真、BGP 租赁与光栅化特征。</p>
                 </div>
               </div>
             </div>
@@ -262,7 +301,7 @@
           </div>
         </div>
 
-        <!-- Card 2: 6-Route Outbound & Dual-Stack Split Matrix -->
+        <!-- Card 2: 8-Route Outbound & Dual-Stack Split Matrix -->
         <div class="rounded-xl border border-gray-200 bg-white shadow-2xs overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
           <div class="px-5 py-3.5 border-b border-gray-200 flex items-center justify-between gap-2 dark:border-neutral-800">
             <div>
@@ -278,17 +317,17 @@
 
       </div>
 
-      <!-- Right Column (7 cols): Priority Fixes + 18 Disguise & Protocol Checks -->
+      <!-- Right Column (7 cols): Priority Fixes + 24 Disguise, Deep Stack & Reputation Checks -->
       <div class="lg:col-span-7 space-y-5">
 
         <div class="rounded-xl border border-gray-200 bg-white shadow-2xs overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
           <div class="px-5 py-3.5 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2 dark:border-neutral-800">
             <div>
-              <h2 class="text-sm font-semibold text-gray-900 dark:text-white">伪装矛盾与反篡改逐项体检</h2>
-              <p class="text-[11px] text-gray-500 dark:text-neutral-400">14 项跨层一致性核验 + 4 项现代连接协议诊断 · 支持单项实时重测</p>
+              <h2 class="text-sm font-semibold text-gray-900 dark:text-white">伪装矛盾、深层协议与出口情报逐项体检</h2>
+              <p class="text-[11px] text-gray-500 dark:text-neutral-400">20 项跨层一致性与信誉核验 + 4 项现代连接协议诊断 · 支持单项实时重测</p>
             </div>
             <div id="checkFilterBar" class="inline-flex rounded-lg bg-gray-100 p-0.5 border border-gray-200/80 dark:bg-neutral-800 dark:border-neutral-700">
-              <button type="button" data-ckfilter="all" class="ckf-btn py-1 px-2.5 text-xs font-medium rounded-md bg-white text-gray-900 shadow-2xs dark:bg-neutral-900 dark:text-white">全部 18</button>
+              <button type="button" data-ckfilter="all" class="ckf-btn py-1 px-2.5 text-xs font-medium rounded-md bg-white text-gray-900 shadow-2xs dark:bg-neutral-900 dark:text-white">全部 24</button>
               <button type="button" data-ckfilter="issues" class="ckf-btn py-1 px-2.5 text-xs font-medium rounded-md text-gray-600 hover:text-gray-900 dark:text-neutral-400 dark:hover:text-neutral-200">仅看异常</button>
               <button type="button" data-ckfilter="ok" class="ckf-btn py-1 px-2.5 text-xs font-medium rounded-md text-gray-600 hover:text-gray-900 dark:text-neutral-400 dark:hover:text-neutral-200">已通过</button>
             </div>
@@ -303,9 +342,9 @@
             <ol id="priorityList" class="space-y-2 text-xs"></ol>
           </div>
 
-          <!-- 14 Core Disguise Checks -->
+          <!-- 20 Core Disguise, Deep Stack & Reputation Checks -->
           <div class="px-5 pt-4 pb-2">
-            <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-neutral-500">核心伪装与环境一致性（14 项）</h3>
+            <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-neutral-500">核心伪装、底层硬件与出口信誉一致性（20 项）</h3>
           </div>
           <div id="coreChecksList" class="divide-y divide-gray-100 dark:divide-neutral-800"></div>
 
@@ -326,7 +365,7 @@
       <div class="px-5 py-3.5 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3 dark:border-neutral-800">
         <div>
           <h2 class="text-sm font-semibold text-gray-900 dark:text-white">目标国家 / 地区伪装对齐模拟</h2>
-          <p class="text-xs text-gray-500 dark:text-neutral-400">选择你想伪装成的目标地区，逐项核验当前出口、时区、语言、系统字库、DNS 与 WebRTC 是否露馅</p>
+          <p class="text-xs text-gray-500 dark:text-neutral-400">选择你想伪装成的目标地区，逐项核验当前出口、原生信誉、时区、语言、DNS 与 WebRTC 是否露馅</p>
         </div>
         <div class="flex items-center gap-2">
           <span id="targetVerdictBadge" class="inline-flex items-center py-1 px-2.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-neutral-300">评估中…</span>
@@ -357,23 +396,23 @@
       </div>
     </section>
 
-    <!-- Row 4: 128 Full Sniffer Data Explorer -->
+    <!-- Row 4: 148 Full Sniffer Data Explorer -->
     <section id="explorerSection" class="rounded-xl border border-gray-200 bg-white shadow-2xs overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
       <div class="px-5 py-4 border-b border-gray-200 space-y-3 dark:border-neutral-800">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-sm font-semibold text-gray-900 dark:text-white">全部探测项与原始读数</h2>
-              <span id="probeCountBadge" class="inline-flex items-center py-0.5 px-2 rounded-full text-xs font-mono font-medium bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400">0 / 128</span>
+              <span id="probeCountBadge" class="inline-flex items-center py-0.5 px-2 rounded-full text-xs font-mono font-medium bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400">0 / 148</span>
             </div>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">点击任意行可复制读数；悬停「?」查看风控原理与完整字段（除底部 2 项手动实测外，其余 126 项均为打开网页瞬间静默读取）</p>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">点击任意行可复制读数；悬停「?」查看风控原理与完整字段（除底部 2 项手动实测外，其余 146 项均为打开网页自动采集）</p>
           </div>
           <!-- Preline Search Input -->
           <div class="relative w-full sm:w-72">
             <div class="absolute inset-y-0 start-0 flex items-center pointer-events-none ps-3">
               <svg class="size-3.5 text-gray-400 dark:text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             </div>
-            <input id="probeSearch" type="search" placeholder="搜索 JA4 / RTT / WebGPU / 扩展 / ETag…" class="py-1.5 ps-8 pe-3 block w-full border border-gray-200 rounded-lg text-xs bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:bg-white focus:border-blue-500 focus:ring-blue-500 focus:outline-hidden dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200 dark:placeholder:text-neutral-500">
+            <input id="probeSearch" type="search" placeholder="搜索 Reality / TSval / 脏邻居 / RPKI / JA4…" class="py-1.5 ps-8 pe-3 block w-full border border-gray-200 rounded-lg text-xs bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:bg-white focus:border-blue-500 focus:ring-blue-500 focus:outline-hidden dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200 dark:placeholder:text-neutral-500">
           </div>
         </div>
 
@@ -387,8 +426,8 @@
 
     <!-- Clean Footer -->
     <footer class="py-4 text-center text-xs text-gray-400 dark:text-neutral-500 flex flex-wrap items-center justify-between gap-2">
-      <span>WhoProbe v5.0 · 服务端被动 L3/L4 BPF 旁路嗅探 + 浏览器 128 项全栈无感检测</span>
-      <span>隐私声明：所有交叉判定均在当前浏览器本地完成，服务端不持久化保存访问者 IP 或完整指纹日志</span>
+      <span>WhoProbe v6.0 · 服务端被动 L3/L4 BPF 嗅探 + 主动 :443 伪装验真 + 多源 BGP 信誉情报 + 浏览器 148 项全栈检测</span>
+      <span>隐私声明：所有交叉判定均在当前会话实时计算，服务端不持久化保存访问者 IP 或指纹日志</span>
     </footer>
   </main>
 
@@ -396,7 +435,7 @@
   <div id="globalTip" role="tooltip" hidden class="fixed z-50 max-w-xs sm:max-w-sm rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-xs leading-relaxed text-gray-100 shadow-lg pointer-events-none whitespace-pre-line dark:border-neutral-700 dark:bg-neutral-800"></div>
   <div id="toastBar" hidden class="fixed bottom-5 right-5 z-50 rounded-lg border border-gray-800 bg-gray-900 px-3.5 py-2 text-xs font-medium text-white shadow-lg dark:bg-white dark:text-gray-900"></div>
 
-  <script src="./assets/preline.js?v=5.0.2"></script>
-  <script src="./assets/app.js?v=5.0.2"></script>
+  <script src="./assets/preline.js?v=6.0.0"></script>
+  <script src="./assets/app.js?v=6.0.0"></script>
 </body>
 </html>

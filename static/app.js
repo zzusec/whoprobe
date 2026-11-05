@@ -1,4 +1,4 @@
-/* WhoProbe v5.0 — 128-Probe L3–L7 Forensic & Anti-Fraud Engine (Preline UI Edition) */
+/* WhoProbe v6.0 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -116,20 +116,21 @@
   const getText = (url, ms = 5500) =>
     fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(ms) }).then(r => r.ok ? r.text() : Promise.reject(new Error(r.status)));
 
-  /* ---------- 7 Groups & 128 Genuine Probes Catalog ---------- */
+  /* ---------- 8 Groups & 148 Genuine Probes Catalog ---------- */
   const GROUPS = [
-    ["net", "服务端与协议栈透视", "由服务端网卡 AF_PACKET 旁路抓包与网络层探针直接读取，JS 插件无法伪造"],
+    ["net", "服务端与协议栈透视", "由服务端网卡 AF_PACKET 旁路抓包、主动 :443 反向握手与微脉冲时序直接读取，JS 插件无法伪造"],
+    ["rep", "出口信誉、BGP 路由与黑名单情报", "融合 8 源欺诈库加权几率投票、RDAP 租赁/广播核验、12 项 DNSBL、15 项威胁段与同 /24 脏邻居连坐"],
     ["exit", "多路由分流与双栈矩阵", "并发探测国内外、AI 平台与 IPv4/IPv6 双栈出口，抓捕规则分流漏底"],
     ["hdr", "HTTP 原始请求头与高熵提示", "浏览器建立连接时发往服务端的原始 HTTP 头与 Client Hints"],
-    ["loc", "语言、时区与输入法区域", "跨层比对语言列表、IANA 时区、历法格式、键盘键位与内置离线语音"],
-    ["dev", "硬件规格、图形栈与多媒体", "物理屏幕反算、双显卡架构、WebGPU 能力、音视频硬解与内核真实版本"],
-    ["brw", "浏览器偏好、扩展与反篡改", "广告拦截实测、Chrome 扩展公开资源扫描、Worker/iframe 与 52 项原型谎言检测"],
+    ["loc", "语言、时区与输入法区域", "跨层比对语言列表、IANA 时区、ICU 字典排序规则、键盘键位与内置离线语音"],
+    ["dev", "硬件规格、图形栈与光栅化", "物理屏幕反算、WASM 虚拟化抖动、原生控件几何、跨系统字体光栅化与内核真实版本"],
+    ["brw", "浏览器偏好、扩展与反篡改", "广告拦截实测、36 款 Chrome 扩展资源扫描、Worker/iframe 与 52 项原型谎言检测"],
     ["fp", "跨站指纹与无痕留痕追踪", "综合指纹、跨浏览器物理硬件码、无状态 ETag 缓存追踪与亚像素渲染哈希"]
   ];
 
-  // [id, group, title, maskSensitive, whyDesc] — Exactly 128 probes
+  // [id, group, title, maskSensitive, whyDesc] — Exactly 148 probes
   const SNIFFERS = [
-    // Group 1: net (24)
+    // Group 1: net (29)
     ["ip", "net", "当前连接出口 IP", true, "服务端 TCP Socket 与反向代理直接看到的客户端公网地址及 IP 协议版本。"],
     ["geo", "net", "出口地理位置（按 IP 库估）", true, "基于双源 IP 库反查的国家、省份/州与城市（仅代表出口网关位置，非 GPS 定位）。"],
     ["coords", "net", "出口经纬度坐标", true, "出口 IP 登记网关的大致经纬度坐标，可与下方手动 GPS 定位测算物理偏差。"],
@@ -138,9 +139,11 @@
     ["tzip", "net", "出口 IP 所属时区", false, "出口 IP 所在地理区域对应的标准 IANA 时区与当前 UTC 偏移量。"],
     ["ptr", "net", "反向 DNS 解析 (PTR)", true, "对出口 IP 进行反向域名解析得到的主机名，家宽常含 dynamic/broadband，机房常含 cloud/vps。"],
     ["tcprtt", "net", "服务端 TCP 握手 vs 浏览器 RTT", false, "服务端旁路抓包实测 SYN→ClientHello 物理握手延迟，与浏览器 HTTP 往返对比可抓出代理中转多绕的路程。"],
+    ["muxjitter", "net", "微脉冲粘包与多路复用抖动", false, "连续发射微间隔并发 HTTP 脉冲，对比服务端微秒级到达间隔压缩比与 RTT 抖动标准差，识别 smux/yamux/h2mux 隧道合并特征。"],
     ["clock", "net", "本机时钟与服务端偏差", false, "利用往返中点校准法测量浏览器系统时间与服务端标准时间的快慢误差。"],
     ["proto", "net", "HTTP 与 TLS 协商套件", false, "当前页面连接实际协商的 HTTP 版本、TLS 协议版本与对称加密套件。"],
     ["tcpfp", "net", "TCP SYN 被动协议栈系统", false, "服务端直接抓包读取首个 TCP SYN 包的初始 TTL（Windows=128，macOS/Linux=64）、跳数与选项排列推断真实发包内核。"],
+    ["ipquirk", "net", "IP 层 DF/IPID/ECN 与内核时钟", false, "深度解析 IPv4 DF 不分片位、SYN→Hello IPID 步进策略、ECN 拥塞标记与 TCP TSval 时间戳频率（Hz），专抓无状态 NFQUEUE 改包伪造。"],
     ["ja4t", "net", "TCP 窗口、MSS 与 JA4T 指纹", false, "由 TCP 初始接收窗口、选项序列编码、MSS 与窗口缩放因子组成的传输层指纹 JA4T。"],
     ["tunnel", "net", "链路 MTU 与 VPN 隧道特征", false, "由 TCP MSS 反推路径 MTU：1500 为标准以太网，1492 为 PPPoE，1420/1280 常为 WireGuard/TUN 隧道，>1500 为云内网巨型帧。"],
     ["ja4", "net", "TLS ClientHello 指纹 (JA4)", false, "从原始 TLS 握手首包提取加密套件、扩展与签名算法计算的行业标准 JA4 指纹。"],
@@ -148,14 +151,30 @@
     ["tlsext", "net", "TLS 浏览器专属扩展特征", false, "检查 ALPS 应用层设置扩展与 Brotli 证书压缩扩展，真浏览器具备而 curl/Go/Python 脚本通常缺失。"],
     ["pqkex", "net", "后量子密钥交换 (PQ-KEM)", false, "检查 TLS ClientHello KeyShare 是否启用抗量子计算破解的 X25519MLKEM768 混合密钥交换。"],
     ["ech", "net", "加密 ClientHello (ECH)", false, "检查 TLS 握手是否携带 0xfe0d ECH 扩展以加密保护目标域名 SNI。"],
+    ["reality443", "net", "出口 :443 反向握手与 Reality 验真", false, "主动回探出口公网 IP 的 443 端口：若非微软/苹果/雅虎等大厂 ASN 却返回其有效证书或通过严格 SNI 签名校验，即可实锤 VLESS-Reality / ShadowTLS 偷证书伪装。"],
     ["h2fp", "net", "HTTP 请求头序签名", false, "不同浏览器内核发送请求头的先后顺序各自固定，改 UA 插件无法改变底层发包头顺序。"],
     ["quicfp", "net", "HTTP/3 (QUIC / UDP 443) 探测", false, "结合边缘协商与 ResourceTiming 检测当前网络及代理链路是否放行基于 UDP 443 的 QUIC 协议。"],
     ["dns", "net", "递归 DNS 解析器出口", true, "生成随机一次性子域名触发真实递归查询，定位替你解析域名的上游 DNS 服务器国家与运营商。"],
+    ["ecs", "net", "多路递归 DNS 集群与 ECS 归属", true, "并发探测上游 DNS 集群节点并核验 EDNS Client Subnet (ECS) 子网透传及运营商同源性（本网 ISP / 公共 Anycast / 跨境泄漏）。"],
     ["webrtc", "net", "WebRTC STUN 公网地址", true, "通过 STUN 协议在 UDP 通道探测本机反射出的真实公网 IPv4/IPv6 地址，未开 TUN 的代理常在此漏底。"],
+    ["udprtt", "net", "WebRTC UDP 握手 vs TCP 往返差", false, "对比浏览器直接发起的 STUN UDP 候选返回耗时与 HTTP TCP 热连接往返耗时，识别仅代理 TCP 或高开销 UDP-over-TCP 封装。"],
     ["lan", "net", "WebRTC 局域网地址与 mDNS", true, "读取 ICE Host 候选：现代浏览器通常用随机 .local (mDNS) 隐藏内网 IP，旧环境或特殊设置会直接暴露。"],
     ["v6mac", "net", "IPv6 物理网卡 MAC 泄露", true, "扫描所有观测到的 IPv6 地址后 64 位是否含 ff:fe (EUI-64)，一旦命中即永久暴露物理网卡 MAC。"],
 
-    // Group 2: exit (8)
+    // Group 2: rep (11) — Multi-Source Egress Reputation, BGP/RDAP & Dirty Neighbours
+    ["rep_score", "rep", "出口 IP 纯净度评分与加扣分账单", false, "基准 92 分 + 最高 10 分原生安全奖励 − 五维封顶扣分（匿名化/黑名单/同段邻居/机房租赁/广播分歧），输出 S~F 纯净度等级。"],
+    ["rep_votes", "rep", "8 源欺诈库加权几率投票", false, "融合 ipapi.is、IPQuery、IPLocate、Blackbox、ip-api、IPinfo 等最多 8 源做上游去重与加权对数几率融合 E = H/(H+N)。"],
+    ["rep_native", "rep", "原生 IP vs 广播 IP 与定位共识", false, "交叉比对 RIR/RDAP 注册国家与多库地理位置共识度，识别跨国 BGP 宣告的「广播 IP」。"],
+    ["rep_asn", "rep", "BGP 自治系统画像与自报冲突", false, "结合 PeeringDB 披露的网络类型与流量方向（如 Heavy Outbound）拆穿「自报住宅 ISP、实为机房托管商」的伪家宽。"],
+    ["rep_lease", "rep", "IP 地址段租赁 / 转售子分配识别", false, "核查 RDAP 分配备注与子分配年代，识别经由 IPXO / InterLIR / Heficed 等经纪平台租借拼装的商业网段。"],
+    ["rep_rpki", "rep", "BGP 宣告规模、RPKI 签名与注册年限", false, "统计所属 ASN 全球路由前缀数、IPv4 地址池规模、RPKI ROA 路由源密码学验签状态与机构注册年份。"],
+    ["rep_shodan", "rep", "Shodan InternetDB 开放端口与漏洞", false, "查询该出口公网 IP 被全球扫描器记录的常驻开放端口、代理/云标签、CPE 服务指纹与历史 CVE 漏洞。"],
+    ["rep_threat", "rep", "开源威胁情报脉冲 (OTX / SFS / Tor)", false, "联查 AlienVault OTX 攻击脉冲报告、StopForumSpam 垃圾注册举报频次及 Tor Onionoo 出口/中继名录。"],
+    ["rep_dnsbl", "rep", "12 项 DoH 实时黑名单与代理特征码", false, "通过加密 DoH 实时核验 Spamhaus ZEN、Barracuda、SpamCop、SORBS 及 DroneBL 开放代理特征码（免疫本地 Fake-IP 污染）。"],
+    ["rep_cidr", "rep", "15 项公开威胁网段与 X4BNet 命中", false, "在服务端内存二分检索 FireHOL L1/L2、IPsum ≥3、DShield、ET Compromised 与 X4BNet 机房/VPN 网段集。"],
+    ["rep_neigh", "rep", "同 /24 C 段脏邻居与全 ASN 滥用密度", false, "统计同一 /24 网段内其余 255 个邻居近期上榜个数，并按全网路由空间基线折算所属 ASN 每万地址滥用密度倍数。"],
+
+    // Group 3: exit (8)
     ["ex_self", "exit", "本站直连出口（当前节点）", true, "访问当前部署服务器时看到的公网出口 IP 与归属。"],
     ["ex_cn", "exit", "中国大陆网站出口", true, "浏览器直接请求大陆测速节点看到的出口 IP，开启「绕过大陆/规则分流」时会直接暴露国内真实省市与宽带。"],
     ["ex_intl", "exit", "海外通用 IP 服务出口", true, "浏览器请求国际通用 GeoIP 服务时呈现的出口地址与网络机构。"],
@@ -165,7 +184,7 @@
     ["warp", "exit", "Cloudflare WARP 与 Gateway", false, "检测流量是否经过 Cloudflare WARP 隧道或 Zero Trust Gateway 企业网关。"],
     ["stack", "exit", "IPv4 与 IPv6 双栈独立出口", true, "分别强制通过纯 IPv4 与纯 IPv6 链路探测出口地址，许多代理仅接管 IPv4 而导致 IPv6 直连裸奔。"],
 
-    // Group 3: hdr (9)
+    // Group 4: hdr (9)
     ["h_ua", "hdr", "HTTP User-Agent 请求头", false, "HTTP 请求头中实际携带的 User-Agent 字符串，与 JS navigator.userAgent 对比可抓出浅层改 UA 插件。"],
     ["h_lang", "hdr", "HTTP Accept-Language 头", false, "HTTP 请求头携带的语言权重列表，若与 JS navigator.languages 首项不一致则说明环境被篡改。"],
     ["h_chua", "hdr", "Sec-CH-UA 品牌列表头", false, "Chromium 浏览器在网络层发送的品牌与主版本号 Client Hints。"],
@@ -176,7 +195,7 @@
     ["h_dnt", "hdr", "HTTP DNT 与 Sec-GPC 头", false, "网络请求头中携带的请勿追踪 (DNT) 与全球隐私控制 (Sec-GPC) 信号。"],
     ["h_ref", "hdr", "页面来源 Referer", false, "跳转到当前页面时的来源网页地址与导航入口类型。"],
 
-    // Group 4: loc (10)
+    // Group 5: loc (11)
     ["langs", "loc", "navigator.languages 语言列表", false, "JS 读取的浏览器首选与备选语言全列表，反映用户日常阅读语种。"],
     ["locale", "loc", "Intl 默认区域与历法", false, "国际化引擎默认解析出的区域代码、日历体系与数字书写系统。"],
     ["tz", "loc", "系统 IANA 时区名称", false, "Intl.DateTimeFormat 读取的操作系统时区 ID（如 Asia/Shanghai）及当前标准时间名。"],
@@ -185,14 +204,16 @@
     ["week", "loc", "每周起始日习惯", false, "Intl.Locale.weekInfo 暴露的一周第一天（如中国/欧洲为周一，美国/日本多为周日）。"],
     ["fmt", "loc", "数字分组与日期格式", false, "本地化长数字千分位小数点样式与年月日排列格式。"],
     ["icu", "loc", "浏览器 ICU 国际化字典规模", false, "统计 Intl.supportedValuesOf 支持的时区、货币、度量单位与历法总数，精简版或旧版内核数量明显不同。"],
+    ["intlcoll", "loc", "ICU 默认排序规则与列表语法", false, "测试 Intl.Collator 对汉字拼音/笔画与拉丁变音字符的默认排序顺序及 ListFormat 连接词，识破未改透的区域伪装。"],
     ["kbd", "loc", "物理键盘键位布局", false, "通过 navigator.keyboard.getLayoutMap 静默识别 QWERTY、AZERTY（法语）、QWERTZ（德语）等物理键位。"],
     ["voices", "loc", "系统内置离线朗读语音包", false, "枚举 speechSynthesis 本地语音合成引擎，Windows 系统安装的语言包会在此留下明确语种痕迹。"],
 
-    // Group 5: dev (32)
+    // Group 6: dev (35)
     ["os", "dev", "真实操作系统与版本", false, "结合高熵 Client Hints 与 Windows 系统专属字体反证（识别伪造 Win11 的旧系统）还原真实 OS 版本。"],
     ["browser", "dev", "浏览器品牌与版本新旧度", false, "解析真实浏览器品牌、主版本号，并推算距离当前最新正式版落后几个版本周期。"],
     ["arch", "dev", "CPU 指令集架构与位数", false, "处理器底层架构（arm / x86）与 64/32 位运行环境。"],
     ["cpu", "dev", "CPU 逻辑核心线程数", false, "navigator.hardwareConcurrency 暴露的处理器逻辑线程数量。"],
+    ["cpubench", "dev", "WASM SIMD 指令集与虚拟化抢占抖动", false, "校验真实 WebAssembly 128-bit SIMD 字节码支持度，并采样 60 组微时间片算力延迟比 (p99/p50)，捕捉云服务器/虚拟机 Hypervisor CPU Steal 毛刺。"],
     ["mem", "dev", "物理内存档位 (deviceMemory)", false, "Chromium 浏览器按分档上报的本机物理内存容量下限（最大封顶报 8 GB）。"],
     ["heap", "dev", "V8 单页 JS 堆内存上限", false, "performance.memory.jsHeapSizeLimit 暴露的单标签页最大可用内存（64 位桌面通常约 4.0 GB）。"],
     ["screen", "dev", "屏幕真实物理像素分辨率", false, "结合 CSS 像素与 devicePixelRatio 反算显示器面板原生物理像素（如 Mac Retina 2940×1912）。"],
@@ -200,6 +221,8 @@
     ["screens", "dev", "多显示器扩展状态与窗口坐标", false, "screen.isExtended 检测是否连接了多块屏幕，并记录当前窗口在桌面坐标系中的位置。"],
     ["gamut", "dev", "屏幕色域与 HDR 动态范围", false, "CSS 媒体查询探测显示器色彩空间（Display P3 / Rec.2020 / sRGB）与高动态范围 (HDR) 能力。"],
     ["touch", "dev", "触控点数与输入指针类型", false, "最大同时触控点数与主输入设备精度（精细鼠标触控板 vs 粗粒度手指触屏）。"],
+    ["uigeom", "dev", "原生表单控件亚像素包围盒几何", false, "测量未加样式的原生 button / select / checkbox / range 控件宽高，macOS Cocoa、Windows Fluent 与 Linux GTK 原生主题尺寸截然不同。"],
+    ["fontrast", "dev", "跨系统字体光栅化引擎签名", false, "分析斜线与曲线字形边缘的 RGB 彩边离差与灰阶 Gamma 分布，识破在 Linux/Windows 容器强装苹果 PingFang 字体伪装 Mac 的行为。"],
     ["gpu", "dev", "显卡真实型号与双显卡探测", false, "同时请求默认与 high-performance 上下文，挖掘核显笔记本背后隐藏的独立显卡型号及虚拟机软件渲染特征。"],
     ["glx", "dev", "WebGL 版本与纹理能力上限", false, "WebGL 1/2 支持状态、最大纹理像素尺寸及显卡驱动暴露的扩展总数。"],
     ["webgpu", "dev", "WebGPU 高性能/低功耗双适配器", false, "读取新一代 WebGPU API 的高性能与低功耗双 Adapter 厂商、微架构与设备描述。"],
@@ -222,7 +245,7 @@
     ["apis", "dev", "硬件敏感接口暴露面", false, "统计 WebUSB、WebHID、WebSerial、MIDI、NFC、本地字体访问等 12 项硬件 API 是否存在。"],
     ["emoji", "dev", "系统字库 Emoji 版本代际", false, "利用 Canvas 测量 Emoji 12.0 至 16.0 新字符渲染宽度，反推操作系统内置字体新旧程度。"],
 
-    // Group 6: brw (22)
+    // Group 7: brw (22)
     ["scheme", "brw", "系统深浅色与对比度偏好", false, "读取 prefers-color-scheme 系统外观主题与高对比度模式。"],
     ["sysui", "brw", "默认字号与系统强调色", false, "读取浏览器基础字号（默认 16px）及操作系统级 AccentColor 强调色值。"],
     ["scrollbar", "brw", "原生滚动条物理宽度", false, "测量系统滚动条占用像素：macOS/移动端通常为 0px 悬浮滚动条，Windows 经典模式为 15–17px。"],
@@ -239,14 +262,14 @@
     ["webdriver", "brw", "自动化框架与驱动痕迹", false, "综合检测 navigator.webdriver、Selenium/CDC、Playwright 与 Puppeteer 注入钩子。"],
     ["adblock", "brw", "广告拦截插件双重实测", false, "结合页面多类名广告 DOM 诱饵隐藏检测与 Google 广告脚本网络请求拦截对照（排除断网误判）。"],
     ["ext", "brw", "页面注入痕迹识别扩展", false, "检测加密钱包全局对象（MetaMask/OKX/Phantom/Rabby）、DevTools 钩子与翻译/暗色插件 DOM 标记。"],
-    ["extwar", "brw", "Chrome 扩展公开资源扫描", false, "探测 18 款主流 Chrome 扩展公开给网页的 chrome-extension:// 静态资源，精准识别已装插件。"],
+    ["extwar", "brw", "Chrome 扩展公开资源扫描", false, "并发探测 36 款主流代理、改指纹、脚本管理器、钱包与密码管理扩展暴露的 chrome-extension:// 静态资源。"],
     ["worker", "brw", "Web Worker 线程交叉核验", false, "启动独立 Worker 线程读取 navigator 与时区，与主线程逐项对比，专抓只改主页面的防关联插件。"],
     ["iframe", "brw", "洁净 iframe 沙箱交叉核验", false, "动态创建空白同源 iframe 对照 navigator、screen 与时区读数，识别页面级浅层注入。"],
     ["lies", "brw", "52 项原生接口谎言检测", false, "利用洁净 iframe 的 Function.toString、prototype 属性检查与非法调用异常测试，抓捕被重写过的原生 API。"],
     ["shield", "brw", "防指纹护盾品牌归因", false, "根据加噪方式与特征识别 Brave Farbling、Firefox RFP、Safari 高级防追踪或第三方改指纹扩展。"],
     ["trackers", "brw", "7 大追踪器拦截实测（手动）", false, "点击按钮后向 Google Analytics、DoubleClick、Meta、Bing、TikTok、百度统计、Hotjar 发起无 Cookie 测试请求。"],
 
-    // Group 7: fp (23)
+    // Group 8: fp (23)
     ["fpid", "fp", "跨站综合浏览器指纹 ID", false, "汇总 Canvas、WebGL、音频、字体、屏幕、时区与硬件参数生成的与 IP 无关的跨站追踪 ID。"],
     ["hwid", "fp", "跨浏览器物理硬件编号", false, "仅选取由电脑硬件与操作系统决定的特征（物理屏幕、核数、显卡、时区、字库）计算，换浏览器访问仍高度一致。"],
     ["etag", "fp", "HTTP ETag 缓存追踪编号", false, "零服务端数据库存储：利用浏览器 If-None-Match 缓存协商机制，即使清空 Cookie 与本地存储仍能认出回访者。"],
@@ -272,17 +295,23 @@
     ["sensors", "fp", "陀螺仪与加速度计噪声（需授权）", false, "移动端手动点击采集 1.5 秒运动传感器采样频率与零偏标准差硬件指纹，纯本地计算不上传。"]
   ];
 
-  // 14 Core Disguise Checks + 4 Protocol Security Checks = 18 Checks
+  // 20 Core Disguise, Deep Stack & Reputation Checks + 4 Protocol Security Checks = 24 Checks
   const CORE_CHECKS = [
     ["tz", "时区与出口 IP 对齐", ["disguise"]],
     ["lang", "浏览器语言与出口对齐", ["disguise"]],
     ["syslang", "系统底层语种（字库/语音/键位）", ["disguise"]],
-    ["dns", "DNS 解析器归属泄漏", ["disguise", "privacy"]],
+    ["dns", "DNS 解析器与 ECS 子网泄漏", ["disguise", "privacy"]],
     ["split", "国内外与 AI 多路分流一致性", ["disguise"]],
     ["conn", "底层 TCP/TLS 协议栈与自报系统", ["disguise"]],
-    ["rtt", "往返延迟物理测距（抓代理中转）", ["disguise"]],
-    ["webrtc", "WebRTC STUN 真实 IP 泄漏", ["disguise", "privacy"]],
-    ["dc", "出口 IP 机房 / 原生属性", ["disguise"]],
+    ["synspoof", "IP/TCP 内核时钟连续性与防改包", ["disguise"]],
+    ["reality", "出口 :443 反向验真与 Reality 偷证书", ["disguise"]],
+    ["rtt", "往返延迟三维测距（TCP/HTTP/UDP）", ["disguise"]],
+    ["webrtc", "WebRTC STUN 真实 IP 与网卡 MAC 泄漏", ["disguise", "privacy"]],
+    ["dc", "出口 IP 机房 / 原生住宅多源投票", ["disguise"]],
+    ["lease", "伪家宽自报冲突、IP 租赁段与广播属性", ["disguise"]],
+    ["reputation", "欺诈风险、黑名单与同 /24 脏邻居连坐", ["disguise"]],
+    ["subpixel", "字体光栅化、原生控件与滚动条跨系统核验", ["disguise"]],
+    ["hwvirt", "虚拟化抢占抖动与显卡硬解芯片核验", ["disguise"]],
     ["tamper", "浏览器环境篡改与谎言检测", ["disguise"]],
     ["fpb", "指纹浏览器与跨线程矛盾", ["disguise"]],
     ["ua", "UA、Client Hints 与显卡系统一致性", ["disguise"]],
@@ -566,6 +595,18 @@
   let checkFilter = "all";
   let currentScene = store.get(SK.scene) === "privacy" ? "privacy" : "disguise";
   let targetCountry = store.get(SK.target) || "";
+  let externalQueryIp = (() => {
+    try { return (new URLSearchParams(location.search).get("ip") || "").trim(); } catch (e) { return ""; }
+  })();
+
+  const SCENARIOS_META = [
+    ["ai", "AI 大模型", "ChatGPT / Claude / Gemini"],
+    ["streaming", "流媒体与短视频", "Netflix / Disney+ / TikTok"],
+    ["social", "社媒注册与养号", "X / Instagram / Reddit / TG"],
+    ["captcha", "无感验证码免盾", "Turnstile / reCAPTCHA v3"],
+    ["fintech", "金融支付与电商", "Stripe / PayPal / Amazon"],
+    ["email", "SMTP 邮件信誉", "25 端口投递 / Spamhaus / PTR"]
+  ];
 
   const SNIFFER_MAP = Object.fromEntries(SNIFFERS.map((s, idx) => [s[0], { idx: idx + 1, id: s[0], group: s[1], title: s[2], mask: s[3], desc: s[4] }]));
   const ROW_EL = {};
@@ -608,12 +649,42 @@
   }
 
   function buildInitialDOM() {
-    // 1. 14-segment health bar
+    // 1. 20-segment health bar (flex-1 so any check count renders evenly)
     const segBar = $("#segBar");
     if (segBar) {
       segBar.innerHTML = CORE_CHECKS.map(([id, title]) =>
-        `<span data-seg="${esc(id)}" title="${esc(title)}" class="h-full rounded-full bg-gray-200 dark:bg-neutral-800 transition-colors"></span>`
+        `<span data-seg="${esc(id)}" title="${esc(title)}" class="flex-1 h-full rounded-full bg-gray-200 dark:bg-neutral-800 transition-colors"></span>`
       ).join("");
+    }
+
+    // 1b. 6 Business Scenario Suitability Skeleton Cards
+    const sg = $("#scenarioGrid");
+    if (sg) {
+      sg.innerHTML = SCENARIOS_META.map(([id, name, sub]) => `
+        <div data-scen="${esc(id)}" class="rounded-lg border border-gray-200/90 bg-gray-50/50 p-3 flex flex-col justify-between gap-2 dark:bg-neutral-800/40 dark:border-neutral-800">
+          <div>
+            <div class="flex items-center justify-between gap-1.5">
+              <span class="text-xs font-semibold text-gray-900 dark:text-white truncate">${esc(name)}</span>
+              <span class="sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold bg-gray-200/80 text-gray-600 dark:bg-neutral-700 dark:text-neutral-300">评估中</span>
+            </div>
+            <p class="text-[10.5px] text-gray-400 dark:text-neutral-500 truncate">${esc(sub)}</p>
+          </div>
+          <div>
+            <div class="flex items-baseline justify-between gap-1 mb-1">
+              <span class="sc-score font-mono text-lg font-bold tabular-nums text-gray-900 dark:text-white">--</span>
+              <span class="text-[10px] font-mono text-gray-400">/ 100</span>
+            </div>
+            <div class="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden dark:bg-neutral-700">
+              <div class="sc-bar h-full rounded-full bg-blue-500 transition-all duration-300" style="width: 15%"></div>
+            </div>
+            <p class="sc-reason mt-1.5 text-[11px] leading-snug text-gray-500 dark:text-neutral-400 line-clamp-2">等待多源欺诈库与浏览器核验…</p>
+          </div>
+        </div>
+      `).join("");
+    }
+    if (externalQueryIp) {
+      const inp = $("#ipQueryInput");
+      if (inp) inp.value = externalQueryIp;
     }
 
     // 2. Route Split Matrix
@@ -795,7 +866,7 @@
     const t1 = Date.now();
 
     if (!data) {
-      ["ip", "geo", "coords", "isp", "nettype", "tzip", "ptr", "clock", "proto", "tcpfp", "ja4t", "tunnel", "ja4", "ja3", "tlsext", "pqkex", "ech", "h2fp",
+      ["ip", "geo", "coords", "isp", "nettype", "tzip", "ptr", "clock", "proto", "tcpfp", "ipquirk", "ja4t", "tunnel", "ja4", "ja3", "tlsext", "pqkex", "ech", "h2fp",
        "h_ua", "h_lang", "h_chua", "h_plat", "h_arch", "h_enc", "h_sec", "h_dnt"].forEach(k => setNA(k, "服务端探针请求超时"));
       return;
     }
@@ -895,8 +966,22 @@
       setProbe("tunnel", tunLabels[tun] || (tcp.mtu ? `MTU ${tcp.mtu} (MSS ${tcp.mss})` : "未携带 MSS"), {
         tone: tun && !["ethernet", "pppoe"].includes(tun) ? "warn" : "neutral"
       });
+
+      // IP layer DF / IPID / ECN & TCP Timestamp clock Hz + stateless SYN-spoof check
+      const dfTxt = tcp.df === true ? "DF=1(不分片)" : tcp.df === false ? "DF=0(允许分片·macOS/BSD特征)" : "DF=?";
+      const ipidStep = (tcp.synIpId != null && tcp.helloIpId != null)
+        ? (tcp.synIpId === 0 && tcp.helloIpId === 0 ? "IPID=0恒零(Linux/Apple特征)" : `IPID ${tcp.synIpId}→${tcp.helloIpId}`)
+        : (tcp.synIpId != null ? `SYN IPID=${tcp.synIpId}` : "IPID=–");
+      const hzTxt = tcp.tsHz != null ? `TS时钟≈${tcp.tsHz}Hz` : (tcp.synTsval != null ? `TSval=${tcp.synTsval}` : "无TS时间戳");
+      const ecnTxt = tcp.ecn ? "ECN开启" : "ECN未开";
+      const spoofTxt = tcp.synSpoofSuspect ? " · 疑似无状态SYN改包！" : "";
+      setProbe("ipquirk", `${dfTxt} · ${ipidStep} · ${hzTxt} · ${ecnTxt}${spoofTxt}`, {
+        tone: tcp.synSpoofSuspect ? "bad" : "neutral",
+        why: `TOS=0x${(tcp.tos || 0).toString(16)} · SYN TSval=${tcp.synTsval ?? "无"} · 估算内核节拍=${tcp.tsHz ?? "待二次包计算"} Hz`
+      });
     } else {
       setNA("tcpfp", "连接复用未捕获新 SYN 包");
+      setNA("ipquirk", "连接复用未捕获新 SYN 包");
       setNA("ja4t", "连接复用未捕获新 SYN 包");
       setNA("tunnel", "连接复用未捕获新 SYN 包");
     }
@@ -955,11 +1040,284 @@
     setRouteRow("ex_self", `${flagEmoji(cc)} ${ip}`, [countryName(cc), g.city, org].filter(Boolean).join(" · "), isDc ? "warn" : "ok");
   }
 
-  // 2. Physical TCP Handshake RTT vs Browser Warm HTTP RTT (1 item: tcprtt)
+  // 1b. Multi-Source Egress Intelligence, BGP/RDAP Lease, 12 DNSBLs, /24 Dirty Neighbours & Active :443 Reality Back-Probe (12 items: reality443 + 11 rep_*)
+  const REP_PROBE_IDS = ["reality443", "rep_score", "rep_votes", "rep_native", "rep_asn", "rep_lease", "rep_rpki", "rep_shodan", "rep_threat", "rep_dnsbl", "rep_cidr", "rep_neigh"];
+
+  function applyIntelToProbes(intel) {
+    if (!intel || !intel.ok) {
+      REP_PROBE_IDS.forEach(k => setNA(k, "出口多源情报暂不可达"));
+      return;
+    }
+    const p = intel.purity || {};
+    const c = intel.consensus || {};
+    const v = intel.votes || {};
+    const ap = intel.asnProfile || {};
+    const inf = ap.inferred || {};
+    const ls = ap.lease || {};
+    const ad = ap.abuseDensity || null;
+    const t4 = intel.tls443 || {};
+    const sh = intel.shodan || null;
+    const th = intel.threat || {};
+    const bl = intel.dnsbl || {};
+    const ci = intel.cidr || {};
+    const nb = ci.neighbours || {};
+    const prefixTag = intel.isSelfEgress === false ? `[查 ${intel.targetIp}] ` : "";
+
+    // Update KPI 3 purity pill if this is the visitor's own egress
+    if (intel.isSelfEgress !== false) {
+      const pill = $("#purityPill");
+      if (pill && p.score != null) {
+        pill.textContent = `纯净度 ${p.score}·${p.grade}`;
+        pill.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-mono font-semibold " + (
+          p.score >= 82 ? "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
+            : p.score >= 58 ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
+            : "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+        );
+      }
+      // Refine KPI 3 ISP badge if 8-source voting caught a fake-ISP or hosting node
+      if ((v.hosting?.E >= 0.55 || inf.cls === "hosting" || ci.x4bDatacenter) && R.netKind === "isp") {
+        R.netKind = "dc";
+        setProbe("nettype", `多源投票识破机房/托管线路 (${Math.round((v.hosting?.E || 0.7) * 100)}% 置信)`, { tone: "bad" });
+        const ispBadge = $("#ispTypeBadge");
+        if (ispBadge) {
+          ispBadge.textContent = inf.conflict ? "伪家宽机房" : "机房 / 托管";
+          ispBadge.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400";
+        }
+      }
+    }
+
+    // 1) reality443: Active :443 TLS & VLESS-Reality Camouflage Back-Probe
+    if (!t4.probed) {
+      setNA("reality443", "未启用 :443 主动回探");
+    } else if (t4.realitySuspect) {
+      setProbe("reality443", `${prefixTag}实锤伪装！非官方 ASN 却返回 ${t4.realityBrand || "大厂"} 证书 (${t4.realityDomain || "SNI"})`, {
+        tone: "bad",
+        why: `判定: ${t4.verdict} · 握手耗时: ${t4.rttMs ?? "?"}ms · TLS: ${t4.tlsVersion || "-"} · SANs: ${(t4.sans || []).join(", ")}`
+      });
+    } else if (t4.tlsActive) {
+      const cn = t4.subjectCN || (t4.sans && t4.sans[0]) || "未声明域名";
+      setProbe("reality443", `${prefixTag}开放 :443 TLS 服务 (CN=${cn}${t4.selfSignedOrIpCert ? " · 自签/IP证书" : ""})`, {
+        tone: "warn",
+        why: `签发机构: ${t4.issuerOrg || "自签/未知"} · 套件: ${t4.cipher || "-"} · 反向握手: ${t4.rttMs ?? "?"}ms`
+      });
+    } else if (t4.port443Open) {
+      setProbe("reality443", `${prefixTag}开放 :443 TCP 端口（无标准 TLS 证书返回 · ${t4.rttMs ?? "?"}ms）`, { tone: "warn" });
+    } else {
+      setProbe("reality443", `${prefixTag}:443 端口关闭或静默丢包（典型家宽 NAT / 无公网服务端监听）`, { tone: "ok" });
+    }
+
+    // 2) rep_score: Purity Score & Ledger
+    const dedLines = (p.deductions || []).map(d => `−${d.pts} [${d.label}] ${d.detail}`);
+    const bonLines = (p.bonuses || []).map(b => `+${b.pts} [${b.label}]`);
+    setProbe("rep_score", `${prefixTag}${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}（奖励 +${p.bonusTotal ?? 0} / 扣分 −${p.deductTotal ?? 0}）`, {
+      tone: (p.score ?? 0) >= 82 ? "ok" : (p.score ?? 0) >= 58 ? "warn" : "bad",
+      why: [...bonLines, ...dedLines].join("\n") || "基准分 92"
+    });
+
+    // 3) rep_votes: 8-Source Weighted Odds Voting
+    const pct = x => `${Math.round((x?.E || 0) * 100)}%`;
+    const maxAnon = Math.max(v.vpn?.E || 0, v.proxy?.E || 0, v.tor?.E || 0);
+    setProbe("rep_votes", `${prefixTag}机房 ${pct(v.hosting)} · 代理 ${pct(v.proxy)} · VPN ${pct(v.vpn)} · Tor ${pct(v.tor)} · 风险分 ${c.riskScore ?? 0}`, {
+      tone: maxAnon >= 0.45 || (v.hosting?.E || 0) >= 0.6 ? "bad" : maxAnon >= 0.2 || (v.hosting?.E || 0) >= 0.35 ? "warn" : "ok",
+      why: (intel.sources || []).map(s => `${s.name}: ${s.country || "?"} · ${s.type || "-"} · risk=${s.risk ?? "-"} · ${JSON.stringify(s.flags || {})}`).join("\n")
+    });
+
+    // 4) rep_native: Native vs Broadcast IP & Geo Consensus
+    const supPct = Math.round((c.countrySupport || 0) * 100);
+    const natTxt = c.isNative === true
+      ? `原生 IP（RIR 注册国 ${c.regCountry} = 定位国 ${c.country}）`
+      : c.isNative === false
+      ? `广播 IP！（RIR 注册于 ${c.regCountry}，BGP 广播至 ${c.country}）`
+      : `定位 ${c.country || "未知"}（RIR 注册国未披露）`;
+    setProbe("rep_native", `${prefixTag}${natTxt} · ${c.sourceCount || 0} 源共识 ${supPct}%`, {
+      tone: c.isNative === false ? "warn" : supPct >= 85 ? "ok" : "neutral",
+      why: (c.countries || []).map(x => `${x.cc}: ${x.by.join(", ")}`).join("\n")
+    });
+
+    // 5) rep_asn: BGP ASN Profile & PeeringDB Conflict
+    const clsMap = { isp: "住宅/商业宽带 ISP", mobile: "移动蜂窝网络", hosting: "数据中心/云托管", cdn: "CDN 边缘网络", edu: "教育科研网", gov: "政企机构网", biz: "企业自用网" };
+    const clsZh = clsMap[inf.cls] || inf.cls || "未知网络类型";
+    const pdb = [ap.peeringdbType, ap.trafficRatio].filter(Boolean).join(" / ");
+    setProbe("rep_asn", `${prefixTag}${c.asn ? "AS" + String(c.asn).replace(/^AS/i, "") : "ASN"} → ${clsZh}${pdb ? ` (PeeringDB: ${pdb})` : ""}${inf.conflict ? ` · ${inf.conflict}` : ""}`, {
+      tone: inf.conflict || inf.cls === "hosting" ? "bad" : inf.cls === "isp" || inf.cls === "mobile" ? "ok" : "neutral",
+      why: (inf.reasons || []).join("\n")
+    });
+
+    // 6) rep_lease: IP Leasing / Sub-allocation Broker Detection
+    if (ls.leased) {
+      setProbe("rep_lease", `${prefixTag}检出商业租赁/转售地址段（${(ls.reasons || []).join("；")}）`, { tone: "warn" });
+    } else if (ls.possible) {
+      setProbe("rep_lease", `${prefixTag}疑似近期子分配或转租网段（${(ls.reasons || []).join("；")}）`, { tone: "warn" });
+    } else {
+      setProbe("rep_lease", `${prefixTag}RIR 原始直配网段（未见 IPXO / InterLIR 租赁特征）`, {
+        tone: "ok",
+        why: intel.rdap?.name ? `RDAP NetName: ${intel.rdap.name} · 分配日: ${intel.rdap.regDate || "未知"}` : ""
+      });
+    }
+
+    // 7) rep_rpki: BGP Announcement Scale, RPKI ROA & ASN Age
+    const rpki = (ap.rpki || "unknown").toUpperCase();
+    const v4Sz = ap.v4Size ? `${Number(ap.v4Size).toLocaleString("zh-CN")} 个 IPv4` : "规模未知";
+    const regYr = ap.asnRegDate ? ` · 始于 ${String(ap.asnRegDate).slice(0, 4)} 年` : "";
+    setProbe("rep_rpki", `${prefixTag}RPKI ${rpki} · 前缀 ${ap.prefixesV4Count ?? "?"} 条 (${v4Sz})${regYr}`, {
+      tone: ap.rpki === "invalid" ? "bad" : ap.rpki === "valid" ? "ok" : "neutral"
+    });
+
+    // 8) rep_shodan: Shodan InternetDB Open Ports & CVEs
+    if (!sh || (!sh.ports?.length && !sh.tags?.length && !sh.vulns?.length)) {
+      setProbe("rep_shodan", `${prefixTag}无公网常驻暴露端口与已知 CVE 漏洞`, { tone: "ok" });
+    } else {
+      const pStr = (sh.ports || []).length ? `开放端口 [${sh.ports.slice(0, 8).join(",")}]` : "无常驻端口";
+      const tStr = (sh.tags || []).length ? ` · 标签 ${sh.tags.join("/")}` : "";
+      const vStr = (sh.vulns || []).length ? ` · 含 ${sh.vulns.length} 个历史 CVE！` : "";
+      setProbe("rep_shodan", `${prefixTag}${pStr}${tStr}${vStr}`, {
+        tone: (sh.vulns || []).length ? "bad" : (sh.ports || []).length ? "warn" : "ok",
+        why: [...(sh.hostnames || []), ...(sh.cpes || []), ...(sh.vulns || [])].join(" · ")
+      });
+    }
+
+    // 9) rep_threat: AlienVault OTX + StopForumSpam + Tor Onionoo
+    const otxP = th.otx && !th.otx.benign ? (th.otx.pulses || 0) : 0;
+    const sfsCnt = th.sfs?.appears ? (th.sfs.frequency || 1) : 0;
+    const torHit = th.onionoo?.isTorExit || th.onionoo?.isTorRelay;
+    const torNb = th.onionoo?.neighbourRelays || 0;
+    const thHits = [];
+    if (torHit) thHits.push("Tor 活跃节点");
+    if (sfsCnt > 0) thHits.push(`StopForumSpam 举报 ${sfsCnt} 次`);
+    if (otxP > 0) thHits.push(`OTX 威胁脉冲 ${otxP} 起`);
+    if (torNb > 0) thHits.push(`同 /24 含 ${torNb} 个 Tor 中继`);
+    setProbe("rep_threat", thHits.length ? `${prefixTag}${thHits.join(" · ")}` : `${prefixTag}OTX / StopForumSpam / Tor 名录零不良记录`, {
+      tone: torHit || sfsCnt > 2 || otxP >= 3 ? "bad" : thHits.length ? "warn" : "ok"
+    });
+
+    // 10) rep_dnsbl: 12 DoH Real-time DNSBLs
+    if ((bl.listedCount || 0) > 0) {
+      setProbe("rep_dnsbl", `${prefixTag}上榜 ${bl.listedCount}/${bl.total || 12} 家：${(bl.listed || []).join(", ")}${bl.droneProxy ? " [DroneBL 开放代理]" : ""}`, {
+        tone: "bad"
+      });
+    } else {
+      setProbe("rep_dnsbl", `${prefixTag}通过全部 ${bl.total || 12} 家实时 DoH 黑名单核验（0 命中）`, { tone: "ok" });
+    }
+
+    // 11) rep_cidr: 15 CIDR Netsets & X4BNet DC/VPN
+    const threatHits = (ci.hits || []).filter(h => h.kind === "threat");
+    const cidrNames = Array.from(new Set([
+      ...(ci.hits || []).map(h => h.name),
+      ci.x4bDatacenter ? "X4BNet 机房段" : "",
+      ci.x4bVpn ? "X4BNet VPN/隧道段" : "",
+      ci.openProxy ? "公开 SOCKS/HTTP 代理表" : ""
+    ].filter(Boolean)));
+    setProbe("rep_cidr", cidrNames.length ? `${prefixTag}命中 ${cidrNames.length} 项网段库：${cidrNames.join(" · ")}` : `${prefixTag}15 项公开恶意攻击、僵尸与 VPN 网段库零命中`, {
+      tone: threatHits.length || ci.openProxy ? "bad" : cidrNames.length ? "warn" : "ok"
+    });
+
+    // 12) rep_neigh: /24 Dirty Neighbours & Whole-ASN Abuse Density
+    const dirty = nb.dirtyCount || 0;
+    const whole = (nb.wholeBlockListed || []).length > 0;
+    const asnRatio = ad ? `${ad.per10k}/万IP (${ad.ratio}x 全网均值)` : "ASN 密度正常";
+    setProbe("rep_neigh", `${prefixTag}同 /24 脏邻居 ${dirty} 个${whole ? " [整段封禁！]" : ""} · 全 ASN 滥用 ${asnRatio}`, {
+      tone: whole || dirty >= 10 || (ad && ad.ratio >= 12) ? "bad" : dirty > 0 || (ad && ad.ratio >= 2.5) ? "warn" : "ok",
+      why: (nb.lists || []).length ? `邻居上榜源: ${nb.lists.join(", ")}` : ""
+    });
+  }
+
+  function syncExtIpBanner() {
+    const banner = $("#extIpBanner");
+    const tgtBadge = $("#scenarioTargetBadge");
+    const ext = R.extIntel;
+    if (!ext || !ext.ok) {
+      if (banner) banner.hidden = true;
+      if (tgtBadge) tgtBadge.textContent = "实时融合当前出口信誉 + 浏览器指纹";
+      return;
+    }
+    if (banner) banner.hidden = false;
+    const p = ext.purity || {}, c = ext.consensus || {}, ap = ext.asnProfile || {};
+    $("#extIpVal").textContent = ext.targetIp || externalQueryIp;
+    const pb = $("#extPurityBadge");
+    if (pb) {
+      pb.textContent = `纯净度 ${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}`;
+      pb.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold " + (
+        (p.score ?? 0) >= 82 ? "bg-teal-600 text-white" : (p.score ?? 0) >= 58 ? "bg-amber-500 text-white" : "bg-red-600 text-white"
+      );
+    }
+    const topDed = (p.deductions || [])[0];
+    $("#extIpMeta").textContent = [
+      c.country ? `${flagEmoji(c.country)} ${countryName(c.country)}` : "",
+      c.isNative === false ? "广播IP" : c.isNative === true ? "原生IP" : "",
+      c.asn ? `AS${String(c.asn).replace(/^AS/i, "")} ${ap.name || ""}`.trim() : "",
+      topDed ? `主要扣分: ${topDed.label} (−${topDed.pts})` : "无显著扣分项"
+    ].filter(Boolean).join(" · ");
+    if (tgtBadge) tgtBadge.textContent = `当前评估外部查询 IP: ${ext.targetIp}`;
+  }
+
+  async function probeIntel() {
+    const selfData = await getJSON(`./api/who/intel?t=${Date.now()}`, 9500, "omit").catch(() => null);
+    if (selfData && selfData.ok) {
+      R.intel = selfData;
+    }
+    if (externalQueryIp) {
+      const extData = await getJSON(`./api/who/intel?ip=${encodeURIComponent(externalQueryIp)}&t=${Date.now()}`, 9500, "omit").catch(() => null);
+      if (extData && extData.ok && !extData.isSelfEgress) {
+        R.extIntel = extData;
+      } else {
+        R.extIntel = null;
+      }
+    } else {
+      R.extIntel = null;
+    }
+    applyIntelToProbes(R.extIntel || R.intel);
+    syncExtIpBanner();
+    renderScenarios();
+  }
+
+  async function inspectCustomIp(rawIp) {
+    const q = String(rawIp || "").trim();
+    const btn = $("#btnQueryIp");
+    if (!q) {
+      externalQueryIp = "";
+      R.extIntel = null;
+      try {
+        const u = new URL(location.href);
+        u.searchParams.delete("ip");
+        history.replaceState(null, "", u.pathname + u.search + u.hash);
+      } catch (e) {}
+      applyIntelToProbes(R.intel);
+      syncExtIpBanner();
+      renderScenarios();
+      renderChecksAndScore(false);
+      showToast("已切回本机当前出口情报");
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = "查询中…"; }
+    const data = await getJSON(`./api/who/intel?ip=${encodeURIComponent(q)}&t=${Date.now()}`, 10000, "omit").catch(() => null);
+    if (btn) { btn.disabled = false; btn.textContent = "查情报"; }
+    if (!data || !data.ok) {
+      showToast("请输入有效的公网 IPv4 或 IPv6 地址（不支持内网保留地址）");
+      return;
+    }
+    externalQueryIp = data.targetIp || q;
+    const inp = $("#ipQueryInput");
+    if (inp) inp.value = externalQueryIp;
+    try {
+      const u = new URL(location.href);
+      if (data.isSelfEgress) u.searchParams.delete("ip");
+      else u.searchParams.set("ip", externalQueryIp);
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } catch (e) {}
+    R.extIntel = data.isSelfEgress ? null : data;
+    if (data.isSelfEgress) R.intel = data;
+    applyIntelToProbes(R.extIntel || R.intel);
+    syncExtIpBanner();
+    renderScenarios();
+    renderChecksAndScore(false);
+    showToast(`已完成 ${externalQueryIp} 的多源信誉与 :443 证书穿透分析`);
+  }
+
+  // 2. Physical TCP Handshake RTT vs Browser Warm HTTP RTT + Micro-Burst Mux/Jitter Coalescing (2 items: tcprtt, muxjitter)
   async function probeLatency() {
     const samples = [];
     for (let i = 0; i < 5; i++) {
-      const u = new URL(`./api/who/ping?i=${i}&t=${Date.now()}`, location.href).href;
+      const u = new URL(`./api/who/ping?seq=s${i}&t=${Date.now()}`, location.href).href;
       const t0 = performance.now();
       const ok = await fetch(u, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(3500) })
         .then(async r => { if (!r.ok) return false; await r.text(); return true; }, () => false);
@@ -975,6 +1333,49 @@
       }
     }
     R.httpRtt = samples.length ? Math.round(Math.min(...samples)) : null;
+
+    // Micro-burst coalescing & jitter probe (6 pulses spaced ~8ms apart)
+    try {
+      const burstPromises = [];
+      const sendTs = [];
+      for (let b = 0; b < 6; b++) {
+        sendTs.push(performance.now());
+        const bu = `./api/who/ping?seq=b${b}&t=${Date.now()}_${b}`;
+        burstPromises.push(
+          fetch(bu, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(3500) })
+            .then(async r => {
+              const recv = performance.now();
+              const j = r.ok ? await r.json().catch(() => null) : null;
+              return j && j.serverPerfUs != null ? { b, sent: sendTs[b], recv, rtt: recv - sendTs[b], srvUs: j.serverPerfUs } : null;
+            }, () => null)
+        );
+        if (b < 5) await new Promise(r => setTimeout(r, 8));
+      }
+      const bRes = (await Promise.all(burstPromises)).filter(Boolean).sort((a, b) => a.b - b.b);
+      if (bRes.length >= 4) {
+        const clientSpanMs = Math.max(1, bRes[bRes.length - 1].sent - bRes[0].sent);
+        const srvSpanMs = Math.abs(bRes[bRes.length - 1].srvUs - bRes[0].srvUs) / 1000;
+        const rtts = bRes.map(x => x.rtt);
+        const meanRtt = rtts.reduce((a, b) => a + b, 0) / rtts.length;
+        const stdRtt = Math.sqrt(rtts.reduce((s, x) => s + (x - meanRtt) ** 2, 0) / rtts.length);
+        let coalescedPairs = 0;
+        for (let k = 1; k < bRes.length; k++) {
+          if (Math.abs(bRes[k].srvUs - bRes[k - 1].srvUs) < 900 && (bRes[k].sent - bRes[k - 1].sent) >= 5) {
+            coalescedPairs++;
+          }
+        }
+        R.muxBurst = { stdRtt: +stdRtt.toFixed(1), coalescedPairs, clientSpanMs: Math.round(clientSpanMs), srvSpanMs: +srvSpanMs.toFixed(1) };
+        const isMux = coalescedPairs >= 3 || (srvSpanMs < clientSpanMs * 0.35 && clientSpanMs >= 25);
+        setProbe("muxjitter", `RTT 抖动 σ=${stdRtt.toFixed(1)}ms · 发射跨度 ${Math.round(clientSpanMs)}ms → 服务端到达跨度 ${srvSpanMs.toFixed(1)}ms${isMux ? " (检出多路复用粘包合并特征)" : ""}`, {
+          tone: isMux || stdRtt > 45 ? "warn" : "ok",
+          why: `6 脉冲粘包对(<0.9ms间隔): ${coalescedPairs} 对 · 单次脉冲 RTT: ${rtts.map(x => Math.round(x) + "ms").join(", ")}`
+        });
+      } else {
+        setNA("muxjitter", "微脉冲采样不足");
+      }
+    } catch (e) {
+      setNA("muxjitter", "微脉冲探测受限");
+    }
 
     // Timer coarsening check
     let step = Infinity, prev = performance.now();
@@ -1004,6 +1405,7 @@
       setNA("tcprtt", "网络计时受限");
       $("#kpiRttVal").textContent = "–";
     }
+    updateUdpRttProbe();
   }
 
   // 3. Multi-target Outbound Exits, Dual-Stack & QUIC (9 items: ex_self..stack + quicfp)
@@ -1157,11 +1559,18 @@
   }
 
   async function probeDns() {
-    const randHex = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("");
-    const j = await getJSON(`https://${randHex}.edns.ip-api.com/json`, 6500).catch(() => null);
+    const randHex1 = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("");
+    const randHex2 = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("");
+    const [j1, j2] = await Promise.all([
+      getJSON(`https://${randHex1}.edns.ip-api.com/json`, 6500).catch(() => null),
+      getJSON(`https://${randHex2}.edns.ip-api.com/json`, 6500).catch(() => null)
+    ]);
+    const j = j1?.dns ? j1 : j2;
     if (!j || !j.dns) {
       R.dnsCC = null;
+      R.dnsClass = null;
       setNA("dns", "DNS 探针被拦截或超时");
+      setNA("ecs", "上游递归集群不可达");
       setRouteRow("dns", "未测出", "edns 探针超时");
       return;
     }
@@ -1170,31 +1579,88 @@
     const cname = (parts[0] || "").trim();
     const org = parts.slice(1).join(" - ").trim();
     const cc = resolveEnglishCountry(cname);
-    const ecs = j.edns?.ip ? `ECS 子网透传 ${j.edns.ip}` : "";
+    const ecsIp = j.edns?.ip || j2?.edns?.ip || "";
+    const ecsGeo = j.edns?.geo || j2?.edns?.geo || "";
     R.dnsCC = cc;
     R.dnsIp = d.ip || "";
     R.dnsOrg = org || cname;
+    R.ecsIp = ecsIp;
+
+    // Collect multi-resolver cluster & classify DNS alignment (own / public / same / leak / leak-cn)
+    const resolvers = Array.from(new Set([j1?.dns?.ip, j2?.dns?.ip].filter(Boolean)));
+    const isPublicAnycast = /Google|Cloudflare|Quad9|OpenDNS|Cisco|NextDNS|AdGuard|Control D|CleanBrowsing/i.test(org);
+    const sameOrg = R.org && org && (org.toLowerCase().includes(R.org.toLowerCase().split(/\s+/)[0]) || R.org.toLowerCase().includes(org.toLowerCase().split(/\s+/)[0]));
+    let dnsClass = "same", clsLabel = "同国合规解析";
+    if (cc === "CN" && R.ipCC && R.ipCC !== "CN") {
+      dnsClass = "leak-cn";
+      clsLabel = "国内 DNS 致命抢答泄漏";
+    } else if (cc && R.ipCC && cc !== R.ipCC) {
+      dnsClass = isPublicAnycast ? "public-cross" : "leak";
+      clsLabel = isPublicAnycast ? `公共 Anycast 跨国节点 (${org})` : `跨国第三方递归 (${countryName(cc)})`;
+    } else if (sameOrg) {
+      dnsClass = "own";
+      clsLabel = "本网 ISP 原生递归 (最优隐蔽度)";
+    } else if (isPublicAnycast) {
+      dnsClass = "public";
+      clsLabel = `同国公共 DoH/Anycast (${org})`;
+    }
+    R.dnsClass = dnsClass;
+
     const leak = cc && R.ipCC && cc !== R.ipCC;
-    setProbe("dns", `${flagEmoji(cc)} ${d.ip || ""} · ${countryName(cc)} (${org || cname})${ecs ? " · " + ecs : ""}`, {
+    setProbe("dns", `${flagEmoji(cc)} ${d.ip || ""} · ${countryName(cc)} (${org || cname})`, {
       tone: leak && cc === "CN" ? "bad" : leak ? "warn" : "ok"
     });
-    setRouteRow("dns", `${flagEmoji(cc)} ${countryName(cc)}`, `${d.ip || ""} · ${org || cname}`, leak ? "warn" : "ok");
+    setProbe("ecs", `${clsLabel} · 采样 ${resolvers.length} 节点 · ${ecsIp ? `暴露 ECS 子网 ${ecsIp}${ecsGeo ? " (" + ecsGeo + ")" : ""}` : "无 ECS 客户端子网泄露"}`, {
+      tone: dnsClass === "leak-cn" ? "bad" : (dnsClass === "leak" || (ecsIp && netPrefix(ecsIp) !== netPrefix(R.ip))) ? "warn" : "ok",
+      why: `观测递归节点: ${resolvers.join(", ")}\n判定等级: ${dnsClass}`
+    });
+    setRouteRow("dns", `${flagEmoji(cc)} ${countryName(cc)}`, `${d.ip || ""} · ${clsLabel}`, leak ? "warn" : "ok");
   }
 
-  // 5. WebRTC STUN & LAN mDNS Probe (2 items: webrtc, lan)
+  function updateUdpRttProbe() {
+    if (R.rtc === "off") {
+      return setNA("udprtt", "WebRTC 已禁用");
+    }
+    if (!R.rtcDone) return;
+    if (R.stunRttMs == null) {
+      setProbe("udprtt", "未收到公网 STUN UDP 响应（UDP 被屏蔽或仅 mDNS）", { tone: "neutral" });
+      return;
+    }
+    if (R.httpRtt != null) {
+      const delta = Math.round(R.stunRttMs - R.httpRtt);
+      const sign = delta >= 0 ? `+${delta}` : `${delta}`;
+      const suspect = Math.abs(delta) >= 95;
+      setProbe("udprtt", `STUN UDP 候选 ${R.stunRttMs} ms vs HTTP TCP ${R.httpRtt} ms (差值 ${sign} ms)`, {
+        tone: suspect ? "warn" : "ok",
+        why: delta <= -65
+          ? "UDP 显著快于 HTTP TCP：高度疑似代理仅接管了 TCP，而 UDP 直接走本地物理宽带穿透！"
+          : delta >= 110
+          ? "UDP 显著慢于 TCP：疑似经过 UDP-over-TCP (UoT) 二次隧道封装或远端中继。"
+          : "UDP 与 TCP 往返时延量级吻合。"
+      });
+    } else {
+      setProbe("udprtt", `STUN UDP 候选握手 ${R.stunRttMs} ms`);
+    }
+  }
+
+  // 5. WebRTC STUN, UDP Timing & LAN mDNS Probe (3 items: webrtc, udprtt, lan)
   async function probeWebrtc() {
     const RTCPeer = window.RTCPeerConnection || window.webkitRTCPeerConnection;
     if (!RTCPeer) {
       R.rtc = "off";
+      R.rtcDone = true;
       setNA("webrtc", "WebRTC 已禁用");
+      setNA("udprtt", "WebRTC 已禁用");
       setNA("lan", "WebRTC 已禁用");
       return;
     }
     const pubIps = new Set(), lanItems = new Set();
+    let firstSrflxMs = null;
     let pc = null;
     try {
       pc = new RTCPeer({ iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] });
       pc.createDataChannel("p");
+      let tStart = performance.now();
       const done = new Promise(resolve => {
         const timer = setTimeout(resolve, 2600);
         pc.onicecandidate = ev => {
@@ -1208,11 +1674,13 @@
           if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.|fc|fd|fe80:)/i.test(addr)) {
             lanItems.add(addr);
           } else if (addr !== "0.0.0.0" && addr !== "::") {
+            if (firstSrflxMs == null) firstSrflxMs = Math.max(1, Math.round(performance.now() - tStart));
             pubIps.add(addr);
           }
         };
       });
       const offer = await pc.createOffer();
+      tStart = performance.now();
       await pc.setLocalDescription(offer);
       await done;
     } catch (e) {}
@@ -1222,6 +1690,8 @@
     const lanList = Array.from(lanItems);
     R.rtc = pubList;
     R.lan = lanList;
+    R.stunRttMs = firstSrflxMs;
+    R.rtcDone = true;
 
     if (!pubList.length) {
       setProbe("webrtc", "安全（未暴露公网 STUN 候选地址）", { tone: "ok" });
@@ -1232,6 +1702,7 @@
         tone: leaked.length ? "bad" : "ok"
       });
     }
+    updateUdpRttProbe();
 
     const realLan = lanList.filter(x => !x.endsWith(".local"));
     setProbe("lan", realLan.length ? `暴露真实局域网 IP: ${realLan.join(", ")}` : lanList.length ? `已由 mDNS 隐藏 (${lanList[0]})` : "未暴露局域网候选", {
@@ -1308,6 +1779,20 @@
         why: keys.map((k, i) => `${k}: ${counts[i]}`).join(" · ")
       });
     } else setNA("icu");
+
+    // ICU Collator phonetic/stroke/diacritic order & ListFormat locale check
+    try {
+      const col = new Intl.Collator();
+      const colLoc = col.resolvedOptions().locale || "";
+      const colType = col.resolvedOptions().collation || "default";
+      const cjkOrder = ["中", "啊", "阿", "波"].sort(col.compare).join("");
+      const latOrder = ["z", "ä", "ö", "a"].sort(col.compare).join("");
+      const lf = typeof Intl.ListFormat === "function" ? new Intl.ListFormat(undefined, { style: "long", type: "conjunction" }).format(["A", "B"]) : "";
+      R.collatorLocale = colLoc;
+      setProbe("intlcoll", `Collator=${colLoc} (${colType}) · 汉字序[${cjkOrder}] · 列表[${lf || "–"}]`, {
+        why: `拉丁变音序: ${latOrder} · 若伪装英语区但默认 Collator 仍按拼音排序 "啊阿波中"，即暴露底层中文 ICU 默认区域`
+      });
+    } catch (e) { setNA("intlcoll"); }
   }
 
   async function probeKeyboard() {
@@ -1761,6 +2246,7 @@
         }).then(r => r?.powerEfficient ? n : null, () => null), 1500, null)
       ));
       const hw = res.filter(Boolean);
+      R.hwCodecs = hw;
       setProbe("hwdec", hw.length ? `芯片硬解: ${hw.join(" · ")}` : "纯软件解码或未暴露硬解状态");
     })();
 
@@ -1850,6 +2336,7 @@
         if (Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b)) > 8) sub++;
         else if (r > 0 && r < 255) gray++;
       }
+      R.subpixelMode = sub > 10 ? "rgb" : gray > 10 ? "gray" : "none";
       setProbe("smooth", sub > 10 ? "RGB 亚像素抗锯齿 (ClearType 风格)" : gray > 10 ? "灰度平滑抗锯齿 (macOS/Retina 风格)" : "未开启抗锯齿");
     } catch (e) { setNA("smooth"); }
 
@@ -1956,26 +2443,44 @@
     setProbe("ext", hits.length ? hits.map(x => x[1]).join(" · ") : "未发现向页面直接注入全局变量的扩展");
   }
 
-  // 18 Popular Chrome Extensions Web-Accessible-Resources Scan
+  // 36 Popular Proxy, Anti-Detect, Wallet & Security Chrome Extensions WAR Scan
   const CHROME_EXT_WAR = [
     ["uBlock Origin", "cjpalhdlnbpafiamejdnhcphjbkeiagm", ["web_accessible_resources/noop.html"]],
     ["uBlock Origin Lite", "ddkjiahejlhfcafbddmgiahcphecmpfh", ["web_accessible_resources/noop.js"]],
+    ["AdGuard", "bgnkhhnnamicmpeenaelnjfhikgbkllg", ["web-accessible-resources/redirects/noopjs.js"]],
     ["AdBlock", "gighmmpiobklfepjocnamgkkbiglidom", ["icons/icon24.png"]],
     ["Adblock Plus", "cfhdojbkjhnklbpkdaibdccddilifddb", ["icons/abp-16.png"]],
+    ["Ghostery", "mlomiejdfkolichcflejclcbmpeaniij", ["app/templates/trackers-preview.html"]],
+    ["Privacy Badger", "pkehgijcmpdhfbdbbnkijodmdjhbjlgp", ["data/web_accessible_resources/noop.js"]],
+    ["Decentraleyes", "ldpochfccmkkmhdbclfhpagapcfdljkj", ["resources/webfont/1.6.28/webfont.js"]],
     ["Proxy SwitchyOmega", "padekgcemlokbadohgkifijomclgjgif", ["img/icons/omega-48.png"]],
     ["ZeroOmega", "pfnededegaaopdmhkdmcofjmoldfiped", ["img/icons/omega-48.png"]],
+    ["User-Agent Switcher", "djflhoibgkdhkhhcedjiklpkjnoahfmg", ["js/inject.js", "icon_128.png"]],
+    ["CanvasBlocker / Defender", "nomnklagbgmgghhjidfhnoelnjfndfpd", ["data/inject/isolated.js"]],
+    ["WebRTC Network Limiter", "npeicpdbkakmehahjeeohfdhnlpdklia", ["icon128.png"]],
+    ["WebRTC Leak Prevent", "eiadekoaikejlgdbkbdfeijglgfdalml", ["img/icon48.png"]],
+    ["ModHeader", "idgpnmonknjnojddfkpgkljpfnnfcklj", ["images/icon.png"]],
+    ["Header Editor", "eningockdidmgiojffjmkdblpjocbhgh", ["assets/images/128.png"]],
+    ["Cookie-Editor", "hlkenndednhfkekhgcdicdfddnkalmdm", ["icons/cookie-48.png"]],
+    ["EditThisCookie", "fngmhnnpilhplaeedifhccceomclgfbg", ["img/icon_48x48.png"]],
+    ["Tampermonkey 篡改猴", "dhdgffkkebhmkfjojejmpbldmpobfkfo", ["images/icon.png"]],
+    ["Violentmonkey 暴力猴", "jinjaccalgkegednnccohejagnlnfdag", ["public/images/icon48.png"]],
+    ["Stylus", "clngdbkpkpeebahjckkjfobafhncgmne", ["images/icon/48.png"]],
     ["沉浸式翻译", "bpoadfkcbjbfhfodiogcnhhhpibjhbnh", ["styles/inject.css"]],
     ["Google 翻译", "aapbdbdomjkkjkaonfhkkikfgjllcleb", ["popup_css_compiled.css"]],
-    ["Tampermonkey 篡改猴", "dhdgffkkebhmkfjojejmpbldmpobfkfo", ["images/icon.png"]],
+    ["DeepL 翻译", "cofdbpoegempjloogbagkncekinflcnj", ["images/deepl-logo.svg"]],
     ["MetaMask", "nkbihfbeogaeaoehlefnkodbefgpgknn", ["scripts/inpage.js", "inpage.js"]],
+    ["Rabby Wallet", "acmacodkjbdgmoleebolmdjonilkdbch", ["pageProvider.js"]],
+    ["OKX Wallet", "mcohilncbfahbmgdjkbpemcciiolgcge", ["scripts/lib/inpage.js"]],
     ["Phantom", "bfnaelmomeimhlpmgjnjophhpkkoljpa", ["injected.js"]],
+    ["Coinbase Wallet", "hnfanknocfeofbddgcijnmhnfnkdnaad", ["requestProvider.js"]],
+    ["Trust Wallet", "egjidjbpglichdcondbcbdnbeeppgdph", ["inpage.js"]],
+    ["Bitget Wallet", "jiidiaalihmmhddjgbnbgdfflelocpak", ["inpage.js"]],
     ["1Password", "aeblfdkhhhdcdjpifhhbdiojplfjncoa", ["inline/injected.js"]],
     ["Bitwarden", "nngceckbapebfimnlniiiahkandclblb", ["notification/bar.html", "overlay/menu-list.html"]],
     ["LastPass", "hdokiejnpimakedhajhdlcegeplioahd", ["overlay.html", "images/icon48.png"]],
     ["Wappalyzer", "gppongmhjkpfnbhagpmjfkannfbllamg", ["images/icons/default.svg"]],
-    ["ColorZilla", "bhlhnicpbhignbdhedgjhgdocnmhomnp", ["html/content-script-iframe.html"]],
-    ["Honey", "bmnlcjabgnpnenekpadlanbbkooimhnj", ["icons/icon48.png"]],
-    ["OKX Wallet", "mcohilncbfahbmgdjkbpemcciiolgcge", ["scripts/lib/inpage.js"]]
+    ["ColorZilla", "bhlhnicpbhignbdhedgjhgdocnmhomnp", ["html/content-script-iframe.html"]]
   ];
 
   async function probeChromeExtWar() {
@@ -2405,6 +2910,82 @@
       const ttfbMs = Math.round(nav.responseStart - nav.requestStart);
       setProbe("perf_nav", `协议 ${nav.nextHopProtocol || "h2"} · TLS耗时 ${tlsMs}ms · 首字节 ${ttfbMs}ms`);
     } else setNA("perf_nav");
+
+    // 15b. WASM 128-bit SIMD & Hypervisor VM-Exit CPU Steal Jitter (cpubench)
+    try {
+      const simdWasm = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 8, 1, 6, 0, 65, 0, 253, 15, 11]);
+      const simdOk = typeof WebAssembly === "object" && typeof WebAssembly.validate === "function" && WebAssembly.validate(simdWasm);
+      const slices = [];
+      let acc = 1.000001;
+      for (let s = 0; s < 60; s++) {
+        const t0 = performance.now();
+        for (let k = 0; k < 18000; k++) {
+          acc = (acc * 1.0000003 + 0.0000007) % 1024;
+        }
+        slices.push(Math.max(0.005, performance.now() - t0));
+      }
+      const sorted = slices.slice().sort((a, b) => a - b);
+      const p50 = sorted[Math.floor(sorted.length * 0.5)];
+      const p98 = sorted[Math.floor(sorted.length * 0.98)];
+      const stealRatio = p50 > 0 ? +(p98 / p50).toFixed(2) : 1;
+      R.cpuBench = { simdOk, p50Ms: +p50.toFixed(3), p98Ms: +p98.toFixed(3), stealRatio, sink: acc };
+      setProbe("cpubench", `WASM SIMD ${simdOk ? "支持" : "不支持"} · 单片中位 ${p50.toFixed(2)}ms · 抢占抖动比 p98/p50=${stealRatio}x`, {
+        tone: stealRatio >= 5.5 ? "warn" : "ok",
+        why: `60 组紧致浮点时间片 p50=${p50.toFixed(3)}ms, p98=${p98.toFixed(3)}ms（超售云主机或虚拟机发生 Hypervisor VM-Exit 时尾延迟显著放大）`
+      });
+    } catch (e) { setNA("cpubench"); }
+
+    // 15c. Native Form Control Subpixel Geometry (uigeom)
+    try {
+      const box = document.createElement("div");
+      box.style.cssText = "position:absolute;left:-9999px;top:0;all:initial;font-family:sans-serif;font-size:16px";
+      box.innerHTML = '<button id="_uib">Ag</button><select id="_uis"><option>Ag</option></select><input id="_uic" type="checkbox"><input id="_uir" type="range">';
+      document.body.appendChild(box);
+      const dims = ["_uib", "_uis", "_uic", "_uir"].map(id => {
+        const r = box.querySelector("#" + id).getBoundingClientRect();
+        return [+(r.width.toFixed(2)), +(r.height.toFixed(2))];
+      });
+      box.remove();
+      const uiSig = dims.map(([w, h]) => `${w}×${h}`).join(" / ");
+      const uiHash = shortHash(await sha256(uiSig));
+      R.uiGeom = { dims, sig: uiSig, hash: uiHash, chkW: dims[2][0], btnH: dims[0][1] };
+      setProbe("uigeom", `${uiHash} · 按钮 ${dims[0][0]}×${dims[0][1]} · 勾选框 ${dims[2][0]}×${dims[2][1]}`, {
+        why: `原生控件几何 (button / select / checkbox / range): ${uiSig}`
+      });
+    } catch (e) { setNA("uigeom"); }
+
+    // 15d. Cross-OS Font Rasterizer Channel Divergence & Gamma Signature (fontrast)
+    try {
+      const cv = document.createElement("canvas");
+      cv.width = 160; cv.height = 44;
+      const cx = cv.getContext("2d", { alpha: false, willReadFrequently: true });
+      cx.fillStyle = "#ffffff";
+      cx.fillRect(0, 0, 160, 44);
+      cx.fillStyle = "#000000";
+      cx.font = "32px system-ui, -apple-system, 'Segoe UI', sans-serif";
+      cx.fillText("Qg@永W", 4, 34);
+      const data = cx.getImageData(0, 0, 160, 44).data;
+      let edgePx = 0, rgbDiffPx = 0, midGammaSum = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        if (r === 255 && g === 255 && b === 255) continue;
+        if (r === 0 && g === 0 && b === 0) continue;
+        edgePx++;
+        if (Math.abs(r - b) >= 6 || Math.abs(r - g) >= 6) rgbDiffPx++;
+        midGammaSum += (r + g + b) / 3;
+      }
+      const rgbRatio = edgePx > 0 ? +(rgbDiffPx / edgePx).toFixed(3) : 0;
+      const avgMidLuma = edgePx > 0 ? +(midGammaSum / edgePx).toFixed(1) : 0;
+      const rastEngine = rgbRatio >= 0.18
+        ? "DirectWrite / FreeType LCD 彩边引擎"
+        : avgMidLuma >= 142
+        ? "Apple CoreText 灰阶平滑引擎"
+        : "FreeType / Skia 标准灰阶引擎";
+      R.fontRast = { rgbRatio, avgMidLuma, edgePx, engine: rastEngine };
+      setProbe("fontrast", `${rastEngine} (彩边率 ${(rgbRatio * 100).toFixed(1)}% · 边缘均值亮度 ${avgMidLuma})`, {
+        why: `半透明抗锯齿像素数: ${edgePx} · RGB 异色通道像素: ${rgbDiffPx}\n注：即使在 Linux/Windows 容器内拷贝安装苹果字体文件，其光栅化彩边率与 Gamma 曲线仍会暴露真实图形栈`
+      });
+    } catch (e) { setNA("fontrast"); }
   }
 
   // 16. Stateless ETag Cache Tracking, 4-Store Survival & Composite IDs (4 items + 3 manual buttons)
@@ -2683,9 +3264,11 @@
   }
 
 
-  /* ---------- 18 Cross-Layer Disguise & Protocol Checks Evaluator ---------- */
+  /* ---------- 24 Cross-Layer Disguise, Deep Stack, Reputation & Protocol Checks Evaluator ---------- */
   const CHECK_WEIGHTS = {
-    bot: 10, webrtc: 10, conn: 9, split: 9, dns: 8, tz: 8, tamper: 8, fpb: 8, ua: 7, rtt: 6, dc: 6, lang: 4, syslang: 3, fp: 3
+    bot: 9, webrtc: 9, reality: 9, conn: 8, split: 8, reputation: 8,
+    dns: 7, tz: 7, tamper: 7, fpb: 7, synspoof: 6, ua: 6,
+    dc: 6, rtt: 5, lease: 5, subpixel: 5, hwvirt: 4, lang: 4, syslang: 3, fp: 3
   };
 
   function getFixSteps(id) {
@@ -2717,44 +3300,72 @@
         "高风控场景建议使用英文原版系统镜像或 macOS（全地区统一预装多国字体，不因语言包差异暴露国籍）。"
       ],
       dns: [
-        "在 Clash / Surge / Sing-box / v2rayN 中开启「防 DNS 泄漏」：启用 Fake-IP 模式或强制远程代理解析 (Remote DNS)。",
-        `在 ${br}「设置 → 隐私和安全 → 安全」中开启「使用安全 DNS (DoH)」，选择 Cloudflare (1.1.1.1) 或 Google (8.8.8.8) 并确保该流量走代理隧道。`
+        "在 Clash / Surge / Sing-box / v2rayN 中开启「防 DNS 泄漏」：启用 Fake-IP 模式或强制远程代理解析 (Remote DNS)，避免本地 ISP 递归服务器发送 ECS 客户端子网。",
+        `在 ${br}「设置 → 隐私和安全 → 安全」中开启「使用安全 DNS (DoH)」，选择与落地节点同国的 DoH 或让代理出口本网 ISP 负责递归解析。`
       ],
       split: [
         "当前开启了「绕过中国大陆 (Rule 规则分流)」，任何网页只需悄悄加载一个国内接口或测速图片，就能立刻拍到你的国内宽带真实省市与 IP！",
         "访问风控严格的海外平台（OpenAI / Claude / TikTok / Stripe / 跨境电商）时，请将代理客户端切换为「全局模式 (Global)」或「TUN 全局接管」。"
       ],
       conn: [
-        "服务端网卡直接抓到了建立连接的首个 TCP SYN 包：如果浏览器自报 macOS/Windows，而发包内核却是 Linux（TTL=64 配合 Linux 窗口/选项），说明代理服务器在替你发起 TCP 连接，这是透明/节点转发的物理特征。",
-        "若提示 MTU 异常（如 1420 / 1280），说明存在 WireGuard 或 TUN 虚拟网卡多重封装；普通网站通常容忍，但极严反欺诈系统会将其计入代理权重。",
-        "若提示无 GREASE / ALPS，请检查是否开启了杀毒软件 HTTPS 流量扫描或抓包工具（Charles / Proxyman / Surge MITM）。"
+        "原理：服务端网卡直接抓到了建立连接的首个 TCP SYN 包。如果浏览器自报 macOS/Windows，而发包内核却是 Linux（TTL=64 配合 Linux 窗口/选项），说明代理节点服务器在替你发起 TCP 连接——哪怕开全局/TUN 也会被抓，因为远端落地机仍是 Linux！",
+        "低成本规避：在远端代理机器上用 eBPF / NFQUEUE 工具按目标系统重写对外发包的 TTL、Window 与 TCP Options，但须保持整条连接状态一致（否则会被下一项「内核时钟防改包」识破）。",
+        "终极根治：在代理链路最末端挂载真实同构系统住宅节点（如真 Mac mini / Windows 软路由出口，或原生住宅 SOCKS5 落地），或强制走 HTTP/3 (QUIC over UDP) 隐藏内核 TCP SYN 选项。"
+      ],
+      synspoof: [
+        "服务端 AF_PACKET 同时比对了首包 SYN 与后续 TLS ClientHello 数据包的 IPv4 DF 分片位、IPID 递增规律及 TCP Timestamp (TSval) 内核节拍频率 (Hz)。",
+        "若提示「无状态 SYN 改包」：说明代理机使用了 osfuscate 等仅篡改首个 SYN 包的工具，但后续数据包恢复了 Linux 原始内核时钟，被跨包连续性校验一眼拆穿。",
+        "若提示「微脉冲多路复用粘包」：说明代理启用了 Mux / smux / yamux 或高抖动隧道合并转发；高敏感业务建议关闭代理客户端的 Mux 多路复用选项。"
+      ],
+      reality: [
+        "服务端主动反向连接你当前出口 IP 的 :443 端口进行 TLS 证书归属验真：真实家庭宽带光猫在公网侧通常关闭 :443，绝不会挂载大厂官网证书。",
+        "若检出「非官方 ASN 却返回 Microsoft / Apple / Yahoo / Amazon 等大厂证书」，这是 VLESS-Reality 借用他人域名证书的铁证——严苛风控一旦反向回探，100% 实锤代理节点！",
+        "修复建议：将自建 Reality / TLS 节点监听端口迁离标准 :443，或在代理服务端配置 Outbound 链式转发至不开任何公网端口的纯净家宽落地 IP。"
       ],
       rtt: [
-        "原理：服务端测量了 TCP 握手耗时（出口节点到本站服务器的物理距离），同时浏览器测量了 HTTP 请求往返耗时（你的设备→代理节点→本站服务器）。两者差值就是「你到代理节点」多绕的物理路程。",
-        "降低破绽方法：尽量选用物理距离更近、专线直连（IEPL/IPLC）的低延迟节点，避免跨大洲绕路（例如人在亚洲却挂欧美高延迟节点访问亚洲边缘服务）。"
+        "原理（三维物理测距）：① 服务端测量 TCP 握手耗时（代理节点→本站物理距离）；② 浏览器测量 HTTP 往返耗时（你的电脑→代理节点→本站）；③ WebRTC 测量 STUN UDP 候选耗时。三者差值直接框定「你到代理节点」多绕的物理路程，无法靠改浏览器插件伪造。",
+        "有效解法：① 缩短第一跳物理距离——亚洲用户优先选用日本/新加坡/香港 IEPL/IPLC 专线（电脑→节点仅 +8~20ms，落入正常 Wi-Fi 抖动阈值内）；② 若必须用欧美住宅 IP，直接在同城云桌面（如美西 Mac/Win 远程主机）内打开浏览器，使浏览器与出口物理同地，实现 0ms 中转差！"
       ],
       webrtc: [
-        `在代理客户端中开启「TUN 虚拟网卡模式（接管全局 UDP）」，使 STUN UDP 探测包同样经过代理出口。`,
-        `或在 ${br} 安装官方 WebRTC Network Limiter 设置为「Disable non-proxied UDP」（此方式走浏览器原生策略接口，不重写 JS 原型，不会触发篡改告警）。`
+        `在代理客户端中开启「TUN 虚拟网卡模式（接管全局 UDP）」，使 STUN UDP 探测包与 TCP 走完全相同的代理出口。`,
+        `或在 ${br} 安装官方 WebRTC Network Limiter 设置为「Disable non-proxied UDP」（走浏览器原生策略接口，不重写 JS 原型，零篡改痕迹）。`
       ],
       dc: [
-        "当前出口 IP 的 ASN 属于云服务器/数据中心机房（如 AWS、DMIT、搬瓦工、Vultr、阿里云等），风控数据库将其标记为 Hosting/IDC。",
-        "注册或登录高风控账号时，建议在代理软件末端链式挂载（Relay / Dialer-Proxy）静态原生家庭宽带 ISP 住宅代理，或使用境外漫游流量卡。"
+        "融合了 8 家欺诈情报源（ipapi.is / IPQuery / IPLocate / IPinfo 等）对数赔率加权投票：当前出口被高置信度判定为云服务器/数据中心（Hosting/IDC）。",
+        "注册或登录高风控账号时，建议在代理软件末端链式挂载（Dialer-Proxy / Relay）真实本土家庭宽带 ISP 静态住宅 IP。"
+      ],
+      lease: [
+        "交叉审计了 RIR RDAP 注册国、PeeringDB 互联流量方向（Heavy Outbound 内容机房 vs Inbound 家宽）以及 IPXO / InterLIR 等商业 IP 租赁平台特征。",
+        "许多市售「双 ISP 伪家宽 VPS」只是向经纪商租用老旧段广播到机房 ASN 上，风控结合 PeeringDB 流量比与子分配日期即可识破。",
+        "高风控金融/社媒场景建议选择「RIR 注册国 = 路由国」且直接归属本土电信运营商（如 Comcast / AT&T / NTT / BT）的原生 IP。"
+      ],
+      reputation: [
+        "并发检索了 12 家实时 DoH DNSBL 黑名单（Spamhaus ZEN、Barracuda、DroneBL 等）、15 份攻击/僵尸/代理 CIDR 库及同 /24 C 段脏邻居数量。",
+        "即便单 IP 未直接上榜，若同 /24 C 段存在大量黑名单「脏邻居」，Cloudflare Turnstile 与支付网关仍会按网段连坐降权。",
+        "修复建议：更换同 /24 零脏邻居、纯净度 ≥ 82 (S/A 级) 的干净网段；购买前可在页面顶部输入框粘贴候选 IP 提前验毒。"
+      ],
+      subpixel: [
+        "即使在 Windows/Linux 容器或指纹浏览器中拷贝安装苹果字体并篡改 UA，底层的字体光栅化引擎（Apple CoreText 灰阶平滑 vs DirectWrite/FreeType RGB 彩边）、原生控件尺寸与滚动条宽度仍会暴露真实宿主系统。",
+        "修复铁律：坚持「同构宿主机」原则——Windows 电脑只配 Windows 环境，Mac 电脑只配 macOS 环境，切勿跨系统硬改 UA。"
+      ],
+      hwvirt: [
+        "通过 WebCodecs 视频硬解芯片探针、WebGL 渲染器与 60 组紧致浮点时间片尾延迟比（p98/p50）识别云主机 Hypervisor CPU 抢占（VM-Exit Steal）与无显卡容器。",
+        "建议在具备真实物理 GPU 的本地电脑运行浏览器，仅将网络层通过链式代理转发，避免在廉价无 GPU 超售云桌面上操作核心账号。"
       ],
       tamper: [
-        "检测到当前页面原生 JS 原型、Canvas/Audio 像素回读或 HTTP 请求头与 JS 读数不一致（通常由防关联插件、改 UA 扩展、脚本管理器或部分注入式扩展引起）。",
-        "建议打开无扩展的干净浏览器 Profile 测试，逐个排查并关闭篡改网页环境的扩展；切勿在普通浏览器里安装「Canvas Fingerprint Defender / User-Agent Switcher」等浅层插件（越装越容易被直接判定为黑产环境）。"
+        "检测到当前页面原生 JS 原型、Canvas/Audio 像素回读或 HTTP 请求头与 JS 读数不一致（通常由防关联插件、改 UA 扩展或注入式脚本引起）。",
+        "建议打开无扩展的干净浏览器 Profile 测试；切勿在普通浏览器安装「Canvas Defender / User-Agent Switcher」等浅层插件（越装越容易被直接判定为黑产环境）。"
       ],
       fpb: [
-        "指纹浏览器最常见的三大死穴：① 只改主线程忘了改 Web Worker；② 虚报 Chrome 136+ 但底层 Chromium 内核缺失新版 JS/CSS 特性；③ Windows 电脑伪装成 Mac 但显卡渲染器仍暴露 Direct3D。",
-        "修复建议：升级指纹浏览器到最新内核版本，保持「真实宿主机系统 = Profile 伪装系统（Win 机器只配 Win 环境，Mac 只配 Mac 环境）」。"
+        "指纹浏览器三大常见死穴：① 只改主线程忘了改 Web Worker；② 虚报新版 Chrome 但底层 Chromium 内核缺失新版 JS/CSS 特性；③ Windows 机器伪装成 Mac 但显卡渲染器仍暴露 Direct3D。",
+        "修复建议：升级指纹浏览器到最新内核版本，并保持「真实宿主机系统 = Profile 伪装系统」。"
       ],
       ua: [
         "请关闭任何改 User-Agent 的插件或开发者工具设备模拟模式，保持 HTTP 请求头、Sec-CH-UA-Platform 与显卡驱动平台三者自然一致。"
       ],
       bot: [
         "当前浏览器暴露了 navigator.webdriver 或自动化调试协议标记（Selenium / Playwright / Puppeteer）。",
-        "正常使用请直接双击打开原生浏览器；自动化测试需配合底层 C++ 级补丁或真实 CDP 隔离方案。"
+        "正常使用请直接双击打开原生浏览器；自动化测试需配合底层 C++ 级补丁或真实无注入隔离环境。"
       ],
       fp: [
         "常规 Chrome / Edge 允许网站通过 Canvas、WebGL、音频与 HTTP ETag 缓存生成跨站稳定指纹，清 Cookie 也无法摆脱。",
@@ -2767,13 +3378,13 @@
         "启用安全 DNS (DoH) 后，现代浏览器在访问配置了 HTTPS DNS 记录的站点时会自动加密 SNI 域名。"
       ],
       h3: [
-        "许多代理协议（如部分 TCP 隧道或未开 UDP 转发的节点）会丢弃 UDP 443 流量，导致浏览器自动回退到 HTTP/2。"
+        "许多代理协议（如仅转发 TCP 的隧道）会丢弃 UDP 443 流量，导致浏览器自动回退到 HTTP/2；开启 Sing-box / Mihomo 的 QUIC/UDP 转发即可恢复 HTTP/3。"
       ],
       warp: [
         "仅作链路属性提示：Cloudflare WARP 出口对普通浏览友好，但共享出口 IP 在部分严格站点可能触发人机验证。"
       ]
     };
-    return GUIDE[id] || ["保持真实原生系统与网络出口地区自然对齐即可。"];
+    return GUIDE[id] || ["保持真实原生系统与纯净网络出口地区自然对齐即可。"];
   }
 
   function evaluateAllChecks() {
@@ -2825,15 +3436,18 @@
       out.syslang = { level: "warn", summary: `${srcNames}暴露系统装有 ${leakedCountries} 环境，与 ${ipCountry} 出口不一致` };
     }
 
-    // 4. dns: Recursive DNS Resolver vs Exit IP
+    // 4. dns: Recursive DNS Resolver & EDNS Client Subnet vs Exit IP
+    const ecsMismatch = R.ecsIp && R.ip && netPrefix(R.ecsIp) && netPrefix(R.ip) && netPrefix(R.ecsIp) !== netPrefix(R.ip);
     if (!R.dnsCC) {
       out.dns = { level: "info", summary: "DNS 递归探针未返回结果或被当前网络策略阻断" };
-    } else if (!ipCC || R.dnsCC === ipCC) {
-      out.dns = { level: "ok", summary: `DNS 解析服务器位于 ${countryName(R.dnsCC)} (${R.dnsOrg})，与出口国家一致` };
     } else if (R.dnsCC === "CN" && ipCC !== "CN") {
       out.dns = { level: "bad", summary: `致命 DNS 泄漏：网页出口在 ${ipCountry}，但替你解析域名的 DNS 仍在中国大陆 (${R.dnsIp})！` };
-    } else {
+    } else if (ipCC && R.dnsCC !== ipCC) {
       out.dns = { level: "warn", summary: `跨国 DNS 偏移：出口在 ${ipCountry}，但递归 DNS 服务器位于 ${countryName(R.dnsCC)} (${R.dnsOrg})` };
+    } else if (ecsMismatch) {
+      out.dns = { level: "warn", summary: `DNS 同国，但上游递归暴露了异网段 ECS 客户端子网 (${R.ecsIp})` };
+    } else {
+      out.dns = { level: "ok", summary: `DNS 解析服务器位于 ${countryName(R.dnsCC)} (${R.dnsOrg})，与出口一致且无 ECS 子网泄露` };
     }
 
     // 5. split: Multi-target Split Tunneling
@@ -2875,7 +3489,7 @@
 
       if (osMismatch) {
         const tcpHuman = ({ windows: "Windows", apple: "macOS / iOS", linux: "Linux / Android" })[tcpFam] || tcp.osGuess || tcpFam;
-        out.conn = { level: "bad", summary: `底层协议栈穿帮：UA 声称你在用 ${uaOs}，但替你发起 TCP 连接的机器却是 ${tcpHuman}（典型代理服务器中转特征）` };
+        out.conn = { level: "bad", summary: `底层协议栈穿帮：UA 声称你在用 ${uaOs}，但替你发起 TCP 连接的机器却是 ${tcpHuman}（典型代理服务器代发连接特征）` };
       } else if (noGrease) {
         out.conn = { level: "bad", summary: `TLS 握手异常：声称为 Chromium 浏览器但缺失 GREASE 扩展，流量疑似被中间人解密重签或非原生浏览器发包` };
       } else if (tun && !["ethernet", "pppoe"].includes(tun)) {
@@ -2885,21 +3499,63 @@
       }
     }
 
-    // 7. rtt: Browser HTTP RTT vs Server TCP Handshake RTT
+    // 7. synspoof: IP DF/IPID Continuity, TCP Timestamp Hz & Mux Coalescing
+    const mux = R.muxBurst;
+    const linuxClaimDfZero = tcp && tcp.df === false && /^(Linux|Android|HarmonyOS)$/.test(uaOs);
+    if (!tcp && !mux) {
+      out.synspoof = { level: "info", summary: "等待底层 IP/TCP 跨包时钟与微脉冲粘包核验…" };
+    } else if (tcp?.synSpoofSuspect) {
+      out.synspoof = { level: "bad", summary: `抓获无状态 SYN 改包：首包与后续数据包 TSval 时钟节拍 (${tcp.tsHz ?? "突变"}Hz) 或 IPID 序列前后断裂！` };
+    } else if (linuxClaimDfZero) {
+      out.synspoof = { level: "warn", summary: `IP 包头矛盾：自报 ${uaOs} 系统（默认强制 DF=1），但网卡实测首包 DF=0 允许分片` };
+    } else if (mux && (mux.coalescedPairs >= 3 || (mux.srvSpanMs < mux.clientSpanMs * 0.35 && mux.clientSpanMs >= 25))) {
+      out.synspoof = { level: "warn", summary: `检出隧道粘包合并：6 组 8ms 微脉冲到达服务端时出现 ${mux.coalescedPairs} 对粘包合并，疑似经过 Mux 多路复用代理` };
+    } else {
+      const hzInfo = tcp?.tsHz != null ? `TS 时钟≈${tcp.tsHz}Hz` : "跨包序列连续";
+      out.synspoof = { level: "ok", summary: `${hzInfo}，未见无状态 SYN 伪造改包或多路复用粘包畸变` };
+    }
+
+    // 8. reality: Active :443 TLS & VLESS-Reality Stolen Certificate Back-Probe
+    const t4 = R.intel?.tls443;
+    if (!R.intel) {
+      out.reality = { level: "info", summary: "正在对当前出口 :443 端口执行反向 TLS 握手与证书归属验真…" };
+    } else if (!t4 || !t4.probed) {
+      out.reality = { level: "info", summary: "当前服务端未开启 :443 主动反向回探" };
+    } else if (t4.realitySuspect) {
+      out.reality = { level: "bad", summary: `反向穿透实锤伪装：出口并非大厂官方 ASN，但 :443 却返回 ${t4.realityBrand || "大厂"} 证书 (${t4.realityDomain || "SNI"})，系典型 VLESS-Reality 偷证书节点！` };
+    } else if (t4.tlsActive && t4.selfSignedOrIpCert) {
+      out.reality = { level: "warn", summary: `出口公网 :443 开放且暴露自签/裸 IP 证书 (CN=${t4.subjectCN || "无"})，不符常规家庭宽带特征` };
+    } else if (t4.port443Open && R.netKind !== "dc") {
+      out.reality = { level: "warn", summary: `出口自称非机房宽带，但公网 :443 端口处于活跃监听状态 (${t4.subjectCN ? "CN=" + t4.subjectCN : "TCP 开放"})` };
+    } else {
+      out.reality = {
+        level: "ok",
+        summary: t4.tlsActive
+          ? `出口 :443 证书归属正常 (CN=${t4.subjectCN || "合规"})，未见 Reality 偷证书伪装`
+          : t4.port443Open
+          ? "出口 :443 端口开放（无伪造大厂证书），未见 Reality 借用域名伪装"
+          : "出口公网 :443 关闭或静默丢包，符合真实家庭宽带 NAT 终端特征"
+      };
+    }
+
+    // 9. rtt: 3D Physical Distance Triangulation (Browser HTTP vs Server TCP vs WebRTC STUN UDP)
     if (!R.latDone || R.httpRtt == null || R.srvTcpRtt == null) {
-      out.rtt = { level: "info", summary: R.coarseTimer ? "浏览器开启了时钟降精度保护，无法精确测量毫秒级往返差" : "等待浏览器热连接与服务端握手延迟比对…" };
+      out.rtt = { level: "info", summary: R.coarseTimer ? "浏览器开启了时钟降精度保护，无法精确测量毫秒级往返差" : "等待浏览器热连接、服务端握手与 UDP 候选三维测距…" };
     } else {
       const extra = R.httpRtt - R.srvTcpRtt;
-      if (extra >= 95) {
+      const udpBypass = R.stunRttMs != null && (R.httpRtt - R.stunRttMs) >= 75;
+      if (udpBypass) {
+        out.rtt = { level: "bad", summary: `UDP 旁路穿帮：HTTP TCP 往返需 ${R.httpRtt} ms，但 STUN UDP 仅 ${R.stunRttMs} ms，暴露本地宽带直连 UDP！` };
+      } else if (extra >= 95) {
         out.rtt = { level: "bad", summary: `物理测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但浏览器实际往返高达 ${R.httpRtt} ms（多绕了 +${extra} ms 代理路程）` };
       } else if (extra >= 42) {
         out.rtt = { level: "warn", summary: `往返存在额外开销：浏览器往返 ${R.httpRtt} ms 比服务端握手 ${R.srvTcpRtt} ms 慢了 +${extra} ms，疑似经过代理中转` };
       } else {
-        out.rtt = { level: "ok", summary: `往返物理测距正常：浏览器 HTTP 往返 (${R.httpRtt} ms) 与服务端握手 (${R.srvTcpRtt} ms) 基本一致` };
+        out.rtt = { level: "ok", summary: `三维测距吻合：浏览器 HTTP (${R.httpRtt} ms) 与服务端 TCP 握手 (${R.srvTcpRtt} ms) 基本一致` };
       }
     }
 
-    // 8. webrtc: WebRTC STUN Leak & IPv6 MAC Leak
+    // 10. webrtc: WebRTC STUN Leak & IPv6 MAC Leak
     const rtcList = Array.isArray(R.rtc) ? R.rtc : [];
     const knownIps = new Set([R.ip, R.stack?.v4, R.stack?.v6].filter(Boolean));
     const leakedRtc = rtcList.filter(x => !knownIps.has(x) && netPrefix(x) !== netPrefix(R.ip));
@@ -2911,18 +3567,131 @@
       out.webrtc = { level: "ok", summary: rtcList.length ? `WebRTC 反射地址 (${rtcList[0]}) 与当前出口一致，未漏真实 IP` : "WebRTC 未暴露额外公网候选地址，局域网地址已隐藏" };
     }
 
-    // 9. dc: Datacenter / Hosting IP Check
+    // 11. dc: Multi-Source Weighted Voting Datacenter / Hosting / Proxy Check
+    const hostE = R.intel?.votes?.hosting?.E || 0;
+    const anonE = Math.max(R.intel?.votes?.vpn?.E || 0, R.intel?.votes?.proxy?.E || 0, R.intel?.votes?.tor?.E || 0);
+    const infCls = R.intel?.asnProfile?.inferred?.cls || "";
     if (!R.srv) {
-      out.dc = { level: "info", summary: "正在核查出口 ASN 与运营商类型…" };
-    } else if (R.netKind === "dc") {
-      out.dc = { level: "bad", summary: `机房 IP 告警：当前出口 (${R.asn} · ${R.org}) 属于云服务器/数据中心网段，易触发风控拦截与人机验证` };
+      out.dc = { level: "info", summary: "正在融合 8 大情报源核查出口 ASN 与运营商类型…" };
+    } else if (R.netKind === "dc" || hostE >= 0.55 || infCls === "hosting" || R.intel?.cidr?.x4bDatacenter) {
+      const conf = hostE > 0 ? ` · 多源机房置信度 ${Math.round(hostE * 100)}%` : "";
+      out.dc = { level: "bad", summary: `机房 IP 告警：当前出口 (${R.asn} · ${R.org}) 属于云服务器/数据中心网段${conf}，易触发风控拦截` };
+    } else if (anonE >= 0.45 || R.intel?.cidr?.x4bVpn) {
+      out.dc = { level: "warn", summary: `共享代理/VPN 标记：虽非典型机房 ASN，但多源欺诈库检出 ${Math.round(anonE * 100)}% 代理/VPN 置信度` };
     } else if (R.netKind === "relay") {
-      out.dc = { level: "info", summary: "当前使用 Apple iCloud 专用代理出口，网站已知为苹果官方隐私中继而非普通机房爬虫" };
+      out.dc = { level: "info", summary: "当前使用 Apple iCloud 专用代理出口，网站已知为苹果官方隐私中继" };
     } else {
-      out.dc = { level: "ok", summary: `原生住宅/商业宽带或移动网络出口 (${R.asn} · ${R.org})，IP 信誉度良好` };
+      out.dc = { level: "ok", summary: `多源交叉核验通过：原生住宅/商业宽带或移动网络出口 (${R.asn} · ${R.org})` };
     }
 
-    // 10. tamper: Environment Tampering & Native Prototype Lies
+    // 12. lease: Fake-ISP Conflict, IP Leasing Broker & Native vs Broadcast IP
+    const ap = R.intel?.asnProfile;
+    const cons = R.intel?.consensus;
+    if (!R.intel) {
+      out.lease = { level: "info", summary: "正在核查 RDAP 注册国、PeeringDB 流量画像与 IP 商业租赁记录…" };
+    } else if (ap?.inferred?.conflict) {
+      out.lease = { level: "bad", summary: `识破伪家宽冲突：${ap.inferred.conflict} (${R.asn || ""})` };
+    } else if (ap?.rpki === "invalid") {
+      out.lease = { level: "bad", summary: `BGP 路由劫持/配置异常：当前出口网段 RPKI ROA 签名校验为 INVALID` };
+    } else if (ap?.lease?.leased || ap?.lease?.possible || cons?.isNative === false) {
+      const parts = [];
+      if (ap?.lease?.leased) parts.push("商业租赁/转售地址段");
+      else if (ap?.lease?.possible) parts.push("近期子分配/疑似转租段");
+      if (cons?.isNative === false) parts.push(`广播 IP (注册于 ${cons.regCountry}，广播至 ${cons.country})`);
+      out.lease = { level: "warn", summary: `非纯正本土直配家宽：${parts.join(" · ")}` };
+    } else {
+      out.lease = { level: "ok", summary: `RIR 原生直配地址段${cons?.regCountry ? ` (${cons.regCountry})` : ""}，未见商业转租或跨国广播痕迹` };
+    }
+
+    // 13. reputation: 12 DoH DNSBLs, 15 Threat CIDRs, Shodan CVEs & /24 Dirty Neighbours
+    if (!R.intel) {
+      out.reputation = { level: "info", summary: "正在并发核验 12 家实时黑名单、15 份攻击网段库与同 /24 脏邻居…" };
+    } else {
+      const blCnt = R.intel.dnsbl?.listedCount || 0;
+      const cidrHits = (R.intel.cidr?.hits || []).filter(h => h.kind === "threat").length;
+      const dirty = R.intel.cidr?.neighbours?.dirtyCount || 0;
+      const whole = (R.intel.cidr?.neighbours?.wholeBlockListed || []).length > 0;
+      const pScore = R.intel.purity?.score ?? 90;
+      const pGrade = R.intel.purity?.grade || "-";
+      const vulns = (R.intel.shodan?.vulns || []).length;
+      const torHit = R.intel.threat?.onionoo?.isTorExit || R.intel.threat?.onionoo?.isTorRelay;
+      const asnAbuse = R.intel.asnProfile?.abuseDensity?.ratio || 0;
+
+      if (blCnt > 0 || cidrHits > 0 || whole || torHit || pScore < 52) {
+        out.reputation = {
+          level: "bad",
+          summary: `高危信誉污染：纯净度 ${pScore}/100 (${pGrade}) · DNSBL 上榜 ${blCnt} 家 · 威胁段命中 ${cidrHits} 项${dirty ? ` · 同 /24 脏邻居 ${dirty} 个` : ""}`
+        };
+      } else if (dirty > 0 || vulns > 0 || asnAbuse >= 3.5 || pScore < 78) {
+        out.reputation = {
+          level: "warn",
+          summary: `存在网段连坐或历史瑕疵：纯净度 ${pScore}/100 (${pGrade})${dirty ? ` · 同 /24 检出 ${dirty} 个黑名单脏邻居` : ""}${vulns ? ` · Shodan 暴露 ${vulns} 个 CVE` : ""}${asnAbuse >= 3.5 ? ` · 全 ASN 滥用密度 ${asnAbuse}x` : ""}`
+        };
+      } else {
+        out.reputation = {
+          level: "ok",
+          summary: `出口信誉洁净：纯净度 ${pScore}/100 (${pGrade})，12 家 DNSBL、15 份威胁段与同 /24 邻居全部零污点`
+        };
+      }
+    }
+
+    // 14. subpixel: Cross-OS Font Rasterizer, Native Form Widgets & Scrollbar Consistency
+    const fr = R.fontRast;
+    const sbw = R.scrollbarW;
+    if (!fr) {
+      out.subpixel = { level: "info", summary: "等待跨系统字体光栅化彩边率与原生控件几何核验…" };
+    } else {
+      const subHits = [];
+      if (uaOs === "macOS" && fr.rgbRatio >= 0.22) {
+        subHits.push(`自报 macOS（已废弃次像素彩边），但 Canvas 文字暴露出 ${(fr.rgbRatio * 100).toFixed(1)}% RGB LCD 彩边渲染`);
+      }
+      if (uaOs === "macOS" && sbw === 17) {
+        subHits.push("自报 macOS，但滚动条占位宽度为 Windows 经典 17px");
+      }
+      if (uaOs === "Windows" && sbw === 0 && (window.devicePixelRatio || 1) === 1 && !mq("(pointer: coarse)")) {
+        subHits.push("自报桌面 Windows，但使用了 0px 悬浮滚动条（常见于 macOS 或无头精简容器）");
+      }
+      if (/^(macOS|iOS|iPadOS)$/.test(uaOs) && R.subpixelMode === "subpixel") {
+        subHits.push("自报 Apple 系统，但字体抗锯齿探针检出非灰阶次像素通道偏移");
+      }
+      if (subHits.length) {
+        out.subpixel = {
+          level: (uaOs === "macOS" && fr.rgbRatio >= 0.22) ? "bad" : "warn",
+          summary: `跨系统图形栈破绽：${subHits.join("；")}`
+        };
+      } else {
+        out.subpixel = {
+          level: "ok",
+          summary: `${fr.engine}、原生表单控件几何与滚动条宽度 (${sbw ?? 0}px) 与 ${uaOs || "当前系统"} 完全吻合`
+        };
+      }
+    }
+
+    // 15. hwvirt: Hypervisor CPU Steal Jitter, WASM SIMD & Dedicated Hardware Video Decoders
+    const steal = R.cpuBench?.stealRatio || 1;
+    const simd = R.cpuBench?.simdOk;
+    const hwc = Array.isArray(R.hwCodecs) ? R.hwCodecs.length : (typeof R.hwCodecs === "number" ? R.hwCodecs : null);
+    if (R.gpuSoft) {
+      out.hwvirt = { level: "bad", summary: "检出 SwiftShader / Basic Render 软件虚拟显卡，缺少真实物理 GPU" };
+    } else if (simd === false) {
+      out.hwvirt = { level: "warn", summary: "WebAssembly 128-bit SIMD 向量指令不可用，疑似受限沙箱或老旧模拟容器" };
+    } else if (steal >= 7.5 && hwc != null && hwc === 0) {
+      out.hwvirt = { level: "bad", summary: `重度云主机虚拟化特征：CPU 调度抢占抖动达 ${steal}x 且 4 大主流视频硬解芯片全数为 0` };
+    } else if (steal >= 6.0 || (hwc != null && hwc === 0 && /^(macOS|Windows)$/.test(uaOs))) {
+      out.hwvirt = {
+        level: "warn",
+        summary: hwc === 0
+          ? `缺少专用视频硬解芯片支持 (0/4)，疑似运行于无直通显卡的虚拟机或远程云桌面`
+          : `CPU 紧致微基准尾延迟比偏高 (p98/p50=${steal}x)，存在宿主机调度抢占抖动`
+      };
+    } else {
+      out.hwvirt = {
+        level: "ok",
+        summary: `物理硬件特征自然：WASM SIMD 正常${hwc != null ? ` · ${hwc}/4 项视频硬解芯片就绪` : ""} · 抢占抖动比 ${steal}x`
+      };
+    }
+
+    // 16. tamper: Environment Tampering & Native Prototype Lies
     const tamperReasons = [];
     const hdrUa = R.srv?.headers?.["user-agent"] || "";
     const hdrLang = ((R.srv?.headers?.["accept-language"] || "").split(",")[0] || "").split(";")[0].trim().toLowerCase();
@@ -2947,7 +3716,7 @@
       out.tamper = { level: severe ? "bad" : "warn", summary: `抓获环境篡改痕迹：${tamperReasons.join("；")}` };
     }
 
-    // 11. fpb: Anti-Detect Browser & Cross-Thread Contradictions
+    // 17. fpb: Anti-Detect Browser & Cross-Thread Contradictions
     const fpbHits = [];
     if ((R.workerDiff || []).length) fpbHits.push(`主线程与 Web Worker 读数不一致 (${R.workerDiff.join(", ")})`);
     const claimedChrome = +((/Chrome\/(\d+)/.exec(navigator.userAgent) || [])[1] || 0);
@@ -2973,7 +3742,7 @@
       ? { level: "bad", summary: `识别出指纹浏览器/虚拟机硬伤：${fpbHits.join("；")}` }
       : { level: "ok", summary: "内核版本语法、Worker 线程、显卡渲染栈与平台属性完全自洽" };
 
-    // 12. ua: UA vs Client Hints vs GPU Platform Consistency
+    // 18. ua: UA vs Client Hints vs GPU Platform Consistency
     const hiPlat = R.hi?.platform || "";
     const hdrPlat = (R.srv?.headers?.["sec-ch-ua-platform"] || "").replace(/"/g, "");
     const uaMismatch = [];
@@ -2987,12 +3756,12 @@
       ? { level: "bad", summary: uaMismatch.join("；") }
       : { level: "ok", summary: `User-Agent、Client Hints 与硬件平台 (${R.osLabel || "未知"}) 三方一致` };
 
-    // 13. bot: Automation & Headless Browser
+    // 19. bot: Automation & Headless Browser
     out.bot = (R.botHits || []).length
       ? { level: "bad", summary: `检出自动化控制框架特征：${R.botHits.join(" · ")}` }
       : { level: "ok", summary: "未发现 WebDriver、CDP 注入钩子或无头浏览器特征" };
 
-    // 14. fp: Cross-Site Tracking Resistance (Counted in Privacy Mode)
+    // 20. fp: Cross-Site Tracking Resistance (Counted in Privacy Mode)
     const protectedFp = ["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind);
     if (protectedFp) {
       out.fp = { level: "ok", summary: `已受 ${R.shieldLabel} 保护，跨站静态指纹已被动态打散` };
@@ -3072,7 +3841,7 @@
       }
     };
 
-    const RETESTABLE = new Set(["tz", "lang", "syslang", "dns", "split", "conn", "rtt", "webrtc", "dc"]);
+    const RETESTABLE = new Set(["tz", "lang", "syslang", "dns", "split", "conn", "synspoof", "reality", "rtt", "webrtc", "dc", "lease", "reputation", "subpixel", "hwvirt"]);
 
     for (const [id] of [...CORE_CHECKS, ...PROTO_CHECKS]) {
       const row = CHECK_EL[id];
@@ -3082,15 +3851,15 @@
       const active = !isCore || isCheckCounted(id);
 
       if (isCore && active) {
-        if (res.level === "bad") { badCnt++; penalty += (CHECK_WEIGHTS[id] || 6) * 2.1; }
-        else if (res.level === "warn") { warnCnt++; penalty += (CHECK_WEIGHTS[id] || 5) * 1.1; }
+        if (res.level === "bad") { badCnt++; penalty += (CHECK_WEIGHTS[id] || 6) * 1.85; }
+        else if (res.level === "warn") { warnCnt++; penalty += (CHECK_WEIGHTS[id] || 5) * 0.95; }
         else if (res.level === "ok") { okCnt++; }
       }
 
-      // Segment bar update
+      // Segment bar update (keep flex-1 for 20-segment flex bar)
       const seg = $(`#segBar [data-seg="${id}"]`);
       if (seg) {
-        seg.className = `h-full rounded-full transition-colors ${active ? st.segCls : "bg-gray-200 opacity-40 dark:bg-neutral-800"}`;
+        seg.className = `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-gray-200 opacity-40 dark:bg-neutral-800"}`;
       }
 
       if (!row) continue;
@@ -3153,7 +3922,7 @@
       );
     }
     $("#scoreSub").textContent = totalIssues === 0
-      ? "当前网络与系统指纹高度自洽，未检出明显暴露点"
+      ? "当前网络信誉、底层协议栈与系统指纹高度自洽"
       : badCnt > 0
       ? `检出 ${badCnt} 项高危穿帮与 ${warnCnt} 项可疑信号，易触发风控验证`
       : `无硬性矛盾，但有 ${warnCnt} 项环境细节存在轻微破绽`;
@@ -3177,7 +3946,7 @@
 
     $("#topGiveaway").textContent = rankedIssues.length
       ? `头号暴露项：${rankedIssues[0].title}`
-      : "14 项核心风控核验全部通过";
+      : `${CORE_CHECKS.filter(c => isCheckCounted(c[0])).length} 项计分风控核验全部通过`;
 
     const pBox = $("#priorityBox"), pList = $("#priorityList");
     if (pBox && pList) {
@@ -3199,6 +3968,8 @@
         }).join("");
       }
     }
+
+    renderScenarios();
 
     // Run-over-run comparison & sparkline
     if (recordHistory) {
@@ -3228,6 +3999,160 @@
         const pts = hist.map((p, i) => `${((i * W) / (hist.length - 1)).toFixed(1)},${(H - 3 - (p.s / 100) * (H - 6)).toFixed(1)}`).join(" ");
         spk.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="w-full h-full stroke-blue-600 dark:stroke-blue-400 fill-none" stroke-width="1.7"><polyline points="${pts}"/></svg>`;
       }
+    }
+  }
+
+  /* ---------- 6 Business Scenario Suitability Meters (Fusing Egress Intel + Browser Checks) ---------- */
+  function computeScenarios() {
+    const intel = R.extIntel || R.intel;
+    const isExt = !!(R.extIntel && R.extIntel.ok);
+    const ck = isExt ? {} : (R.checks || {});
+
+    const cc = (intel?.consensus?.country || R.ipCC || "").toUpperCase();
+    const isNative = intel?.consensus?.isNative;
+    const hostE = intel?.votes?.hosting?.E ?? (R.netKind === "dc" ? 0.85 : 0.05);
+    const vpnE = intel?.votes?.vpn?.E || 0;
+    const proxyE = intel?.votes?.proxy?.E || 0;
+    const torE = intel?.votes?.tor?.E || 0;
+    const maxAnon = Math.max(vpnE, proxyE, torE);
+    const infCls = intel?.asnProfile?.inferred?.cls || (R.netKind === "dc" ? "hosting" : "isp");
+    const asnConflict = !!intel?.asnProfile?.inferred?.conflict;
+    const isHosting = hostE >= 0.55 || infCls === "hosting" || !!intel?.cidr?.x4bDatacenter || (!intel && R.netKind === "dc");
+    const isLeased = !!(intel?.asnProfile?.lease?.leased || intel?.asnProfile?.lease?.possible);
+    const realityHit = !!intel?.tls443?.realitySuspect;
+    const blCnt = intel?.dnsbl?.listedCount || 0;
+    const cidrHits = (intel?.cidr?.hits || []).filter(h => h.kind === "threat").length;
+    const dirty = intel?.cidr?.neighbours?.dirtyCount || 0;
+    const wholeBlock = (intel?.cidr?.neighbours?.wholeBlockListed || []).length > 0;
+    const asnAbuse = intel?.asnProfile?.abuseDensity?.ratio || 0;
+    const sfsHit = !!(intel?.threat?.sfs?.appears);
+    const hasPtr = !!(intel?.consensus?.hostname || (intel?.shodan?.hostnames || []).length);
+    const rpkiInvalid = intel?.asnProfile?.rpki === "invalid";
+
+    const mk = (base, rules) => {
+      let s = base;
+      const reasons = [];
+      for (const [cond, pts, msg] of rules) {
+        if (cond) { s -= pts; reasons.push(msg); }
+      }
+      const score = Math.max(5, Math.min(100, Math.round(s)));
+      return {
+        score,
+        reason: reasons[0] || "出口纯净且环境特征自然契合"
+      };
+    };
+
+    const aiBlockedCC = ["CN", "HK", "MO", "RU", "BY", "IR", "KP", "CU", "SY"].includes(cc);
+    const aiSplitLeak = !isExt && (["CN", "HK", "MO"].includes(R.exits?.ex_gpt?.cc || "") || ["CN", "HK", "MO"].includes(R.exits?.ex_claude?.cc || ""));
+
+    return {
+      ai: mk(98, [
+        [aiBlockedCC, 68, `${cc || "当前地区"} 不在主流海外 AI 官方服务支持区`],
+        [aiSplitLeak, 45, "AI 专属分流规则落入受限地区 (CN/HK)"],
+        [torE >= 0.4, 38, "Tor 出口易触发大模型高频拒访"],
+        [realityHit, 22, "出口 :443 暴露 Reality 偷证书节点特征"],
+        [isHosting, 22, "机房 IDC 段易触发 ChatGPT 降智或 Claude 封号"],
+        [maxAnon >= 0.45, 16, "共享 VPN/代理出口易弹 PoW 算力验证"],
+        [blCnt > 0 || cidrHits > 0, 14, "命中公开威胁/黑名单库"],
+        [ck.tz?.level === "bad", 12, "系统时区与出口国家严重不符"]
+      ]),
+      streaming: mk(98, [
+        [cc === "CN", 65, "中国大陆出口无法直接解锁海外流媒体库"],
+        [isHosting, 30, "机房 ASN 通常被 Netflix / Disney+ 归入代理库仅放行自制剧"],
+        [isNative === false, 26, `广播 IP (${intel?.consensus?.regCountry}→${cc}) 易跨区识别偏差或锁区`],
+        [maxAnon >= 0.4 || intel?.cidr?.x4bVpn, 22, "命中商业 VPN/代理特征库"],
+        [asnConflict || isLeased, 15, "伪家宽或商业转租段易被流媒体版权库降级"],
+        [ck.tz?.level === "bad" || ck.split?.level === "bad", 16, "时区/国内分流破绽影响 TikTok 推荐池定位"]
+      ]),
+      social: mk(97, [
+        [isHosting, 32, "机房 IP 注册 X / Reddit / IG 极易秒冻或强制短信验证"],
+        [maxAnon >= 0.4 || realityHit, 24, "共享代理或 Reality 节点易触发批量关联风控"],
+        [blCnt > 0 || cidrHits > 0 || sfsHit, 22, "存在垃圾注册或黑名单不良历史"],
+        [dirty >= 3 || asnAbuse >= 4, 15, `同 /24 存在 ${dirty} 个脏邻居连坐污染`],
+        [ck.fpb?.level === "bad" || ck.tamper?.level === "bad", 22, "浏览器存在防关联插件/跨线程篡改痕迹"],
+        [ck.conn?.level === "bad", 14, "底层 TCP 协议栈暴露代理服务器代发连接"]
+      ]),
+      captcha: mk(98, [
+        [blCnt > 0 || cidrHits > 0 || wholeBlock, 36, "命中实时黑名单或整段封禁，必弹交互式验证盾"],
+        [ck.bot?.level === "bad", 35, "暴露 WebDriver / 自动化控制特征"],
+        [ck.tamper?.level === "bad", 22, "JS 原型篡改直接拉低 Turnstile 信任分"],
+        [isHosting, 18, "机房 ASN 默认初始人机信任分较低"],
+        [maxAnon >= 0.45 || realityHit, 16, "匿名代理出口易触发循环点选验证码"],
+        [dirty >= 4, 14, `同 /24 网段含 ${dirty} 个脏邻居拖累免盾率`],
+        [ck.conn?.level === "bad", 10, "TLS / TCP 握手栈与自报系统不一致"]
+      ]),
+      fintech: mk(98, [
+        [isHosting || asnConflict, 38, "支付反欺诈引擎（如 Stripe Radar）对机房/伪家宽严厉拒付"],
+        [maxAnon >= 0.35 || realityHit, 28, "检出代理/VPN 或 :443 伪装特征，高危拒付风险"],
+        [isLeased || isNative === false, 20, "租赁或跨国广播 IP 极易触发账单地址人工审核"],
+        [blCnt > 0 || cidrHits > 0 || dirty >= 5, 22, "网段存在欺诈或黑名单不良记录"],
+        [ck.webrtc?.level === "bad" || ck.dns?.level === "bad" || ck.split?.level === "bad", 25, "真实 IP / DNS 分流泄漏直接触发异地盗刷拦截"],
+        [ck.tz?.level === "bad" || ck.rtt?.level === "bad", 16, "物理往返延迟或系统时区与账单国矛盾"]
+      ]),
+      email: mk(96, [
+        [blCnt > 0, 48, `已上榜 ${blCnt} 家实时 DNSBL 黑名单，25 端口发信直接拒收`],
+        [wholeBlock || dirty >= 5, 25, `同 /24 网段含 ${dirty} 个发信污点邻居，极易进垃圾箱`],
+        [cidrHits > 0 || sfsHit, 22, "命中公开垃圾邮件或攻击源威胁库"],
+        [infCls === "isp" || infCls === "mobile", 16, "民用宽带/移动网段通常封禁 25 端口并列入 Spamhaus PBL"],
+        [!hasPtr, 12, "当前 IP 缺少反向 PTR (rDNS) 域名解析记录"],
+        [rpkiInvalid, 15, "BGP RPKI 路由签名无效，降低大型邮局信任度"]
+      ])
+    };
+  }
+
+  function renderScenarios() {
+    if (!R.srv && !R.intel && !R.extIntel) return;
+    const sc = computeScenarios();
+    R.scenarios = sc;
+    let passCnt = 0;
+    for (const [id] of SCENARIOS_META) {
+      const card = $(`#scenarioGrid [data-scen="${id}"]`);
+      const item = sc[id];
+      if (!card || !item) continue;
+      const ok = item.score >= 80;
+      const warn = item.score >= 55 && item.score < 80;
+      if (ok) passCnt++;
+
+      card.className = "rounded-lg border p-3 flex flex-col justify-between gap-2 transition " + (
+        ok ? "border-teal-200/80 bg-teal-50/30 dark:bg-teal-500/5 dark:border-teal-500/20"
+          : warn ? "border-amber-200/80 bg-amber-50/30 dark:bg-amber-500/5 dark:border-amber-500/20"
+          : "border-red-200/80 bg-red-50/30 dark:bg-red-500/5 dark:border-red-500/20"
+      );
+      const badge = $(".sc-badge", card);
+      if (badge) {
+        badge.textContent = ok ? "畅通推荐" : warn ? "受限/易验" : "高危劝退";
+        badge.className = "sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 " + (
+          ok ? "bg-teal-100 text-teal-800 dark:bg-teal-500/20 dark:text-teal-300"
+            : warn ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+            : "bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300"
+        );
+      }
+      const sEl = $(".sc-score", card);
+      if (sEl) {
+        sEl.textContent = String(item.score);
+        sEl.className = "sc-score font-mono text-lg font-bold tabular-nums " + (
+          ok ? "text-teal-700 dark:text-teal-400" : warn ? "text-amber-700 dark:text-amber-400" : "text-red-600 dark:text-red-400"
+        );
+      }
+      const bar = $(".sc-bar", card);
+      if (bar) {
+        bar.style.width = `${item.score}%`;
+        bar.className = "sc-bar h-full rounded-full transition-all duration-300 " + (
+          ok ? "bg-teal-500" : warn ? "bg-amber-500" : "bg-red-500"
+        );
+      }
+      const rEl = $(".sc-reason", card);
+      if (rEl) rEl.textContent = item.reason;
+    }
+
+    const sumBadge = $("#scenarioSummaryBadge");
+    if (sumBadge) {
+      sumBadge.textContent = `${passCnt} / ${SCENARIOS_META.length} 个主流场景畅通达标`;
+      sumBadge.className = "inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium " + (
+        passCnt >= 5 ? "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
+          : passCnt >= 3 ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
+          : "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+      );
     }
   }
 
@@ -3274,11 +4199,19 @@
     // Headline Critical Giveaway Alert Banner (#wowAlert)
     const wowEl = $("#wowAlert"), wowIcon = $("#wowIcon"), wowTitle = $("#wowTitle"), wowDesc = $("#wowDesc");
     if (wowEl && wowTitle && wowDesc && wowIcon) {
-      let alertTone = "ok", head = "底层协议栈、网络出口与浏览器环境自洽", sub = "未发现代理代发连接、国内直连漏底或浅层篡改插件留下的致命硬伤。";
-      if (checks.conn?.level === "bad") {
+      let alertTone = "ok", head = "底层协议栈、网络出口信誉与浏览器环境自洽", sub = "未发现代理代发连接、Reality 偷证书、国内直连漏底或浅层篡改插件留下的致命硬伤。";
+      if (checks.reality?.level === "bad") {
+        alertTone = "bad";
+        head = "最要命的一条：反向 :443 穿透抓获 Reality 偷证书伪装";
+        sub = checks.reality.summary;
+      } else if (checks.conn?.level === "bad") {
         alertTone = "bad";
         head = "最要命的一条：底层 TCP 协议栈与自报系统直接打架";
         sub = checks.conn.summary;
+      } else if (checks.synspoof?.level === "bad") {
+        alertTone = "bad";
+        head = "最要命的一条：跨包 TSval 时钟拆穿了无状态 SYN 改包";
+        sub = checks.synspoof.summary;
       } else if (checks.split?.level === "bad") {
         alertTone = "bad";
         head = "最要命的一条：规则分流直接暴露了你的国内真实宽带";
@@ -3287,6 +4220,14 @@
         alertTone = "bad";
         head = "最要命的一条：WebRTC 或 IPv6 穿透暴露了真实底层身份";
         sub = checks.webrtc.summary;
+      } else if (checks.lease?.level === "bad") {
+        alertTone = "bad";
+        head = "最要命的一条：PeeringDB 流量画像拆穿了伪家宽机房";
+        sub = checks.lease.summary;
+      } else if (checks.reputation?.level === "bad") {
+        alertTone = "bad";
+        head = "高危出口污染：当前 IP 或所在 C 段命中实时黑名单/威胁库";
+        sub = checks.reputation.summary;
       } else if (checks.fpb?.level === "bad") {
         alertTone = "bad";
         head = "最要命的一条：跨线程或内核语法拆穿了伪装环境";
@@ -3326,13 +4267,17 @@
 
     const p1 = `在打开网页的几百毫秒内，网站无需申请任何权限就已经拼出了你的画像：你大概率来自 ${chip(originText, ["langs", "tz", "ex_cn"], cnLeak || (origin?.cc && origin.cc !== R.ipCC) ? "warn" : "default", !!cnLeak)}，当前网络出口位于 ${chip(exitText, ["ip", "geo"], "default", true)}。你日常阅读 ${chip(langStr, ["langs"])}，系统时钟设在 ${chip(tzStr, ["tz", "tzoff"], checks.tz?.level === "bad" ? "bad" : "default")}，习惯使用 ${chip(clockStr, ["hour"])}。`;
 
-    const p2 = `你手头这台设备运行着 ${chip(`${R.osLabel || "未知系统"} (${navigator.hardwareConcurrency || "?"} 核)`, ["os", "cpu", "arch"])}，浏览器是真正跑在 ${chip(`${R.engine || "?"} 内核上的 ${R.browserLabel || "浏览器"}`, ["browser", "engine", "engver"])}；显示器物理面板分辨率为 ${chip(`${R.physScreen || "–"} · ${R.hz || 60} Hz`, ["screen", "hz"])}，图形显卡为 ${chip(R.gpuDiscrete ? `${R.gpuDiscrete} + ${R.gpuClean}` : (R.gpuClean || "未知显卡"), ["gpu", "webgpu"], R.gpuSoft ? "bad" : "default")} —— 在风控模型里属于一台 ${chip(rigLabel, ["gpu", "screen", "cpu"])}。`;
+    const p2 = `你手头这台设备运行着 ${chip(`${R.osLabel || "未知系统"} (${navigator.hardwareConcurrency || "?"} 核)`, ["os", "cpu", "arch"])}，浏览器是真正跑在 ${chip(`${R.engine || "?"} 内核上的 ${R.browserLabel || "浏览器"}`, ["browser", "engine", "engver"])}；显示器物理面板分辨率为 ${chip(`${R.physScreen || "–"} · ${R.hz || 60} Hz`, ["screen", "hz"])}，图形显卡为 ${chip(R.gpuDiscrete ? `${R.gpuDiscrete} + ${R.gpuClean}` : (R.gpuClean || "未知显卡"), ["gpu", "webgpu"], R.gpuSoft ? "bad" : "default")} —— 在风控模型里属于一台 ${chip(rigLabel, ["gpu", "screen", "cpu", "cpubench"])}。`;
 
     const netTypeDesc = R.netKind === "dc" ? `数据中心机房线路 (${R.org || R.asn})` : `原生宽带/ISP (${R.org || R.asn})`;
     const rttDesc = R.httpRtt != null && R.srvTcpRtt != null
       ? `浏览器往返 ${R.httpRtt}ms / 服务端握手 ${R.srvTcpRtt}ms`
       : "延迟已采样";
-    const p3 = `网络链路方面，你正通过 ${chip(netTypeDesc, ["isp", "nettype"], R.netKind === "dc" ? "bad" : "ok", true)} 访问本站，递归 DNS 位于 ${chip(R.dnsCC ? `${flagEmoji(R.dnsCC)} ${countryName(R.dnsCC)}` : "未检出", ["dns"], checks.dns?.level === "bad" ? "bad" : "default")}，物理握手测距显示 ${chip(rttDesc, ["tcprtt"], checks.rtt?.level === "bad" ? "bad" : checks.rtt?.level === "warn" ? "warn" : "ok")}。`;
+    const pur = R.intel?.purity;
+    const purityPhrase = pur?.score != null
+      ? `，多源综合信誉纯净度为 ${chip(`${pur.score}/100 (${pur.grade} 级)`, ["rep_score", "rep_votes", "rep_neigh"], pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad")}`
+      : "";
+    const p3 = `网络链路方面，你正通过 ${chip(netTypeDesc, ["isp", "nettype", "rep_asn"], R.netKind === "dc" ? "bad" : "ok", true)} 访问本站${purityPhrase}，递归 DNS 位于 ${chip(R.dnsCC ? `${flagEmoji(R.dnsCC)} ${countryName(R.dnsCC)}` : "未检出", ["dns", "ecs"], checks.dns?.level === "bad" ? "bad" : "default")}，物理握手测距显示 ${chip(rttDesc, ["tcprtt", "muxjitter"], checks.rtt?.level === "bad" ? "bad" : checks.rtt?.level === "warn" ? "warn" : "ok")}。`;
 
     const extCombined = Array.from(new Set([...(R.extWar || []), ...(R.domExts || []).map(x => x[1])]));
     const extPhrase = extCombined.length
@@ -3350,10 +4295,14 @@
 
     // Risk & Persona Labels
     const tags = [];
-    if (checks.tz?.level === "bad" || checks.split?.level !== "ok" || checks.conn?.level === "bad" || R.netKind === "dc") {
+    if (checks.tz?.level === "bad" || checks.split?.level !== "ok" || checks.conn?.level === "bad" || checks.reality?.level === "bad" || R.netKind === "dc") {
       tags.push(["使用跨境代理", "bad"]);
     }
+    if (checks.reality?.level === "bad") tags.push(["Reality 偷证书实锤", "bad"]);
     if (R.netKind === "dc") tags.push(["机房 IDC 出口", "bad"]);
+    if (R.intel?.asnProfile?.inferred?.conflict) tags.push(["伪家宽自报冲突", "bad"]);
+    if (R.intel?.consensus?.isNative === false) tags.push(["跨国广播 IP", "warn"]);
+    if ((R.intel?.cidr?.neighbours?.dirtyCount || 0) > 0) tags.push([`C 段脏邻居 (${R.intel.cidr.neighbours.dirtyCount})`, "warn"]);
     if (R.exits?.ex_cn?.cc === "CN" && R.ipCC !== "CN") tags.push(["规则分流漏底", "bad"]);
     if (/^(macOS|iOS|iPadOS)/.test(R.dev?.os || "")) tags.push(["Apple 生态用户", "info"]);
     if (isHighRig) tags.push(["高配硬件终端", "info"]);
@@ -3362,7 +4311,7 @@
       if (k === "dev") tags.push(["技术/开发者", "info"]);
       if (k === "design") tags.push(["视觉/创意设计", "info"]);
     }
-    if ((R.domExts || []).some(x => x[0] === "crypto") || (R.extWar || []).some(n => /MetaMask|Phantom|OKX/.test(n))) {
+    if ((R.domExts || []).some(x => x[0] === "crypto") || (R.extWar || []).some(n => /MetaMask|Phantom|OKX|Rabby|Bitget/.test(n))) {
       tags.push(["Web3 / 加密钱包用户", "warn"]);
     }
     if ((R.extWar || []).some(n => /1Password|Bitwarden|LastPass/.test(n))) {
@@ -3406,13 +4355,13 @@
     const langMatch = firstLang ? (spokenIn(firstLang).includes(T) || langCC(firstLang) === T || (T !== "CN" && /^en\b/i.test(firstLang) && ["US", "GB", "SG", "HK", "CA", "AU"].includes(T))) : null;
     const tzMatch = R.tz ? tzCC(R.tz) === T : null;
     const ipMatch = R.ipCC ? R.ipCC === T : null;
-    const ispClean = R.srv ? R.netKind !== "dc" : null;
+    const ispClean = R.srv ? (R.netKind !== "dc" && R.intel?.consensus?.isNative !== false) : null;
     const dnsMatch = R.dnsCC ? R.dnsCC === T : null;
     const rtcClean = R.checks?.webrtc ? R.checks.webrtc.level === "ok" && !(R.exits?.ex_cn?.cc === "CN" && T !== "CN") : null;
 
     const cards = [
       ["出口 IP 归属地", ipMatch, ipMatch ? `已位于 ${countryName(T)}` : `当前在 ${countryName(R.ipCC)}，需切换 ${countryName(T)} 节点`],
-      ["出口原生属性", ispClean, ispClean ? "住宅/ISP 非机房线路" : "当前为机房 VPS，高风控建议换家宽 ISP"],
+      ["原生家宽属性", ispClean, ispClean ? "原生住宅/ISP 直配线路" : R.intel?.consensus?.isNative === false ? "当前为跨国广播 IP，建议换本土原生段" : "当前为机房 VPS，高风控建议换家宽 ISP"],
       ["系统时区对齐", tzMatch, tzMatch ? `${R.tz} 已对齐` : `当前为 ${R.tz || "?"}，需改为 ${countryName(T)} 时区`],
       ["浏览器首选语言", langMatch, langMatch ? `${firstLang} 符合当地习惯` : `当前首选 ${firstLang || "?"}，建议前置当地语种`],
       ["DNS 解析服务器", dnsMatch, dnsMatch == null ? "DNS 探针未返回" : dnsMatch ? `已由 ${countryName(T)} 解析` : `当前在 ${countryName(R.dnsCC)}，建议开远端代理解析`],
@@ -3496,6 +4445,32 @@
   }
 
   function bindEvents() {
+    // Arbitrary Public IP Reputation Inspector (#ipQueryForm / #extIpBanner)
+    $("#ipQueryForm")?.addEventListener("submit", e => {
+      e.preventDefault();
+      inspectCustomIp($("#ipQueryInput")?.value || "");
+    });
+    $("#btnResetSelfIp")?.addEventListener("click", () => {
+      const inp = $("#ipQueryInput");
+      if (inp) inp.value = "";
+      inspectCustomIp("");
+    });
+    $("#btnJumpRep")?.addEventListener("click", () => {
+      activeGroup = "rep";
+      searchQuery = "";
+      const inp = $("#probeSearch");
+      if (inp) inp.value = "";
+      $$("#groupTabs .gtab-btn").forEach(b => {
+        const on = b.dataset.gtab === "rep";
+        b.setAttribute("aria-selected", on ? "true" : "false");
+        b.className = "gtab-btn shrink-0 py-1.5 px-3 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium transition " + (
+          on ? "bg-blue-600 text-white shadow-2xs" : "bg-gray-100 text-gray-600 hover:bg-gray-200/70 dark:bg-neutral-800 dark:text-neutral-300"
+        );
+      });
+      applyExplorerFilter();
+      $("#explorerSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
     // Theme switch
     $("#btnTheme")?.addEventListener("click", () => {
       const isDark = document.documentElement.classList.toggle("dark");
@@ -3573,9 +4548,15 @@
       dns: [probeDns],
       split: [probeServer, probeQuicAndExits],
       conn: [probeServer],
-      rtt: [probeServer, probeLatency],
+      synspoof: [probeServer, probeLatency],
+      reality: [probeIntel],
+      rtt: [probeServer, probeLatency, probeWebrtc],
       webrtc: [probeWebrtc, probeV6Mac],
-      dc: [probeServer]
+      dc: [probeServer, probeIntel],
+      lease: [probeIntel],
+      reputation: [probeIntel],
+      subpixel: [probeDeviceAndSpecs, probeSubpixelAndEngine],
+      hwvirt: [probeGraphics, probeAsyncHardware, probeSubpixelAndEngine]
     };
 
     const onCheckContainerClick = async e => {
@@ -3700,13 +4681,15 @@
     // Copy Markdown/Text Report & Copy JSON
     $("#btnCopyTxt")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
+      const pur = R.intel?.purity;
       const lines = [
-        `【WhoProbe 128项全栈指纹与伪装体检报告】`,
-        `综合得分: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
+        `【WhoProbe v6.0 · 148项全栈指纹与出口信誉体检报告】`,
+        `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
+        `出口纯净度: ${pur ? `${pur.score}/100 (${pur.grade} 级)` : "--"} · 脏邻居: ${R.intel?.cidr?.neighbours?.dirtyCount ?? 0} 个`,
         `推断设备: ${R.osLabel || "-"} · ${R.browserLabel || "-"} · 屏幕 ${R.physScreen || "-"} @ ${R.hz || 60}Hz`,
         `显卡渲染: ${R.gpuDiscrete ? R.gpuDiscrete + " + " + R.gpuClean : (R.gpuClean || "-")}`,
         `网络出口: ${masked ? "[已隐藏]" : (R.ip || "-")} (${countryName(R.ipCC)} · ${masked ? "[运营商已隐藏]" : (R.org || "-")})`,
-        `物理测距: 浏览器 RTT ${R.httpRtt ?? "-"}ms / 服务端握手 ${R.srvTcpRtt ?? "-"}ms`,
+        `三维测距: 浏览器 HTTP ${R.httpRtt ?? "-"}ms / 服务端 TCP 握手 ${R.srvTcpRtt ?? "-"}ms / STUN UDP ${R.stunRttMs ?? "-"}ms`,
         `跨站指纹: ${R.fpId || "-"} · 物理硬件码: ${R.hwId || "-"}`,
         ``,
         `[异常与风险项]`
@@ -3723,26 +4706,30 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "5.0.0",
+        version: "6.0.0",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,
         issues: R.totalIssues,
+        purity: R.intel?.purity || null,
+        scenarios: R.scenarios || null,
+        inspectedIp: masked ? null : (R.extIntel?.targetIp || null),
         exit: masked ? { country: R.ipCC, netKind: R.netKind } : { ip: R.ip, country: R.ipCC, asn: R.asn, org: R.org, netKind: R.netKind },
-        rtt: { browserHttpMs: R.httpRtt, serverTcpHandshakeMs: R.srvTcpRtt },
+        rtt: { browserHttpMs: R.httpRtt, serverTcpHandshakeMs: R.srvTcpRtt, stunUdpMs: R.stunRttMs, muxBurst: R.muxBurst || null },
         packet: R.srv?.packet || null,
+        tls443: R.intel?.tls443 || null,
         ids: { fingerprintId: R.fpId, hardwareId: R.hwId },
         checks: R.checks,
         probes: masked
           ? Object.fromEntries(Object.entries(R.values || {}).map(([k, v]) => [k, SNIFFER_MAP[k]?.mask ? "[MASKED]" : v]))
           : R.values
       };
-      copyText(JSON.stringify(payload, null, 2), "已复制 128 项完整 JSON 数据");
+      copyText(JSON.stringify(payload, null, 2), "已复制 148 项完整 JSON 数据");
     });
 
     $("#btnCopyUrl")?.addEventListener("click", () => copyText(location.href, "已复制页面链接"));
 
-    // Rerun all 128 probes
+    // Rerun all 148 probes
     $("#btnRerun")?.addEventListener("click", () => runAll());
   }
 
@@ -3790,7 +4777,7 @@
     renderPortrait();
     renderTargetSimulator();
 
-    // Phase 3: Network L3-L7 Packet Probe + Parallel Async Hardware/Browser/Exit Probes
+    // Phase 3: Network L3-L7 Packet Probe + Parallel Multi-Source Intel & Hardware/Browser/Exit Probes
     await probeServer();
     if (seq !== runSeq) return;
     renderChecksAndScore(false);
@@ -3798,6 +4785,7 @@
     renderTargetSimulator();
 
     await Promise.all([
+      probeIntel(),
       probeLatency(),
       probeQuicAndExits(),
       probeDns(),
@@ -3837,7 +4825,7 @@
     if (stTxt) stTxt.textContent = `已完成 ${completedSet.size} / ${SNIFFERS.length} 项检测 · 耗时 ${elapsedSec}s`;
     if (dot) dot.className = "size-1.5 rounded-full bg-teal-500";
     const elap = $("#portraitElapsed");
-    if (elap) elap.textContent = `128 项全量扫描 ${elapsedSec}s · 点击词条可定位原始探针`;
+    if (elap) elap.textContent = `148 项全量扫描 ${elapsedSec}s · 点击词条可定位原始探针`;
     if (rerunBtn) rerunBtn.disabled = false;
     if (rerunTxt) rerunTxt.textContent = "重新检测";
 

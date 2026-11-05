@@ -26,7 +26,7 @@ jobs:
 
       - name: Verify Python syntax & run built-in self-test suite
         run: |
-          python3 -m py_compile probe.py
+          python3 -m py_compile probe.py egress_intel.py
           python3 probe.py --self-test
 
       - name: Verify frontend JavaScript syntax & probe catalog integrity
@@ -39,6 +39,10 @@ jobs:
           m = re.search(r"const SNIFFERS = \[(.*?)\n  \];", js, re.S)
           assert m, "SNIFFERS catalog not found"
           entries = re.findall(r"^\s*\[\"[a-z0-9_]+\",\s*\"[a-z]+\"", m.group(1), re.M)
-          assert len(entries) == 128, f"Expected 128 probes, got {len(entries)}"
-          print(f"Verified {len(entries)} probes in static/app.js")
+          assert len(entries) == 148, f"Expected 148 probes, got {len(entries)}"
+          c = re.search(r"const CORE_CHECKS = \[(.*?)\n  \];", js, re.S)
+          assert c, "CORE_CHECKS catalog not found"
+          checks = re.findall(r"^\s*\[\"[a-z0-9_]+\"", c.group(1), re.M)
+          assert len(checks) == 20, f"Expected 20 core checks, got {len(checks)}"
+          print(f"Verified {len(entries)} probes and {len(checks)} core checks in static/app.js")
           '

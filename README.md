@@ -1,11 +1,11 @@
-# WhoProbe v6.0 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
+# WhoProbe v7.0 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B%20(Zero%20Deps)-3776AB.svg)](./probe.py)
 [![Probes](https://img.shields.io/badge/Probes-148%20L3--L7-10b981.svg)](#8-大观测层与-148-项真实探针)
 [![Anti-Detect Checks](https://img.shields.io/badge/Cross--Layer%20Checks-24-ef4444.svg)](#24-项跨层伪装与信誉交叉核验)
 
-> **WhoProbe v6.0** 是一款**零第三方 Python 依赖**的全栈（L3 网络包头 → L4 传输与内核时钟 → 主动 `:443` 反向证书验真 → 多源 BGP/RIR/DNSBL 出口信誉 → HTTP 协议层 → 浏览器图形/硬件/防篡改运行时）指纹与代理伪装自检平台。
+> **WhoProbe v7.0** 是一款**零第三方 Python 依赖**的全栈（L3 网络包头 → L4 传输与内核时钟 → 主动 `:443` 反向证书验真 → 多源 BGP/RIR/DNSBL 出口信誉 → HTTP 协议层 → 浏览器图形/硬件/防篡改运行时）指纹与代理伪装自检平台。
 >
 > **English Summary**: Zero-dependency Python + vanilla JS L3–L7 browser, protocol-stack & multi-source egress reputation inspector. Combines passive Linux `AF_PACKET` BPF sniffing (`TCP SYN` TTL/Window/MSS/MTU/`JA4T`/DF/IPID + `TSval` kernel `Hz` stateless SYN-spoof detection + `TLS ClientHello` `JA4`/`JA3`/GREASE/PQ-KEM/ECH), active `:443` VLESS-Reality stolen-certificate back-probing, 8-source weighted log-odds IP intelligence, BGP/RDAP/PeeringDB fake-ISP & lease detection, 12 DoH DNSBLs + 15 CIDR netsets + `/24` dirty-neighbour scoring, 6 business scenario suitability meters, and 148 client/server probes.
 
@@ -13,7 +13,7 @@
 
 ## 核心透视能力（为什么常规检测站看不穿你的破绽？）
 
-常规「查看我的 IP」或纯前端指纹站只能看到单侧表层数据，而 **WhoProbe v6.0** 同时站在**服务端网卡底层、全球欺诈情报网与浏览器沙箱内部**做多维交叉审判：
+常规「查看我的 IP」或纯前端指纹站只能看到单侧表层数据，而 **WhoProbe v7.0** 同时站在**服务端网卡底层、全球欺诈情报网与浏览器沙箱内部**做多维交叉审判：
 
 1. **只读旁路抓包 + 跨包内核时钟防改包（L3/L4）**：通过只读 `AF_PACKET` + 内核 BPF 旁路嗅探 443 握手包（无需替换现有 Nginx），提取首个 `TCP SYN` 的初始 TTL、窗口、MSS/MTU、`JA4T` 及 `TLS ClientHello` (`JA4` / `JA3` / `X25519MLKEM768` / `ECH` / `ALPS`)；并跨包追踪 IPv4 `DF`、`IPID` 序列与 `TCP Timestamp (TSval)` 内核节拍频率 (`Hz`)，直接拆穿仅篡改首个 SYN 包的 `osfuscate` 无状态改包脚本。
 2. **主动 `:443` 反向穿透与 VLESS-Reality 偷证书识别**：服务端异步回连出口 IP 的 `:443` 端口校验 TLS 证书——若非 Microsoft / Apple / Yahoo / Amazon / Cloudflare 官方 ASN 却返回上述大厂官网证书，直接实锤 **VLESS-Reality 借用证书伪装节点**。
@@ -51,7 +51,7 @@ flowchart LR
 
 ## 10 秒快速启动（零第三方依赖）
 
-后端仅使用 **Python 3.10+ 标准库**（`probe.py` + `egress_intel.py`），前端已预编译内置 **Tailwind CSS v4 + Preline UI v5**，无需安装任何 `pip` 包或 `Node.js` 即可直接启动：
+后端仅使用 **Python 3.10+ 标准库**（`probe.py` + `egress_intel.py`），前端采用双栏档案诊断台与四分页渐进工作区设计，已预编译内置 **Tailwind CSS v4**（零重型前端运行时依赖），无需安装任何 `pip` 包或 `Node.js` 即可直接启动：
 
 ```bash
 git clone https://github.com/zzusec/whoprobe.git
@@ -178,7 +178,7 @@ usage: probe.py [-h] [--host HOST] [--port PORT] [--sniff-iface SNIFF_IFACE]
 ## 致谢与灵感参考
 
 - 多源对数赔率加权投票 (`log-odds` 信誉融合)、BGP/RDAP/PeeringDB 伪家宽与租赁段推断、DNSBL/CIDR 威胁网段聚合与 `/24` 脏邻居连坐评分，以及六大业务场景准入仪表盘的设计思路融合并致敬了开源项目 [**BlackSlience-Reaper/egress-observatory**](https://github.com/BlackSlience-Reaper/egress-observatory)。
-- 前端交互组件与原子化样式基于 [Tailwind CSS v4](https://tailwindcss.com/) 与 [Preline UI](https://github.com/htmlstreamofficial/preline) 构建。
+- 前端界面采用双栏档案诊断台与四分页渐进式工作区信息架构，样式基于原生 Vanilla JS 与 [Tailwind CSS v4](https://tailwindcss.com/) 构建。
 
 ---
 

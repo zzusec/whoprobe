@@ -1,4 +1,4 @@
-/* WhoProbe v6.0 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.0.0 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -591,6 +591,7 @@
   let runSeq = 0;
   let completedSet = new Set();
   let activeGroup = "all";
+  let activeWorkspaceTab = "checks";
   let searchQuery = "";
   let checkFilter = "all";
   let currentScene = store.get(SK.scene) === "privacy" ? "privacy" : "disguise";
@@ -648,36 +649,53 @@
     }
   }
 
+  function switchWorkspaceTab(tabId) {
+    if (!tabId) return;
+    activeWorkspaceTab = tabId;
+    $$("#workspaceTabs .ws-tab").forEach(btn => {
+      const on = btn.dataset.wstab === tabId;
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+      btn.className = "ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs transition " + (
+        on
+          ? "font-semibold bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white"
+          : "font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
+      );
+    });
+    $$("[data-wspanel]").forEach(panel => {
+      panel.hidden = panel.dataset.wspanel !== tabId;
+    });
+  }
+
   function buildInitialDOM() {
     // 1. 20-segment health bar (flex-1 so any check count renders evenly)
     const segBar = $("#segBar");
     if (segBar) {
       segBar.innerHTML = CORE_CHECKS.map(([id, title]) =>
-        `<span data-seg="${esc(id)}" title="${esc(title)}" class="flex-1 h-full rounded-full bg-gray-200 dark:bg-neutral-800 transition-colors"></span>`
+        `<span data-seg="${esc(id)}" title="${esc(title)}" class="flex-1 h-full rounded-full bg-zinc-200 dark:bg-zinc-800 transition-colors"></span>`
       ).join("");
     }
 
-    // 1b. 6 Business Scenario Suitability Skeleton Cards
+    // 1b. 6 Business Scenario Suitability Architectural Cells (flat hairline grid, zero nested cards)
     const sg = $("#scenarioGrid");
     if (sg) {
       sg.innerHTML = SCENARIOS_META.map(([id, name, sub]) => `
-        <div data-scen="${esc(id)}" class="rounded-lg border border-gray-200/90 bg-gray-50/50 p-3 flex flex-col justify-between gap-2 dark:bg-neutral-800/40 dark:border-neutral-800">
+        <div data-scen="${esc(id)}" class="bg-white p-5 sm:p-6 flex flex-col justify-between gap-4 dark:bg-[#121418]">
           <div>
-            <div class="flex items-center justify-between gap-1.5">
-              <span class="text-xs font-semibold text-gray-900 dark:text-white truncate">${esc(name)}</span>
-              <span class="sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold bg-gray-200/80 text-gray-600 dark:bg-neutral-700 dark:text-neutral-300">评估中</span>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-semibold text-zinc-950 dark:text-white truncate">${esc(name)}</span>
+              <span class="sc-badge inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">评估中</span>
             </div>
-            <p class="text-[10.5px] text-gray-400 dark:text-neutral-500 truncate">${esc(sub)}</p>
+            <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400 truncate">${esc(sub)}</p>
           </div>
           <div>
-            <div class="flex items-baseline justify-between gap-1 mb-1">
-              <span class="sc-score font-mono text-lg font-bold tabular-nums text-gray-900 dark:text-white">--</span>
-              <span class="text-[10px] font-mono text-gray-400">/ 100</span>
+            <div class="flex items-baseline justify-between gap-1 mb-2">
+              <span class="sc-score font-mono text-2xl font-semibold tracking-tight tabular-nums text-zinc-950 dark:text-white">--</span>
+              <span class="text-xs font-mono text-zinc-500 dark:text-zinc-400">/ 100</span>
             </div>
-            <div class="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden dark:bg-neutral-700">
-              <div class="sc-bar h-full rounded-full bg-blue-500 transition-all duration-300" style="width: 15%"></div>
+            <div class="h-1 w-full rounded-full bg-zinc-100 overflow-hidden dark:bg-zinc-800">
+              <div class="sc-bar h-full rounded-full bg-zinc-400 transition-all duration-300" style="width: 15%"></div>
             </div>
-            <p class="sc-reason mt-1.5 text-[11px] leading-snug text-gray-500 dark:text-neutral-400 line-clamp-2">等待多源欺诈库与浏览器核验…</p>
+            <p class="sc-reason mt-2.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400 line-clamp-2">等待多源欺诈库与浏览器核验…</p>
           </div>
         </div>
       `).join("");
@@ -687,44 +705,44 @@
       if (inp) inp.value = externalQueryIp;
     }
 
-    // 2. Route Split Matrix
+    // 2. Route Split Matrix (2-column hairline grid)
     const rm = $("#routeMatrix");
     if (rm) {
       rm.innerHTML = ROUTES_META.map(([id, name, sub]) => `
-        <div data-route="${esc(id)}" class="px-5 py-2.5 flex items-center justify-between gap-3 hover:bg-gray-50/80 dark:hover:bg-neutral-800/50 transition">
+        <div data-route="${esc(id)}" class="bg-white px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-zinc-50/80 dark:bg-[#121418] dark:hover:bg-white/[0.025] transition">
           <div class="min-w-0">
-            <div class="font-medium text-gray-800 dark:text-neutral-200">${esc(name)}</div>
-            <div class="text-[11px] text-gray-400 dark:text-neutral-500 truncate">${esc(sub)}</div>
+            <div class="font-medium text-zinc-900 dark:text-zinc-100">${esc(name)}</div>
+            <div class="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400 truncate">${esc(sub)}</div>
           </div>
           <div class="text-right min-w-0 max-w-[56%]">
-            <div class="rt-val maskable font-mono text-xs font-medium text-gray-500 dark:text-neutral-400 truncate">探测中…</div>
-            <div class="rt-sub maskable text-[11px] text-gray-400 dark:text-neutral-500 truncate"></div>
+            <div class="rt-val maskable font-mono text-xs font-medium text-zinc-600 dark:text-zinc-400 truncate">探测中…</div>
+            <div class="rt-sub maskable mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 truncate"></div>
           </div>
         </div>
       `).join("");
       $$("[data-route]", rm).forEach(el => { ROUTE_EL[el.dataset.route] = el; });
     }
 
-    // 3. 14 Core Checks + 4 Protocol Checks
+    // 3. 20 Core Checks + 4 Protocol Checks
     const renderCheckRows = (list, isProto) => list.map(([id, title]) => `
-      <div data-ck="${esc(id)}" data-proto="${isProto ? "1" : "0"}" class="px-5 py-3 transition hover:bg-gray-50/70 dark:hover:bg-neutral-800/40">
-        <div class="flex items-start justify-between gap-3">
-          <div class="flex items-start gap-2.5 min-w-0">
-            <span class="ck-badge mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold bg-gray-100 text-gray-500 dark:bg-neutral-800 dark:text-neutral-400">…</span>
+      <div data-ck="${esc(id)}" data-proto="${isProto ? "1" : "0"}" class="px-6 py-4 transition hover:bg-zinc-50/70 dark:hover:bg-white/[0.02]">
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex items-start gap-3 min-w-0">
+            <span class="ck-badge mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">…</span>
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
-                <span class="text-xs font-semibold text-gray-900 dark:text-white">${esc(title)}</span>
-                <span class="ck-tag hidden py-0.5 px-1.5 rounded text-[10px] font-medium"></span>
+                <span class="text-[13.5px] font-semibold text-zinc-950 dark:text-zinc-100">${esc(title)}</span>
+                <span class="ck-tag hidden py-0.5 px-1.5 rounded text-[10.5px] font-medium"></span>
               </div>
-              <p class="ck-val maskable mt-0.5 text-xs text-gray-600 dark:text-neutral-400 leading-relaxed">等待探针汇总…</p>
+              <p class="ck-val maskable mt-1 text-[12.5px] text-zinc-600 dark:text-zinc-400 leading-relaxed">等待探针汇总…</p>
             </div>
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
-            <button type="button" data-retest="${esc(id)}" hidden class="ck-retest py-1 px-2 rounded-md text-[11px] font-medium border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-700 transition">重测</button>
-            <button type="button" data-howto="${esc(id)}" class="ck-howto py-1 px-2 rounded-md text-[11px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10 transition">原理</button>
+            <button type="button" data-retest="${esc(id)}" hidden class="ck-retest py-1 px-2.5 rounded-md text-xs font-medium ring-1 ring-zinc-950/[0.08] bg-white text-zinc-700 hover:bg-zinc-50 dark:bg-zinc-800 dark:ring-white/[0.08] dark:text-zinc-300 dark:hover:bg-zinc-700 transition">重测</button>
+            <button type="button" data-howto="${esc(id)}" class="ck-howto py-1 px-2.5 rounded-md text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100 transition">原理</button>
           </div>
         </div>
-        <div class="ck-drawer mt-2.5 ms-7 rounded-lg border border-gray-200/80 bg-gray-50 p-3 text-xs text-gray-700 space-y-1.5 dark:bg-neutral-800/70 dark:border-neutral-700 dark:text-neutral-300" hidden></div>
+        <div class="ck-drawer mt-3 ms-8 rounded-xl ring-1 ring-zinc-950/[0.06] bg-zinc-50/90 p-3.5 text-xs leading-relaxed text-zinc-700 space-y-1.5 dark:bg-white/[0.03] dark:ring-white/[0.07] dark:text-zinc-300" hidden></div>
       </div>
     `).join("");
 
@@ -733,7 +751,7 @@
     if (protoBox) protoBox.innerHTML = renderCheckRows(PROTO_CHECKS, true);
     $$("[data-ck]").forEach(el => { CHECK_EL[el.dataset.ck] = el; });
 
-    // 4. Category Tabs & 128 Sniffer Explorer Rows
+    // 4. Category Tabs & 148 Sniffer Explorer Rows
     const tabsBox = $("#groupTabs");
     if (tabsBox) {
       const counts = {};
@@ -742,10 +760,10 @@
       tabsBox.innerHTML = allTabs.map(([g, name, cnt], idx) => `
         <button type="button" role="tab" data-gtab="${esc(g)}" aria-selected="${idx === 0 ? "true" : "false"}"
           class="gtab-btn shrink-0 py-1.5 px-3 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium transition ${idx === 0
-            ? "bg-blue-600 text-white shadow-2xs"
-            : "bg-gray-100 text-gray-600 hover:bg-gray-200/70 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"}">
+            ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950"
+            : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:text-zinc-300 dark:hover:bg-zinc-700"}">
           <span>${esc(name)}</span>
-          <span class="font-mono text-[11px] opacity-80">${cnt}</span>
+          <span class="font-mono text-[11px] opacity-75">${cnt}</span>
         </button>
       `).join("");
     }
@@ -756,23 +774,23 @@
         const items = SNIFFERS.map((s, idx) => ({ s, idx: idx + 1 })).filter(x => x.s[1] === gid);
         return `
           <div data-gsec="${esc(gid)}" class="sniffer-group">
-            <div class="px-5 py-2.5 bg-gray-50/90 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2 dark:bg-neutral-800/60 dark:border-neutral-800">
+            <div class="px-6 py-2.5 bg-zinc-50/80 border-b border-zinc-950/[0.05] flex flex-wrap items-center justify-between gap-2 dark:bg-white/[0.02] dark:border-white/[0.06]">
               <div class="flex items-center gap-2">
-                <span class="text-xs font-semibold text-gray-800 dark:text-neutral-200">${esc(gtitle)}</span>
-                <span class="text-[11px] font-mono text-gray-400 dark:text-neutral-500">(${items.length} 项)</span>
+                <span class="text-xs font-semibold text-zinc-800 dark:text-zinc-200">${esc(gtitle)}</span>
+                <span class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400">(${items.length} 项)</span>
               </div>
-              <span class="text-[11px] text-gray-500 dark:text-neutral-400">${esc(gdesc)}</span>
+              <span class="text-[11.5px] text-zinc-500 dark:text-zinc-400">${esc(gdesc)}</span>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:gap-px bg-gray-100 dark:bg-neutral-800">
+            <div class="grid grid-cols-1 md:grid-cols-2 divide-y divide-zinc-950/[0.05] md:divide-y-0 md:gap-px bg-zinc-950/[0.06] dark:divide-white/[0.06] dark:bg-white/[0.06]">
               ${items.map(({ s: [id, , title, mask, desc], idx }) => `
                 <div data-probe="${esc(id)}" data-g="${esc(gid)}" data-why="${esc(desc)}"
-                  class="probe-row bg-white dark:bg-neutral-900 px-4 py-2.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-blue-50/40 dark:hover:bg-neutral-800/80 transition">
+                  class="probe-row bg-white dark:bg-[#121418] px-5 py-2.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-zinc-50 dark:hover:bg-white/[0.03] transition">
                   <div class="flex items-center gap-2 min-w-0 shrink-0 max-w-[48%]">
-                    <span class="font-mono text-[10px] text-gray-400 dark:text-neutral-500 w-7 shrink-0">#${String(idx).padStart(3, "0")}</span>
-                    <span class="text-xs font-medium text-gray-700 dark:text-neutral-300 truncate">${esc(title)}</span>
-                    <button type="button" data-tipbtn="${esc(id)}" class="tip-trigger shrink-0 inline-flex items-center justify-center size-4 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-500 hover:bg-blue-100 hover:text-blue-700 dark:bg-neutral-800 dark:text-neutral-400" aria-label="查看原理">?</button>
+                    <span class="font-mono text-[10.5px] text-zinc-500 dark:text-zinc-400 w-7 shrink-0">#${String(idx).padStart(3, "0")}</span>
+                    <span class="text-xs font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(title)}</span>
+                    <button type="button" data-tipbtn="${esc(id)}" class="tip-trigger shrink-0 inline-flex items-center justify-center size-4 rounded-full text-[10px] font-semibold bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:text-zinc-950 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700" aria-label="查看原理">?</button>
                   </div>
-                  <div class="probe-val ${mask ? "maskable " : ""}font-mono text-xs text-right text-gray-400 dark:text-neutral-500 truncate min-w-0 flex-1">检测中…</div>
+                  <div class="probe-val ${mask ? "maskable " : ""}font-mono text-xs text-right text-zinc-500 dark:text-zinc-400 truncate min-w-0 flex-1">检测中…</div>
                 </div>
               `).join("")}
             </div>
@@ -796,12 +814,12 @@
     const cnt = completedSet.size;
     const total = SNIFFERS.length;
     const badge = $("#probeCountBadge");
-    if (badge) badge.textContent = `${cnt} / ${total}`;
+    if (badge) badge.textContent = `${cnt}/${total}`;
     const bar = $("#topProgBar");
     if (bar) bar.style.width = `${Math.min(100, Math.max(5, Math.round((cnt / total) * 100)))}%`;
     const txt = $("#liveStatusText");
     if (txt && !R.finished) {
-      txt.textContent = `已完成 ${cnt} / ${total} 项无感嗅探…`;
+      txt.textContent = `正在扫描 ${cnt} / ${total} 项…`;
     }
   }
 
@@ -816,11 +834,11 @@
         if (opts.html) vEl.innerHTML = value;
         else vEl.textContent = value == null || value === "" ? "–" : String(value);
         vEl.className = `probe-val ${SNIFFER_MAP[id]?.mask ? "maskable " : ""}font-mono text-xs text-right truncate min-w-0 flex-1 ` +
-          (opts.tone === "bad" ? "text-red-600 font-semibold dark:text-red-400"
-            : opts.tone === "warn" ? "text-amber-600 font-semibold dark:text-amber-400"
-            : opts.tone === "ok" ? "text-teal-700 font-medium dark:text-teal-400"
-            : opts.na ? "text-gray-400 dark:text-neutral-500"
-            : "text-gray-900 dark:text-neutral-100");
+          (opts.tone === "bad" ? "text-rose-600 font-semibold dark:text-rose-400"
+            : opts.tone === "warn" ? "text-amber-700 font-semibold dark:text-amber-400"
+            : opts.tone === "ok" ? "text-emerald-700 font-medium dark:text-emerald-400"
+            : opts.na ? "text-zinc-500 dark:text-zinc-400"
+            : "text-zinc-900 dark:text-zinc-100");
       }
       const baseDesc = SNIFFER_MAP[id]?.desc || "";
       el.dataset.why = opts.why ? `${baseDesc}\n\n${opts.why}` : baseDesc;
@@ -839,10 +857,10 @@
     if (v) {
       v.textContent = mainText || "不可达";
       v.className = "rt-val maskable font-mono text-xs font-medium truncate " + (
-        tone === "bad" ? "text-red-600 dark:text-red-400"
-          : tone === "warn" ? "text-amber-600 dark:text-amber-400"
-          : tone === "ok" ? "text-teal-700 dark:text-teal-400"
-          : "text-gray-800 dark:text-neutral-200"
+        tone === "bad" ? "text-rose-600 dark:text-rose-400"
+          : tone === "warn" ? "text-amber-700 dark:text-amber-400"
+          : tone === "ok" ? "text-emerald-700 dark:text-emerald-400"
+          : "text-zinc-900 dark:text-zinc-100"
       );
     }
     if (s) s.textContent = subText;
@@ -933,8 +951,8 @@
         const isDc = R.netKind === "dc";
         ispBadge.textContent = R.netKind === "relay" ? "iCloud 代理" : isDc ? "机房 / VPS" : R.netKind === "mobile" ? "蜂窝移动" : "原生家宽/ISP";
         ispBadge.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium " + (
-          isDc ? "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
-            : "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
+          isDc ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
         );
       }
       if (!R.exits) R.exits = {};
@@ -1138,8 +1156,8 @@
     if (ispBadge) {
       ispBadge.textContent = isRelay ? "iCloud 代理" : isDc ? "机房 / VPS" : isMob ? "蜂窝移动" : "原生家宽/ISP";
       ispBadge.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium " + (
-        isDc ? "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
-          : "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
+        isDc ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+          : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
       );
     }
     setRouteRow("ex_self", `${flagEmoji(cc)} ${ip}`, [countryName(cc), g.city, org].filter(Boolean).join(" · "), isDc ? "warn" : "ok");
@@ -1205,9 +1223,9 @@
       if (pill && p.score != null) {
         pill.textContent = `纯净度 ${p.score}·${p.grade}`;
         pill.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-mono font-semibold " + (
-          p.score >= 82 ? "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
-            : p.score >= 58 ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
-            : "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+          p.score >= 82 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+            : p.score >= 58 ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+            : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
         );
       }
       // Refine KPI 3 ISP badge if 8-source voting caught a fake-ISP or hosting node
@@ -1217,7 +1235,7 @@
         const ispBadge = $("#ispTypeBadge");
         if (ispBadge) {
           ispBadge.textContent = inf.conflict ? "伪家宽机房" : "机房 / 托管";
-          ispBadge.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400";
+          ispBadge.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300";
         }
       }
     }
@@ -1373,7 +1391,7 @@
     if (pb) {
       pb.textContent = `纯净度 ${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}`;
       pb.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold " + (
-        (p.score ?? 0) >= 82 ? "bg-teal-600 text-white" : (p.score ?? 0) >= 58 ? "bg-amber-500 text-white" : "bg-red-600 text-white"
+        (p.score ?? 0) >= 82 ? "bg-emerald-600 text-white" : (p.score ?? 0) >= 58 ? "bg-amber-500 text-white" : "bg-rose-600 text-white"
       );
     }
     const topDed = (p.deductions || [])[0];
@@ -1433,7 +1451,7 @@
     }
     if (btn) { btn.disabled = true; btn.textContent = "查询中…"; }
     const data = await getJSON(`./api/who/intel?ip=${encodeURIComponent(q)}&t=${Date.now()}`, 10000, "omit").catch(() => null);
-    if (btn) { btn.disabled = false; btn.textContent = "查情报"; }
+    if (btn) { btn.disabled = false; btn.textContent = "查询"; }
     if (!data || !data.ok) {
       showToast("请输入有效的公网 IPv4 或 IPv6 地址（不支持内网保留地址）");
       return;
@@ -1711,17 +1729,29 @@
       tone: hasH3 ? "ok" : "neutral"
     });
 
-    // Update split summary badge
+    // Update split summary badge & workspace tab scent badge
     const prefixes = new Set(Object.values(R.exits).map(x => netPrefix(x?.ip)).filter(Boolean));
+    const cnSplitHit = R.exits.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN";
     const badge = $("#splitSummaryBadge");
     if (badge) {
       badge.textContent = prefixes.size > 1 ? `分流到 ${prefixes.size} 个网段` : "全局单一出口";
-      badge.className = "inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium " + (
-        R.exits.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN"
-          ? "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+      badge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium " + (
+        cnSplitHit
+          ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
           : prefixes.size > 1
-          ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
-          : "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
+          ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+      );
+    }
+    const tabRt = $("#tabRoutesBadge");
+    if (tabRt) {
+      tabRt.textContent = cnSplitHit ? "分流漏底" : prefixes.size > 1 ? `${prefixes.size} 网段` : "单一出口";
+      tabRt.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
+        cnSplitHit
+          ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
+          : prefixes.size > 1
+          ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
       );
     }
     R.exitsDone = true;
@@ -3340,11 +3370,13 @@
     if (visitEl) {
       if (R.etag?.seen && (!R.traceSurvived || !R.traceSurvived.includes("LocalStorage"))) {
         visitEl.textContent = "清除了本地存储，但被 HTTP ETag 缓存认出回访";
-        visitEl.className = "text-amber-600 dark:text-amber-400 font-medium truncate";
+        visitEl.className = "mt-0.5 text-[11.5px] text-amber-600 dark:text-amber-400 font-medium truncate";
       } else if (R.traceSurvived?.length) {
         visitEl.textContent = `回访识别：${R.traceSurvived.length}/4 个浏览器存储命中`;
+        visitEl.className = "mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400 truncate";
       } else {
         visitEl.textContent = "首次访问或无痕隔离状态良好";
+        visitEl.className = "mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400 truncate";
       }
     }
   }
@@ -4050,31 +4082,31 @@
 
     const styleMap = {
       ok: {
-        badgeCls: "bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400",
+        badgeCls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400",
         badgeTxt: "✓",
-        segCls: "bg-teal-500",
-        tagCls: "bg-teal-50 text-teal-700 dark:bg-teal-500/10 dark:text-teal-400",
+        segCls: "bg-emerald-500",
+        tagCls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400",
         tagTxt: "通过"
       },
       warn: {
-        badgeCls: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400",
+        badgeCls: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-400",
         badgeTxt: "!",
         segCls: "bg-amber-500",
-        tagCls: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+        tagCls: "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-400",
         tagTxt: "可疑破绽"
       },
       bad: {
-        badgeCls: "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400",
+        badgeCls: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400",
         badgeTxt: "✕",
-        segCls: "bg-red-500",
-        tagCls: "bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400",
+        segCls: "bg-rose-500",
+        tagCls: "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400",
         tagTxt: "高危暴露"
       },
       info: {
-        badgeCls: "bg-gray-100 text-gray-500 dark:bg-neutral-800 dark:text-neutral-400",
+        badgeCls: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
         badgeTxt: "i",
-        segCls: "bg-gray-300 dark:bg-neutral-700",
-        tagCls: "bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-400",
+        segCls: "bg-zinc-300 dark:bg-zinc-700",
+        tagCls: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
         tagTxt: "提示"
       }
     };
@@ -4106,7 +4138,7 @@
       // Segment bar update (keep flex-1 for 20-segment flex bar)
       const seg = $(`#segBar [data-seg="${id}"]`);
       if (seg) {
-        seg.className = `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-gray-200 opacity-40 dark:bg-neutral-800"}`;
+        seg.className = `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`;
       }
 
       if (!row) continue;
@@ -4124,16 +4156,16 @@
       }
       const tag = $(".ck-tag", row);
       if (tag) {
-        tag.className = `ck-tag inline-flex py-0.5 px-1.5 rounded text-[10px] font-medium ${st.tagCls}`;
+        tag.className = `ck-tag inline-flex py-0.5 px-1.5 rounded text-[10.5px] font-medium ${st.tagCls}`;
         tag.textContent = isCore && !active ? "当前视角不计分" : st.tagTxt;
       }
       const val = $(".ck-val", row);
       if (val) {
         val.textContent = res.summary;
-        val.className = "ck-val maskable mt-0.5 text-xs leading-relaxed " + (
-          res.level === "bad" ? "text-red-700 font-medium dark:text-red-300"
+        val.className = "ck-val maskable mt-1 text-[12.5px] leading-relaxed " + (
+          res.level === "bad" ? "text-rose-700 font-medium dark:text-rose-300"
             : res.level === "warn" ? "text-amber-800 font-medium dark:text-amber-300"
-            : "text-gray-600 dark:text-neutral-400"
+            : "text-zinc-600 dark:text-zinc-400"
         );
       }
 
@@ -4177,10 +4209,10 @@
     const gBadge = $("#gradeBadge");
     if (gBadge) {
       gBadge.textContent = `等级 ${grade}`;
-      gBadge.className = "inline-flex items-center gap-x-1 py-0.5 px-2.5 rounded-full text-xs font-semibold " + (
-        /^A/.test(grade) ? "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
-          : grade === "B" || grade === "C" ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
-          : "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+      gBadge.className = "inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-semibold " + (
+        /^A/.test(grade) ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          : grade === "B" || grade === "C" ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
       );
     }
     $("#scoreSub").textContent = totalIssues === 0 && R.finished && unverifiedCnt > 0
@@ -4192,15 +4224,29 @@
       : `无硬性矛盾，但有 ${warnCnt} 项环境细节存在轻微破绽`;
 
     $("#issueCount").textContent = String(totalIssues);
-    $("#issueCount").className = "text-3xl font-bold tracking-tight font-mono tabular-nums " + (
-      badCnt > 0 ? "text-red-600 dark:text-red-400"
+    $("#issueCount").className = "text-xl font-bold font-mono tabular-nums " + (
+      badCnt > 0 ? "text-rose-600 dark:text-rose-400"
         : (warnCnt > 0 || (R.finished && unverifiedCnt > 0)) ? "text-amber-600 dark:text-amber-400"
-        : "text-teal-600 dark:text-teal-400"
+        : "text-emerald-600 dark:text-emerald-400"
     );
     $("#cntBad").textContent = String(badCnt);
     $("#cntWarn").textContent = String(warnCnt);
     $("#cntOk").textContent = String(okCnt);
     $("#sceneBadge").textContent = currentScene === "privacy" ? "隐私防追踪视角" : "伪装自检视角";
+
+    const tabCk = $("#tabChecksBadge");
+    if (tabCk) {
+      tabCk.textContent = totalIssues > 0 ? `${totalIssues} 异常` : R.finished ? "全过" : "24";
+      tabCk.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
+        badCnt > 0
+          ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
+          : warnCnt > 0
+          ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+          : R.finished
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
+      );
+    }
 
     // Priority Top-3 Fixes ("先改这几项")
     const rankedIssues = CORE_CHECKS
@@ -4224,10 +4270,10 @@
           const firstStep = getFixSteps(item.id)[0] || "";
           return `
             <li class="flex items-start gap-2.5">
-              <span class="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${item.lv === "bad" ? "bg-red-600 text-white" : "bg-amber-500 text-white"}">${idx + 1}</span>
-              <button type="button" data-jumpck="${esc(item.id)}" class="text-left group min-w-0 flex-1">
-                <span class="font-semibold text-gray-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-400">${esc(item.title)}：</span>
-                <span class="text-gray-700 dark:text-neutral-300">${esc(firstStep)}</span>
+              <span class="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${item.lv === "bad" ? "bg-rose-600 text-white" : "bg-amber-600 text-white"}">${idx + 1}</span>
+              <button type="button" data-jumpck="${esc(item.id)}" class="text-left group min-w-0 flex-1 line-clamp-2">
+                <span class="font-semibold text-zinc-950 group-hover:underline dark:text-white">${esc(item.title)}：</span>
+                <span class="text-zinc-700 dark:text-zinc-300">${esc(firstStep)}</span>
               </button>
             </li>
           `;
@@ -4237,7 +4283,7 @@
 
     renderScenarios();
 
-    // Run-over-run comparison & sparkline
+    // Run-over-run comparison
     if (recordHistory) {
       let prev = null;
       try { prev = JSON.parse(store.get(SK.prevChecks) || "null"); } catch (e) {}
@@ -4246,11 +4292,11 @@
       if (cmpEl && prev && typeof prev.issues === "number") {
         const d = totalIssues - prev.issues;
         cmpEl.hidden = false;
-        cmpEl.textContent = d === 0 ? "与上次持平" : d < 0 ? `比上次少 ${Math.abs(d)} 处破绽 ↓` : `比上次多 ${d} 处破绽 ↑`;
+        cmpEl.textContent = d === 0 ? "与上次持平" : d < 0 ? `比上次少 ${Math.abs(d)} 处 ↓` : `比上次多 ${d} 处 ↑`;
         cmpEl.className = "text-[11px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap " + (
-          d < 0 ? "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
-            : d > 0 ? "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
-            : "bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-300"
+          d < 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+            : d > 0 ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+            : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
         );
       }
 
@@ -4258,13 +4304,6 @@
       try { hist = JSON.parse(store.get(SK.history) || "[]"); } catch (e) {}
       hist = [...(Array.isArray(hist) ? hist : []), { t: Date.now(), s: score }].slice(-10);
       store.set(SK.history, JSON.stringify(hist));
-      const spk = $("#histSpark");
-      if (spk && hist.length >= 2) {
-        spk.hidden = false;
-        const W = 80, H = 24;
-        const pts = hist.map((p, i) => `${((i * W) / (hist.length - 1)).toFixed(1)},${(H - 3 - (p.s / 100) * (H - 6)).toFixed(1)}`).join(" ");
-        spk.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="w-full h-full stroke-blue-600 dark:stroke-blue-400 fill-none" stroke-width="1.7"><polyline points="${pts}"/></svg>`;
-      }
     }
   }
 
@@ -4379,32 +4418,28 @@
       const warn = item.score >= 55 && item.score < 80;
       if (ok) passCnt++;
 
-      card.className = "rounded-lg border p-3 flex flex-col justify-between gap-2 transition " + (
-        ok ? "border-teal-200/80 bg-teal-50/30 dark:bg-teal-500/5 dark:border-teal-500/20"
-          : warn ? "border-amber-200/80 bg-amber-50/30 dark:bg-amber-500/5 dark:border-amber-500/20"
-          : "border-red-200/80 bg-red-50/30 dark:bg-red-500/5 dark:border-red-500/20"
-      );
+      card.className = "bg-white p-5 sm:p-6 flex flex-col justify-between gap-4 transition dark:bg-[#121418]";
       const badge = $(".sc-badge", card);
       if (badge) {
         badge.textContent = ok ? "畅通推荐" : warn ? "受限/易验" : "高危劝退";
-        badge.className = "sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 " + (
-          ok ? "bg-teal-100 text-teal-800 dark:bg-teal-500/20 dark:text-teal-300"
-            : warn ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
-            : "bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300"
+        badge.className = "sc-badge inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold shrink-0 " + (
+          ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+            : warn ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+            : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
         );
       }
       const sEl = $(".sc-score", card);
       if (sEl) {
         sEl.textContent = String(item.score);
-        sEl.className = "sc-score font-mono text-lg font-bold tabular-nums " + (
-          ok ? "text-teal-700 dark:text-teal-400" : warn ? "text-amber-700 dark:text-amber-400" : "text-red-600 dark:text-red-400"
+        sEl.className = "sc-score font-mono text-2xl font-semibold tracking-tight tabular-nums " + (
+          ok ? "text-emerald-700 dark:text-emerald-400" : warn ? "text-amber-700 dark:text-amber-400" : "text-rose-600 dark:text-rose-400"
         );
       }
       const bar = $(".sc-bar", card);
       if (bar) {
         bar.style.width = `${item.score}%`;
         bar.className = "sc-bar h-full rounded-full transition-all duration-300 " + (
-          ok ? "bg-teal-500" : warn ? "bg-amber-500" : "bg-red-500"
+          ok ? "bg-emerald-500" : warn ? "bg-amber-500" : "bg-rose-500"
         );
       }
       const rEl = $(".sc-reason", card);
@@ -4414,10 +4449,20 @@
     const sumBadge = $("#scenarioSummaryBadge");
     if (sumBadge) {
       sumBadge.textContent = `${passCnt} / ${SCENARIOS_META.length} 个主流场景畅通达标`;
-      sumBadge.className = "inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium " + (
-        passCnt >= 5 ? "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
-          : passCnt >= 3 ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
-          : "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+      sumBadge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium " + (
+        passCnt >= 5 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          : passCnt >= 3 ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+      );
+    }
+
+    const tabSc = $("#tabScenariosBadge");
+    if (tabSc) {
+      tabSc.textContent = `${passCnt}/${SCENARIOS_META.length} 畅通`;
+      tabSc.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
+        passCnt >= 5 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+          : passCnt >= 3 ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+          : "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
       );
     }
   }
@@ -4425,13 +4470,13 @@
   /* ---------- Forensic Identity Portrait ("网站眼里的你") ---------- */
   function chip(text, probeIds = [], tone = "default", mask = false) {
     const cls = tone === "bad"
-      ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/30"
+      ? "bg-rose-500/10 text-rose-800 decoration-rose-400 hover:bg-rose-500/18 dark:bg-rose-500/15 dark:text-rose-300 dark:decoration-rose-400/70"
       : tone === "warn"
-      ? "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30"
+      ? "bg-amber-500/12 text-amber-900 decoration-amber-500/75 hover:bg-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300 dark:decoration-amber-400/70"
       : tone === "ok"
-      ? "bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/30"
-      : "bg-blue-50/80 text-blue-800 border-blue-200/80 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-500/30";
-    return `<button type="button" data-from="${esc(probeIds.join(","))}" class="${mask ? "maskable " : ""}probe-chip inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md border text-[12.5px] font-semibold leading-snug align-baseline cursor-pointer hover:ring-2 hover:ring-blue-400/50 transition ${cls}">${esc(text)}</button>`;
+      ? "bg-emerald-500/10 text-emerald-800 decoration-emerald-500/65 hover:bg-emerald-500/18 dark:bg-emerald-500/15 dark:text-emerald-300 dark:decoration-emerald-400/70"
+      : "bg-zinc-900/[0.055] text-zinc-900 decoration-zinc-400 hover:bg-zinc-900/[0.1] dark:bg-white/[0.075] dark:text-zinc-100 dark:decoration-zinc-500 dark:hover:bg-white/[0.13]";
+    return `<button type="button" data-from="${esc(probeIds.join(","))}" class="${mask ? "maskable " : ""}probe-chip inline rounded px-1 py-px mx-[1px] font-medium underline decoration-dotted cursor-pointer transition ${cls}">${esc(text)}</button>`;
   }
 
   function renderPortrait() {
@@ -4520,13 +4565,13 @@
         sub = "当前代理链路延迟较高或阻断了部分探测接口，可点击下方对应行的「重测」按钮单独补测。";
       }
 
-      wowEl.className = "rounded-lg border p-3.5 text-xs leading-relaxed " + (
-        alertTone === "bad" ? "border-red-200 bg-red-50/80 text-red-900 dark:bg-red-500/10 dark:border-red-500/25 dark:text-red-200"
-          : alertTone === "warn" ? "border-amber-200 bg-amber-50/80 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/25 dark:text-amber-200"
-          : "border-teal-200 bg-teal-50/70 text-teal-900 dark:bg-teal-500/10 dark:border-teal-500/25 dark:text-teal-200"
+      wowEl.className = "rounded-xl border px-4 py-3.5 text-[13px] leading-relaxed " + (
+        alertTone === "bad" ? "border-rose-200/90 bg-rose-50/75 text-rose-950 dark:bg-rose-500/10 dark:border-rose-500/25 dark:text-rose-200"
+          : alertTone === "warn" ? "border-amber-200/90 bg-amber-50/75 text-amber-950 dark:bg-amber-500/10 dark:border-amber-500/25 dark:text-amber-200"
+          : "border-emerald-200/80 bg-emerald-50/60 text-emerald-950 dark:bg-emerald-500/[0.08] dark:border-emerald-500/20 dark:text-emerald-200"
       );
       wowIcon.className = "mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full font-bold text-[11px] " + (
-        alertTone === "bad" ? "bg-red-600 text-white" : alertTone === "warn" ? "bg-amber-500 text-white" : "bg-teal-600 text-white"
+        alertTone === "bad" ? "bg-rose-600 text-white" : alertTone === "warn" ? "bg-amber-500 text-white" : "bg-emerald-600 text-white"
       );
       wowIcon.textContent = alertTone === "ok" ? "✓" : "!";
       wowTitle.textContent = head;
@@ -4543,9 +4588,9 @@
     const isHighRig = !!R.gpuDiscrete || /RTX\s?(30|40|50)\d0|RX\s?[79]\d{3}|Apple M\d+ (Pro|Max|Ultra)|Apple M[45]/i.test(gStr);
     const rigLabel = R.gpuSoft ? "虚拟机/软件渲染容器" : isHighRig && (R.hz || 60) >= 120 ? "高刷高性能工作站/游戏主机" : isHighRig ? "高算力主力生产力设备" : "日常主流办公终端";
 
-    const p1 = `在打开网页的几百毫秒内，网站无需申请任何权限就已经拼出了你的画像：你大概率来自 ${chip(originText, ["langs", "tz", "ex_cn"], cnLeak || (origin?.cc && origin.cc !== R.ipCC) ? "warn" : "default", !!cnLeak)}，当前网络出口位于 ${chip(exitText, ["ip", "geo"], "default", true)}。你日常阅读 ${chip(langStr, ["langs"])}，系统时钟设在 ${chip(tzStr, ["tz", "tzoff"], checks.tz?.level === "bad" ? "bad" : "default")}，习惯使用 ${chip(clockStr, ["hour"])}。`;
+    const p1 = `在打开网页的几百毫秒内，网站无需申请任何权限就已经拼出了你的画像：你大概率来自${chip(originText, ["langs", "tz", "ex_cn"], cnLeak || (origin?.cc && origin.cc !== R.ipCC) ? "warn" : "default", !!cnLeak)}，当前网络出口位于${chip(exitText, ["ip", "geo"], "default", true)}。你日常阅读${chip(langStr, ["langs"])}，系统时钟设在${chip(tzStr, ["tz", "tzoff"], checks.tz?.level === "bad" ? "bad" : "default")}，习惯使用${chip(clockStr, ["hour"])}。`;
 
-    const p2 = `你手头这台设备运行着 ${chip(`${R.osLabel || "未知系统"} (${navigator.hardwareConcurrency || "?"} 核)`, ["os", "cpu", "arch"])}，浏览器是真正跑在 ${chip(`${R.engine || "?"} 内核上的 ${R.browserLabel || "浏览器"}`, ["browser", "engine", "engver"])}；显示器物理面板分辨率为 ${chip(`${R.physScreen || "–"} · ${R.hz || 60} Hz`, ["screen", "hz"])}，图形显卡为 ${chip(R.gpuDiscrete ? `${R.gpuDiscrete} + ${R.gpuClean}` : (R.gpuClean || "未知显卡"), ["gpu", "webgpu"], R.gpuSoft ? "bad" : "default")} —— 在风控模型里属于一台 ${chip(rigLabel, ["gpu", "screen", "cpu", "cpubench"])}。`;
+    const p2 = `你手头这台设备运行着${chip(`${R.osLabel || "未知系统"} (${navigator.hardwareConcurrency || "?"} 核)`, ["os", "cpu", "arch"])}，浏览器是真正跑在${chip(`${R.engine || "?"} 内核上的 ${R.browserLabel || "浏览器"}`, ["browser", "engine", "engver"])}；显示器物理面板分辨率为${chip(`${R.physScreen || "–"} · ${R.hz || 60} Hz`, ["screen", "hz"])}，图形显卡为${chip(R.gpuDiscrete ? `${R.gpuDiscrete} + ${R.gpuClean}` : (R.gpuClean || "未知显卡"), ["gpu", "webgpu"], R.gpuSoft ? "bad" : "default")}——在风控模型里属于一台${chip(rigLabel, ["gpu", "screen", "cpu", "cpubench"])}。`;
 
     const netTypeDesc = R.netKind === "dc" ? `数据中心机房线路 (${R.org || R.asn})` : `原生宽带/ISP (${R.org || R.asn})`;
     const rttDesc = R.httpRtt != null && R.srvTcpRtt != null
@@ -4553,13 +4598,13 @@
       : "延迟已采样";
     const pur = R.intel?.purity;
     const purityPhrase = pur?.score != null
-      ? `，多源综合信誉纯净度为 ${chip(`${pur.score}/100 (${pur.grade} 级)`, ["rep_score", "rep_votes", "rep_neigh"], pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad")}`
+      ? `，多源综合信誉纯净度为${chip(`${pur.score}/100 (${pur.grade} 级)`, ["rep_score", "rep_votes", "rep_neigh"], pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad")}`
       : "";
-    const p3 = `网络链路方面，你正通过 ${chip(netTypeDesc, ["isp", "nettype", "rep_asn"], R.netKind === "dc" ? "bad" : "ok", true)} 访问本站${purityPhrase}，递归 DNS 位于 ${chip(R.dnsCC ? `${flagEmoji(R.dnsCC)} ${countryName(R.dnsCC)}` : "未检出", ["dns", "ecs"], checks.dns?.level === "bad" ? "bad" : "default")}，物理握手测距显示 ${chip(rttDesc, ["tcprtt", "muxjitter"], checks.rtt?.level === "bad" ? "bad" : checks.rtt?.level === "warn" ? "warn" : "ok")}。`;
+    const p3 = `网络链路方面，你正通过${chip(netTypeDesc, ["isp", "nettype", "rep_asn"], R.netKind === "dc" ? "bad" : "ok", true)}访问本站${purityPhrase}，递归 DNS 位于${chip(R.dnsCC ? `${flagEmoji(R.dnsCC)} ${countryName(R.dnsCC)}` : "未检出", ["dns", "ecs"], checks.dns?.level === "bad" ? "bad" : "default")}，物理握手测距显示${chip(rttDesc, ["tcprtt", "muxjitter"], checks.rtt?.level === "bad" ? "bad" : checks.rtt?.level === "warn" ? "warn" : "ok")}。`;
 
     const extCombined = Array.from(new Set([...(R.extWar || []), ...(R.domExts || []).map(x => x[1])]));
     const extPhrase = extCombined.length
-      ? `并且被扫描出安装了 ${chip(extCombined.slice(0, 4).join("、"), ["extwar", "ext"], "warn")}`
+      ? `并且被扫描出安装了${chip(extCombined.slice(0, 4).join("、"), ["extwar", "ext"], "warn")}`
       : `未暴露公开的扩展静态资源`;
     const adPhrase = R.adblock ? chip("已开启广告拦截", ["adblock"], "ok") : chip("未装广告拦截器", ["adblock"]);
     const trackPhrase = R.etag?.seen
@@ -4567,7 +4612,7 @@
       : chip(`跨浏览器物理硬件编号 ${R.hwId || "--"} 始终跟着这台设备`, ["hwid", "fpid"]);
 
     const roleStr = (R.fontRoles || []).length ? R.fontRoles.map(r => r[1]).join("、") : "标准系统默认字库（未透露特定职业软件）";
-    const p4 = `使用习惯上，你偏好 ${chip(R.sysDark ? "深色外观" : "浅色外观", ["scheme"])}，${adPhrase}，${extPhrase}。防关联方面，${trackPhrase}；从已安装的 ${(R.fonts || []).length} 款代表性字体来看，你的软件环境偏向 ${chip(roleStr, ["fonts", "fontfp"])}。`;
+    const p4 = `使用习惯上，你偏好${chip(R.sysDark ? "深色外观" : "浅色外观", ["scheme"])}，${adPhrase}，${extPhrase}。防关联方面，${trackPhrase}；从已安装的 ${(R.fonts || []).length} 款代表性字体来看，你的软件环境偏向${chip(roleStr, ["fonts", "fontfp"])}。`;
 
     $("#storyProse").innerHTML = `<p>${p1}</p><p>${p2}</p><p>${p3}</p><p>${p4}</p>`;
 
@@ -4599,14 +4644,14 @@
     tags.push(["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind) ? ["强防指纹护盾", "ok"] : ["原生裸奔指纹", "neutral"]);
 
     const tagCls = {
-      bad: "bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20",
-      warn: "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20",
-      ok: "bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-500/20",
-      info: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",
-      neutral: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700"
+      bad: "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
+      warn: "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
+      ok: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+      info: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+      neutral: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800/80 dark:text-zinc-400"
     };
     $("#personaTags").innerHTML = tags.map(([label, t]) =>
-      `<span class="py-1 px-2.5 rounded-md text-xs font-medium border ${tagCls[t] || tagCls.neutral}">${esc(label)}</span>`
+      `<span class="py-1 px-2.5 rounded-full text-xs font-medium ${tagCls[t] || tagCls.neutral}">${esc(label)}</span>`
     ).join("");
   }
 
@@ -4618,10 +4663,10 @@
     // Sync pill active state
     $$("#targetQuickPills .tg-pill").forEach(btn => {
       const on = btn.dataset.tgcc === targetCountry;
-      btn.className = "tg-pill py-1 px-2.5 rounded-lg text-xs font-medium border transition " + (
+      btn.className = "tg-pill py-1 px-2.5 rounded-lg text-xs font-medium transition " + (
         on
-          ? "border-blue-600 bg-blue-600 text-white shadow-2xs"
-          : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-300"
+          ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950"
+          : "bg-white ring-1 ring-zinc-950/[0.08] text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-800 dark:ring-white/[0.08] dark:text-zinc-300"
       );
     });
     const sel = $("#targetSelect");
@@ -4650,27 +4695,30 @@
     const vBadge = $("#targetVerdictBadge");
     if (vBadge) {
       vBadge.textContent = failCnt === 0 ? `伪装成 ${tName}：6 项全数达标` : `伪装成 ${tName}：差 ${failCnt} 项未对齐`;
-      vBadge.className = "inline-flex items-center py-1 px-2.5 rounded-full text-xs font-medium " + (
-        failCnt === 0 ? "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
-          : "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+      vBadge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium " + (
+        failCnt === 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
       );
     }
 
     const grid = $("#targetCardsGrid");
     if (grid) {
-      grid.innerHTML = cards.map(([title, ok, desc]) => `
-        <div class="rounded-lg border p-3 transition ${ok === true
-          ? "border-teal-200/80 bg-teal-50/40 dark:bg-teal-500/10 dark:border-teal-500/20"
+      grid.innerHTML = cards.map(([title, ok, desc]) => {
+        const iconCls = ok === true
+          ? "bg-emerald-600 text-white"
           : ok === false
-          ? "border-red-200/80 bg-red-50/40 dark:bg-red-500/10 dark:border-red-500/20"
-          : "border-gray-200 bg-gray-50 dark:bg-neutral-800 dark:border-neutral-700"}">
-          <div class="flex items-center justify-between gap-1.5">
-            <span class="text-xs font-semibold text-gray-900 dark:text-white">${esc(title)}</span>
-            <span class="inline-flex size-4 items-center justify-center rounded-full text-[10px] font-bold ${ok === true ? "bg-teal-600 text-white" : ok === false ? "bg-red-600 text-white" : "bg-gray-300 text-gray-700"}">${ok === true ? "✓" : ok === false ? "✕" : "–"}</span>
+          ? "bg-rose-600 text-white"
+          : "bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-200";
+        return `
+          <div class="bg-white p-5 transition dark:bg-[#121418]">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-semibold text-zinc-950 dark:text-white">${esc(title)}</span>
+              <span class="inline-flex size-4 items-center justify-center rounded-full text-[10px] font-bold ${iconCls}">${ok === true ? "✓" : ok === false ? "✕" : "–"}</span>
+            </div>
+            <p class="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">${esc(desc)}</p>
           </div>
-          <p class="mt-1.5 text-[11px] leading-snug text-gray-600 dark:text-neutral-300">${esc(desc)}</p>
-        </div>
-      `).join("");
+        `;
+      }).join("");
     }
   }
 
@@ -4700,13 +4748,15 @@
 
   function highlightProbes(ids) {
     if (!ids.length) return;
+    switchWorkspaceTab("probes");
     activeGroup = "all";
     searchQuery = "";
     const inp = $("#probeSearch");
     if (inp) inp.value = "";
     $$("#groupTabs .gtab-btn").forEach((b, i) => {
+      b.setAttribute("aria-selected", i === 0 ? "true" : "false");
       b.className = "gtab-btn shrink-0 py-1.5 px-3 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium transition " + (
-        i === 0 ? "bg-blue-600 text-white shadow-2xs" : "bg-gray-100 text-gray-600 hover:bg-gray-200/70 dark:bg-neutral-800 dark:text-neutral-300"
+        i === 0 ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:text-zinc-300"
       );
     });
     applyExplorerFilter();
@@ -4723,6 +4773,13 @@
   }
 
   function bindEvents() {
+    // Workspace Tab Switcher
+    $("#workspaceTabs")?.addEventListener("click", e => {
+      const btn = e.target.closest("[data-wstab]");
+      if (!btn || btn.dataset.wstab === activeWorkspaceTab) return;
+      switchWorkspaceTab(btn.dataset.wstab);
+    });
+
     // Arbitrary Public IP Reputation Inspector (#ipQueryForm / #extIpBanner)
     $("#ipQueryForm")?.addEventListener("submit", e => {
       e.preventDefault();
@@ -4734,6 +4791,7 @@
       inspectCustomIp("");
     });
     $("#btnJumpRep")?.addEventListener("click", () => {
+      switchWorkspaceTab("probes");
       activeGroup = "rep";
       searchQuery = "";
       const inp = $("#probeSearch");
@@ -4742,7 +4800,7 @@
         const on = b.dataset.gtab === "rep";
         b.setAttribute("aria-selected", on ? "true" : "false");
         b.className = "gtab-btn shrink-0 py-1.5 px-3 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium transition " + (
-          on ? "bg-blue-600 text-white shadow-2xs" : "bg-gray-100 text-gray-600 hover:bg-gray-200/70 dark:bg-neutral-800 dark:text-neutral-300"
+          on ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:text-zinc-300"
         );
       });
       applyExplorerFilter();
@@ -4775,10 +4833,10 @@
       $$("#sceneSwitch .scene-btn").forEach(btn => {
         const on = btn.dataset.scene === currentScene;
         btn.setAttribute("aria-selected", on ? "true" : "false");
-        btn.className = "scene-btn py-1.5 px-3 inline-flex items-center gap-x-1.5 text-xs font-medium rounded-md transition " + (
+        btn.className = "scene-btn py-1 px-2 sm:px-2.5 inline-flex items-center text-xs font-medium rounded-md transition " + (
           on
-            ? "bg-white text-gray-900 shadow-2xs dark:bg-neutral-900 dark:text-white"
-            : "text-gray-600 hover:text-gray-900 dark:text-neutral-400 dark:hover:text-neutral-200"
+            ? "bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white"
+            : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
         );
       });
     };
@@ -4799,8 +4857,8 @@
       checkFilter = btn.dataset.ckfilter;
       $$("#checkFilterBar .ckf-btn").forEach(b => {
         const on = b.dataset.ckfilter === checkFilter;
-        b.className = "ckf-btn py-1 px-2.5 text-xs font-medium rounded-md transition " + (
-          on ? "bg-white text-gray-900 shadow-2xs dark:bg-neutral-900 dark:text-white" : "text-gray-600 hover:text-gray-900 dark:text-neutral-400"
+        b.className = "ckf-btn py-1 px-3 text-xs font-medium rounded-md transition " + (
+          on ? "bg-white text-zinc-950 shadow-2xs dark:bg-zinc-900 dark:text-white" : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
         );
       });
       renderChecksAndScore(false);
@@ -4810,6 +4868,7 @@
     $("#priorityList")?.addEventListener("click", e => {
       const btn = e.target.closest("[data-jumpck]");
       if (!btn) return;
+      switchWorkspaceTab("checks");
       const row = CHECK_EL[btn.dataset.jumpck];
       if (!row) return;
       row.hidden = false;
@@ -4895,7 +4954,7 @@
         const on = b.dataset.gtab === activeGroup;
         b.setAttribute("aria-selected", on ? "true" : "false");
         b.className = "gtab-btn shrink-0 py-1.5 px-3 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium transition " + (
-          on ? "bg-blue-600 text-white shadow-2xs" : "bg-gray-100 text-gray-600 hover:bg-gray-200/70 dark:bg-neutral-800 dark:text-neutral-300"
+          on ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:text-zinc-300"
         );
       });
       applyExplorerFilter();
@@ -4961,7 +5020,7 @@
       const masked = document.body.classList.contains("is-masked");
       const pur = R.intel?.purity;
       const lines = [
-        `【WhoProbe v6.0 · 148项全栈指纹与出口信誉体检报告】`,
+        `【WhoProbe v7.0 · 148项全栈指纹与出口信誉体检报告】`,
         `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
         `出口纯净度: ${pur ? `${pur.score}/100 (${pur.grade} 级)` : "--"} · 脏邻居: ${R.intel?.cidr?.neighbours?.dirtyCount ?? 0} 个`,
         `推断设备: ${R.osLabel || "-"} · ${R.browserLabel || "-"} · 屏幕 ${R.physScreen || "-"} @ ${R.hz || 60}Hz`,
@@ -4984,7 +5043,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "6.0.1",
+        version: "7.0.0",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,
@@ -5021,14 +5080,14 @@
     if (rerunBtn) rerunBtn.disabled = true;
     if (rerunTxt) rerunTxt.textContent = "检测中…";
     const dot = $("#liveDot");
-    if (dot) dot.className = "size-1.5 rounded-full bg-blue-600 animate-pulse";
+    if (dot) dot.className = "size-1.5 shrink-0 rounded-full bg-blue-600 animate-pulse";
 
     // Reset rows visually
     for (const [id] of SNIFFERS) {
       const el = ROW_EL[id];
       if (el) {
         const v = $(".probe-val", el);
-        if (v) { v.textContent = "检测中…"; v.className = `probe-val ${SNIFFER_MAP[id]?.mask ? "maskable " : ""}font-mono text-xs text-right text-gray-400 dark:text-neutral-500 truncate min-w-0 flex-1`; }
+        if (v) { v.textContent = "检测中…"; v.className = `probe-val ${SNIFFER_MAP[id]?.mask ? "maskable " : ""}font-mono text-xs text-right text-zinc-500 dark:text-zinc-400 truncate min-w-0 flex-1`; }
       }
     }
     updateProgress();
@@ -5123,16 +5182,12 @@
     const bar = $("#topProgBar");
     if (bar) bar.style.width = "100%";
     const stTxt = $("#liveStatusText");
-    if (stTxt) stTxt.textContent = `已完成 ${completedSet.size} / ${SNIFFERS.length} 项检测 · 耗时 ${elapsedSec}s`;
-    if (dot) dot.className = "size-1.5 rounded-full bg-teal-500";
+    if (stTxt) stTxt.textContent = `已完成 ${completedSet.size}/${SNIFFERS.length} 项 · ${elapsedSec}s`;
+    if (dot) dot.className = "size-1.5 shrink-0 rounded-full bg-emerald-500";
     const elap = $("#portraitElapsed");
-    if (elap) elap.textContent = `148 项全量扫描 ${elapsedSec}s · 点击词条可定位原始探针`;
+    if (elap) elap.textContent = `148 项扫描 ${elapsedSec}s · 点击下划线词条溯源`;
     if (rerunBtn) rerunBtn.disabled = false;
     if (rerunTxt) rerunTxt.textContent = "重新检测";
-
-    if (window.HSStaticMethods?.autoInit) {
-      try { window.HSStaticMethods.autoInit(); } catch (e) {}
-    }
   }
 
   document.addEventListener("DOMContentLoaded", () => {

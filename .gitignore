@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+*.egg-info/
+
+# Node / Frontend CSS rebuild (optional)
+node_modules/
+npm-debug.log*
+
+# OS / Editor / Runtime
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log
+.env
+.env.*

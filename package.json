@@ -1,0 +1,16 @@
+{
+  "name": "whoprobe",
+  "version": "5.0.0",
+  "description": "128-probe L3–L7 browser & network fingerprint / proxy disguise inspector with passive Linux AF_PACKET TCP SYN & TLS ClientHello sniffing",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/tw-input.css -o ./static/style.css --minify",
+    "watch:css": "tailwindcss -i ./src/tw-input.css -o ./static/style.css --watch",
+    "test": "python3 probe.py --self-test && node --check static/app.js"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.0",
+    "tailwindcss": "^4.1.0"
+  }
+}

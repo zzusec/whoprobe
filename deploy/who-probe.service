@@ -1,0 +1,28 @@
+[Unit]
+Description=WhoProbe L3-L7 Browser & Network Fingerprint Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run as an unprivileged system user granted only CAP_NET_RAW for read-only BPF packet sniffing:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin whoprobe
+User=whoprobe
+Group=whoprobe
+WorkingDirectory=/opt/whoprobe
+
+# Replace eth0 with your server's public NIC (check via: ip route show default)
+ExecStart=/usr/bin/python3 /opt/whoprobe/probe.py --host 127.0.0.1 --port 18899 --sniff-iface eth0 --sniff-port 443
+Restart=always
+RestartSec=2
+
+# Minimal privilege hardening (read-only AF_PACKET socket only, zero disk writes required)
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

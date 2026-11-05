@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  verify:
+    name: Backend Self-Test & Frontend Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify Python syntax & run built-in self-test suite
+        run: |
+          python3 -m py_compile probe.py
+          python3 probe.py --self-test
+
+      - name: Verify frontend JavaScript syntax & probe catalog integrity
+        run: |
+          node --check static/app.js
+          python3 -c '
+          from pathlib import Path
+          import re
+          js = Path("static/app.js").read_text(encoding="utf-8")
+          m = re.search(r"const SNIFFERS = \[(.*?)\n  \];", js, re.S)
+          assert m, "SNIFFERS catalog not found"
+          entries = re.findall(r"^\s*\[\"[a-z0-9_]+\",\s*\"[a-z]+\"", m.group(1), re.M)
+          assert len(entries) == 128, f"Expected 128 probes, got {len(entries)}"
+          print(f"Verified {len(entries)} probes in static/app.js")
+          '

@@ -1,0 +1,30 @@
+services:
+  whoprobe:
+    build: .
+    container_name: whoprobe
+    restart: unless-stopped
+    ports:
+      - "8899:8899"
+    command: ["python3", "/app/probe.py", "--host", "0.0.0.0", "--port", "8899"]
+
+  # Optional: Host-network profile enabling passive AF_PACKET BPF sniffing on port 443
+  # Run with: SNIFF_IFACE=eth0 docker compose --profile sniffer up -d whoprobe-sniffer
+  whoprobe-sniffer:
+    build: .
+    profiles: ["sniffer"]
+    container_name: whoprobe-sniffer
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_RAW
+    command:
+      - python3
+      - /app/probe.py
+      - --host
+      - 127.0.0.1
+      - --port
+      - "8899"
+      - --sniff-iface
+      - ${SNIFF_IFACE:-eth0}
+      - --sniff-port
+      - "${SNIFF_PORT:-443}"

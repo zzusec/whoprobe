@@ -1,0 +1,47 @@
+@import "tailwindcss" source(none);
+@custom-variant dark (&:where(.dark, .dark *));
+
+@source "../static/index.html";
+@source "../static/app.js";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+@layer base {
+  [hidden] {
+    display: none !important;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+.is-masked .maskable {
+  filter: blur(5.5px);
+  user-select: none;
+  transition: filter 160ms ease;
+}
+.is-masked .maskable:hover {
+  filter: blur(2px);
+}
+
+@keyframes probeHighlightPulse {
+  0%, 25% {
+    background-color: rgba(37, 99, 235, 0.14);
+    box-shadow: inset 0 0 0 1.5px rgba(37, 99, 235, 0.65);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+.probe-lit {
+  animation: probeHighlightPulse 2.4s ease-out;
+}
+
+#groupTabs {
+  scrollbar-width: thin;
+}

@@ -1278,6 +1278,13 @@ def run_self_test() -> None:
     assert is_cloudflare_edge_ip("2606:4700::1") is True
     assert is_cloudflare_edge_ip("8.8.8.8") is False
     assert egress_intel.normalize_public_ip("8.8.8.8") == ("8.8.8.8", 4)
+    assert egress_intel.normalize_public_ip("[240e:471:e30:612f:4c40:aea1:867e:18ed]") == (
+        "240e:471:e30:612f:4c40:aea1:867e:18ed",
+        6,
+    )
+    assert egress_intel.normalize_public_ip("fe80::1%en0") == (None, None)
+    assert egress_intel.normalize_public_ip("100.64.0.1") == (None, None)
+    assert egress_intel.normalize_public_ip("192.0.0.2") == (None, None)
     assert egress_intel.normalize_public_ip("127.0.0.1") == (None, None)
 
     # 2) 启动临时 HTTP 服务验证所有路由（含隐私脱敏分享系统）

@@ -239,9 +239,14 @@ ROUTED_IPV4_SPACE = 3_000_000_000.0
 
 
 def normalize_public_ip(raw_ip: str) -> tuple[str | None, int | None]:
+    s = (raw_ip or "").strip()
+    if s.startswith("[") and "]" in s:
+        s = s[1:s.index("]")]
+    if "%" in s:
+        s = s.split("%", 1)[0]
     try:
-        addr = ipaddress.ip_address((raw_ip or "").strip())
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_unspecified:
+        addr = ipaddress.ip_address(s)
+        if not addr.is_global or addr.is_multicast:
             return None, None
         return str(addr), addr.version
     except ValueError:

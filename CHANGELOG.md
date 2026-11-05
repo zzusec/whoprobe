@@ -1,5 +1,16 @@
 # Changelog
 
+## [v7.2.4] - 2026-11-05
+
+### Fixed
+- **彻底修复真机 iPhone + 原生 5G 在 Safari/WebKit 下的残余扣分误判**：
+  - **Safari / WebKit 方括号 IPv6 `RTCIceCandidate.address` 规范化 (`cleanIp` + `egress_intel.normalize_public_ip`)**：iOS Safari WebKit 返回的公网 IPv6 候选地址带外层方括号（如 `[240e:...]`），此前会导致前后端 `ip-meta` 归属匹配、前缀展开与同运营商判定失配而误报高危 `WebRTC 泄漏`；现统一剥离方括号与 `%zone` 并过滤 RFC 6598 CGNAT (`100.64.0.0/10`)、464XLAT CLAT (`192.0.0.0/24`) 等非全球单播本地接口地址。
+  - **消除并发回填污染 `本站` 出口的竞态 (`probeServer` + `backfillExitMeta`)**：修复第三方边缘探针在主服务端探针尚未返回前抢写 `ex_self` / `R.ipCC` 的竞态问题，并在主探针到达后立即重算 WebRTC 与分流徽章。
+  - **补齐 Apple iCloud 隐私中继 IPv6 段 (`2a09:bac2::/32`、`2a09:bac3::/32`、`2606:54c3::/32`) 与 Safari 子请求中继去误报 (`isAppleRelay` + `analyzeExitSplit`)**：当 Apple 端侧直连原生宽带/蜂窝网络（`warp=off` 且主出口非中继），仅个别跨域子探针被 Safari 内置防追踪中继接管时，不再误判为跨国代理分流（真实 VPN 规则漏底与开启 WARP 分流仍正常检出）。
+  - **校准 STUN `srflx` 计时与 Anycast 就近测距守卫 (`probeWebrtc` + `rtt`)**：仅对真实 `srflx/prflx/relay` 反射候选统计 STUN 往返耗时，且在本机 TCP 握手往返吻合无泄漏时不因 STUN Anycast 节点物理更近而误报 UDP 旁路。
+
+---
+
 ## [v7.2.3] - 2026-11-05
 
 ### Fixed

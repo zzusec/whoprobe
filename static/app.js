@@ -1,4 +1,4 @@
-/* WhoProbe v7.2.1 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.2.4 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -505,33 +505,49 @@
     const hay = [geo.isp, geo.org, geo.asFull, geo.asName, geo.ptr].filter(Boolean).join(" ");
     return !!(geo.mobile || MOBILE_RE.test(hay));
   }
+  function cleanIp(raw) {
+    let s = String(raw || "").trim();
+    if (!s) return "";
+    if (s.startsWith("[")) {
+      const close = s.indexOf("]");
+      s = close > 0 ? s.slice(1, close) : s.replace(/^\[+|\]+$/g, "");
+    }
+    const pct = s.indexOf("%");
+    if (pct > 0) s = s.slice(0, pct);
+    return s.includes(":") ? s.toLowerCase() : s;
+  }
+
   const RELAY4 = [[104, 28], [172, 224], [172, 225], [172, 226], [146, 75], [140, 248]];
   function isAppleRelay(ip) {
-    const s = String(ip || "");
-    if (s.includes(":")) return /^(2606:54c0|2a02:26f7|2a04:4e41):/i.test(s);
+    const s = cleanIp(ip);
+    if (!s) return false;
+    if (s.includes(":")) return /^(2606:54c[03]|2a02:26f7|2a04:4e41|2a09:bac[23]):/i.test(s);
     const [a, b] = s.split(".").map(Number);
     return RELAY4.some(([x, y]) => x === a && y === b);
   }
 
   function expandV6(ip) {
-    const [h, tl = ""] = String(ip).toLowerCase().split("::");
+    const s = cleanIp(ip);
+    const [h, tl = ""] = s.split("::");
     const H = h ? h.split(":") : [], T = tl ? tl.split(":") : [];
     return [...H, ...Array(Math.max(0, 8 - H.length - T.length)).fill("0"), ...T].map(g => g.padStart(4, "0"));
   }
   function extractV6Mac(ip) {
-    if (!ip || !ip.includes(":")) return null;
-    const g = expandV6(ip).map(x => parseInt(x, 16));
+    const s = cleanIp(ip);
+    if (!s || !s.includes(":")) return null;
+    const g = expandV6(s).map(x => parseInt(x, 16));
     if ((g[5] & 0xff) !== 0xff || (g[6] >> 8) !== 0xfe) return null;
     const b = [(g[4] >> 8) ^ 0x02, g[4] & 0xff, g[5] >> 8, g[6] & 0xff, g[7] >> 8, g[7] & 0xff];
     return b.map(x => x.toString(16).padStart(2, "0")).join(":");
   }
   function netPrefix(ip) {
-    if (!ip) return "";
-    return ip.includes(":") ? expandV6(ip).slice(0, 4).join(":") : ip.split(".").slice(0, 2).join(".");
+    const s = cleanIp(ip);
+    if (!s) return "";
+    return s.includes(":") ? expandV6(s).slice(0, 4).join(":") : s.split(".").slice(0, 2).join(".");
   }
 
   function normalizeCarrierKey(info = {}) {
-    const ip = String(info.ip || "").trim().toLowerCase();
+    const ip = cleanIp(info.ip).toLowerCase();
     const asnNum = String(info.asn || "").replace(/^AS/i, "").trim();
     const hay = [info.isp, info.org, info.asFull, info.asName, info.label].filter(Boolean).join(" ").toLowerCase();
     if (
@@ -572,27 +588,30 @@
     return false;
   }
 
-  function candidateCC(candIp) {
+  function candidateCC(rawCandIp) {
+    const candIp = cleanIp(rawCandIp);
     if (!candIp) return "";
-    const meta = R.ipMeta?.[candIp] || null;
-    const matchedExit = Object.values(R.exits || {}).find(x => x && x.ip === candIp);
+    const meta = R.ipMeta?.[candIp] || R.ipMeta?.[rawCandIp] || null;
+    const matchedExit = Object.values(R.exits || {}).find(x => x && cleanIp(x.ip) === candIp);
     return meta?.cc || matchedExit?.cc || (/^240[89ce]:/i.test(candIp) ? "CN" : "");
   }
 
-  function isSameCarrierCandidate(candIp) {
-    if (!candIp || !R.ip) return false;
-    if (candIp === R.ip) return true;
-    if (netPrefix(candIp) && netPrefix(candIp) === netPrefix(R.ip)) return true;
+  function isSameCarrierCandidate(rawCandIp) {
+    const candIp = cleanIp(rawCandIp);
+    const selfIp = cleanIp(R.ip);
+    if (!candIp || !selfIp) return false;
+    if (candIp === selfIp) return true;
+    if (netPrefix(candIp) && netPrefix(candIp) === netPrefix(selfIp)) return true;
     if (R.netKind === "dc" || R.netKind === "relay") return false;
 
-    const meta = R.ipMeta?.[candIp] || null;
+    const meta = R.ipMeta?.[candIp] || R.ipMeta?.[rawCandIp] || null;
     if (meta?.hosting) return false;
-    const matchedExit = Object.values(R.exits || {}).find(x => x && x.ip === candIp);
+    const matchedExit = Object.values(R.exits || {}).find(x => x && cleanIp(x.ip) === candIp);
     const candCC = candidateCC(candIp);
     if (!candCC || !R.ipCC || candCC !== R.ipCC) return false;
 
     const exitKey = normalizeCarrierKey({
-      ip: R.ip,
+      ip: selfIp,
       asn: R.asn,
       org: R.org,
       isp: R.srv?.geo?.isp,
@@ -609,7 +628,7 @@
     });
     if (exitKey && candKey && exitKey === candKey) return true;
     if (meta?.asn && R.asn && String(meta.asn).replace(/^AS/i, "") === String(R.asn).replace(/^AS/i, "")) return true;
-    if ((candIp === R.stack?.v4 || candIp === R.stack?.v6) && (!candKey || !exitKey)) return true;
+    if ((candIp === cleanIp(R.stack?.v4) || candIp === cleanIp(R.stack?.v6)) && (!candKey || !exitKey)) return true;
     return false;
   }
 
@@ -619,20 +638,33 @@
     return rtcList.filter(ip => !isSameCarrierCandidate(ip));
   }
 
+  function isSafariSubprobeRelay(key, v) {
+    if (!v || !v.ip || key === "ex_self" || key === "ex_cn") return false;
+    if (!isAppleRelay(v.ip)) return false;
+    if ((v.warp && v.warp !== "off") || (R.cfEdge?.warp && R.cfEdge.warp !== "off")) return false;
+    if (!/^(iOS|iPadOS|macOS)$/.test(R.dev?.os || "") && R.engine !== "JavaScriptCore") return false;
+    if (R.ip && isAppleRelay(R.ip)) return false;
+    return true;
+  }
+
   function analyzeExitSplit() {
     const ex = R.exits || {};
-    const validExits = Object.entries(ex).filter(([, v]) => v && v.ip);
-    const countries = new Set(validExits.map(([, v]) => v.cc).filter(Boolean));
+    const allValidExits = Object.entries(ex).filter(([, v]) => v && v.ip);
     const cnIp = ex.ex_cn;
     const cnLeak = !!(cnIp && cnIp.cc === "CN" && R.ipCC && R.ipCC !== "CN");
     if (cnLeak) {
-      return { state: "cn-leak", countries, distinctCount: Math.max(2, countries.size), validExits };
+      const allCountries = new Set(allValidExits.map(([, v]) => v.cc).filter(Boolean));
+      return { state: "cn-leak", countries: allCountries, distinctCount: Math.max(2, allCountries.size), validExits: allValidExits };
     }
+    const relayedSubprobes = allValidExits.filter(([k, v]) => isSafariSubprobeRelay(k, v));
+    const filteredExits = relayedSubprobes.length ? allValidExits.filter(([k, v]) => !isSafariSubprobeRelay(k, v)) : allValidExits;
+    const validExits = filteredExits.length ? filteredExits : allValidExits;
+    const countries = new Set(validExits.map(([, v]) => v.cc).filter(Boolean));
     if (countries.size > 1) {
       return { state: "multi-country", countries, distinctCount: countries.size, validExits };
     }
-    const v4Prefixes = new Set(validExits.filter(([, v]) => !v.ip.includes(":")).map(([, v]) => netPrefix(v.ip)).filter(Boolean));
-    const v6Prefixes = new Set(validExits.filter(([, v]) => v.ip.includes(":")).map(([, v]) => netPrefix(v.ip)).filter(Boolean));
+    const v4Prefixes = new Set(validExits.filter(([, v]) => !cleanIp(v.ip).includes(":")).map(([, v]) => netPrefix(v.ip)).filter(Boolean));
+    const v6Prefixes = new Set(validExits.filter(([, v]) => cleanIp(v.ip).includes(":")).map(([, v]) => netPrefix(v.ip)).filter(Boolean));
     const hasUnalignedExit = validExits.some(([k, v]) => k !== "ex_self" && netPrefix(v.ip) !== netPrefix(R.ip) && !isSameCarrierCandidate(v.ip));
     if ((v4Prefixes.size > 1 || v6Prefixes.size > 1) && hasUnalignedExit) {
       return { state: "multi-prefix", countries, distinctCount: v4Prefixes.size + v6Prefixes.size, validExits };
@@ -644,6 +676,7 @@
       state: "ok",
       dualStackAligned: v4Prefixes.size >= 1 && v6Prefixes.size >= 1,
       cgnatAligned: v4Prefixes.size > 1 || v6Prefixes.size > 1,
+      safariRelayCount: relayedSubprobes.length,
       countries,
       distinctCount: 1,
       validExits
@@ -1035,13 +1068,20 @@
 
   function backfillExitMeta(meta = {}) {
     if (!meta) return;
+    const metaIp = cleanIp(meta.ip);
+    const allowPrimaryFill = !!meta.isSelf || !!R.srvFailed;
     let changed = false;
-    if (!R.ip && meta.ip) {
-      R.ip = String(meta.ip).trim();
+    if (!R.ip && metaIp && allowPrimaryFill) {
+      R.ip = metaIp;
       const ipVerStr = R.ip.includes(":") ? "IPv6" : "IPv4";
       setProbe("ip", `${R.ip} (${ipVerStr})`);
       changed = true;
     }
+    const sameExit = !R.ip
+      ? allowPrimaryFill
+      : (!metaIp || metaIp === cleanIp(R.ip) || (netPrefix(metaIp) && netPrefix(metaIp) === netPrefix(R.ip)));
+    if (!sameExit) return;
+
     if (!R.ipCC && meta.cc) {
       R.ipCC = String(meta.cc).trim().toUpperCase();
       changed = true;
@@ -1110,12 +1150,14 @@
         );
       }
       if (!R.exits) R.exits = {};
-      if (!R.exits.ex_self) {
+      if (!R.exits.ex_self || (cleanIp(R.exits.ex_self.ip) === cleanIp(R.ip) && !R.exits.ex_self.cc && R.ipCC)) {
         const lbl = [countryName(R.ipCC), R.ipCity, R.org].filter(Boolean).join(" · ");
         R.exits.ex_self = { ip: R.ip, cc: R.ipCC, label: lbl };
         setProbe("ex_self", `${R.ipCC ? flagEmoji(R.ipCC) + " " : ""}${R.ip}${lbl ? " · " + lbl : ""}`);
         setRouteRow("ex_self", `${R.ipCC ? flagEmoji(R.ipCC) + " " : ""}${R.ip}`, lbl, R.netKind === "dc" ? "warn" : "ok");
       }
+      refreshWebrtcProbeRow();
+      refreshExitSplitBadges();
     }
   }
 
@@ -1137,6 +1179,7 @@
     const t1 = Date.now();
 
     if (!data) {
+      R.srvFailed = true;
       const onlySrv = ["ptr", "clock", "proto", "tcpfp", "ipquirk", "ja4t", "tunnel", "ja4", "ja3", "tlsext", "pqkex", "ech", "h2fp",
        "h_ua", "h_lang", "h_chua", "h_plat", "h_arch", "h_enc", "h_sec", "h_dnt"];
       if (!R.ip) onlySrv.unshift("ip", "geo", "coords", "isp", "nettype", "tzip");
@@ -1145,6 +1188,7 @@
     }
 
     R.srv = data;
+    R.srvFailed = false;
     if (Array.isArray(data.serverCoords) && data.serverCoords.length === 2) {
       R.srvCoords = data.serverCoords;
     }
@@ -1167,8 +1211,8 @@
     } else setNA("clock");
 
     // IP & Geo
-    const ip = data.clientIp || data.ip || g.ip || "";
-    const cc = g.countryCode || "";
+    const ip = cleanIp(data.clientIp || data.ip || g.ip || "");
+    const cc = g.countryCode || (cleanIp(R.ip) === ip ? R.ipCC || "" : "");
     R.ip = ip;
     R.ipCC = cc;
     const ipVerStr = data.ipVersion === 6 || ip.includes(":") ? "IPv6" : "IPv4";
@@ -1325,9 +1369,13 @@
     }
     const selfLbl = [countryName(cc), g.city, org].filter(Boolean).join(" · ");
     if (!R.exits) R.exits = {};
-    R.exits.ex_self = { ip, cc, label: selfLbl };
-    setProbe("ex_self", `${cc ? flagEmoji(cc) + " " : ""}${ip}${selfLbl ? " · " + selfLbl : ""}`);
+    if (ip) {
+      R.exits.ex_self = { ip, cc, label: selfLbl };
+      setProbe("ex_self", `${cc ? flagEmoji(cc) + " " : ""}${ip}${selfLbl ? " · " + selfLbl : ""}`);
+    }
     setRouteRow("ex_self", `${cc ? flagEmoji(cc) + " " : ""}${ip}`, selfLbl, isDc ? "warn" : "ok");
+    refreshWebrtcProbeRow();
+    refreshExitSplitBadges();
 
     // 若 probeLatency 先于慢链路 probeServer 返回，在此补齐服务端 TCP 握手耗时对比
     const lateSrvRtt = tcp ? (tcp.minHandshakeRttMs ?? tcp.handshakeRttMs ?? null) : null;
@@ -1376,6 +1424,7 @@
     if (intel.isSelfEgress !== false) {
       backfillExitMeta({
         ip: intel.targetIp,
+        isSelf: true,
         cc: c.country,
         city: c.city,
         region: c.region,
@@ -1776,10 +1825,10 @@
         getJSON("https://forge.speedtest.cn/api/location/info", 3800).catch(() => null)
       ]);
       if (j1?.data?.ip) {
-        ip = j1.data.ip;
+        ip = cleanIp(j1.data.ip);
         loc = (j1.data.location || []).filter(Boolean).join(" · ");
       } else if (j2?.ip) {
-        ip = j2.ip;
+        ip = cleanIp(j2.ip);
         loc = [j2.country, j2.province, j2.city, j2.isp].filter(Boolean).join(" · ");
       }
       if (!ip) {
@@ -1815,18 +1864,19 @@
           organization: j2.connection?.isp || j2.connection?.org
         };
       }
-      if (!j?.ip) {
+      const intlIp = cleanIp(j?.ip);
+      if (!intlIp) {
         setNA("ex_intl", "国际探针不可达");
         setRouteRow("ex_intl", "不可达", "");
         return;
       }
       const cc = j.country_code || "";
       const sub = [countryName(cc), j.city, j.organization || j.isp].filter(Boolean).join(" · ");
-      R.exits.ex_intl = { ip: j.ip, cc, label: sub };
-      setProbe("ex_intl", `${flagEmoji(cc)} ${j.ip} · ${sub}`);
-      setRouteRow("ex_intl", `${flagEmoji(cc)} ${j.ip}`, sub, "ok");
+      R.exits.ex_intl = { ip: intlIp, cc, label: sub };
+      setProbe("ex_intl", `${flagEmoji(cc)} ${intlIp} · ${sub}`);
+      setRouteRow("ex_intl", `${flagEmoji(cc)} ${intlIp}`, sub, "ok");
       backfillExitMeta({
-        ip: j.ip,
+        ip: intlIp,
         cc,
         city: j.city,
         region: j.region,
@@ -1843,18 +1893,21 @@
     const runTraceProbe = async (key, url, name) => {
       const raw = await getText(url, 4200).catch(() => "");
       const kv = parseCfTrace(raw);
-      if (!kv.ip) {
+      const traceIp = cleanIp(kv.ip);
+      if (!traceIp) {
         setNA(key, `${name} 边缘不可达或被拦截`);
         setRouteRow(key, "不可达 / 被阻断", name);
         return null;
       }
+      kv.ip = traceIp;
       const cc = kv.loc || "";
-      const sub = `${countryName(cc)} · 边缘节点 ${kv.colo || "?"} · ${kv.http || "h2"}`;
-      R.exits[key] = { ip: kv.ip, cc, colo: kv.colo, http: kv.http, kex: kv.kex, sni: kv.sni, warp: kv.warp, gateway: kv.gateway, label: sub };
-      setProbe(key, `${flagEmoji(cc)} ${kv.ip} · ${sub}`);
-      setRouteRow(key, `${flagEmoji(cc)} ${kv.ip}`, sub, "ok");
+      const relayNote = isAppleRelay(traceIp) && (!kv.warp || kv.warp === "off") && /^(iOS|iPadOS|macOS)$/.test(R.dev?.os || "") ? " · Safari 隐私中继" : "";
+      const sub = `${countryName(cc)} · 边缘节点 ${kv.colo || "?"} · ${kv.http || "h2"}${relayNote}`;
+      R.exits[key] = { ip: traceIp, cc, colo: kv.colo, http: kv.http, kex: kv.kex, sni: kv.sni, warp: kv.warp, gateway: kv.gateway, label: sub };
+      setProbe(key, `${flagEmoji(cc)} ${traceIp} · ${sub}`);
+      setRouteRow(key, `${flagEmoji(cc)} ${traceIp}`, sub, "ok");
       if (key === "ex_cf") {
-        backfillExitMeta({ ip: kv.ip, cc, source: "Cloudflare Trace 备援" });
+        backfillExitMeta({ ip: traceIp, cc, source: "Cloudflare Trace 备援" });
       }
       return kv;
     };
@@ -1866,8 +1919,8 @@
     // Dual-stack IPv4 vs IPv6 independent probe
     const pStack = (async () => {
       const [r4, r6] = await Promise.all([
-        getText("https://ipv4.icanhazip.com", 3800).then(s => ({ ip: s.trim() }), () => null),
-        getText("https://ipv6.icanhazip.com", 3800).then(s => ({ ip: s.trim() }), () => null)
+        getText("https://ipv4.icanhazip.com", 3800).then(s => ({ ip: cleanIp(s) }), () => null),
+        getText("https://ipv6.icanhazip.com", 3800).then(s => ({ ip: cleanIp(s) }), () => null)
       ]);
       const v4 = r4?.ip || "";
       const v6 = r6?.ip && r6.ip.includes(":") ? r6.ip : "";
@@ -2034,10 +2087,13 @@
     if (R.httpRtt != null) {
       const delta = Math.round(R.stunRttMs - R.httpRtt);
       const sign = delta >= 0 ? `+${delta}` : `${delta}`;
-      const suspect = Math.abs(delta) >= 95;
+      const anycastCloserOnly = delta <= -65 && R.srvTcpRtt != null && (R.httpRtt - R.srvTcpRtt) < 42 && !getLeakedWebrtcIps().length;
+      const suspect = Math.abs(delta) >= 95 && !anycastCloserOnly;
       setProbe("udprtt", `STUN UDP 候选 ${R.stunRttMs} ms vs HTTP TCP ${R.httpRtt} ms (差值 ${sign} ms)`, {
         tone: suspect ? "warn" : "ok",
-        why: delta <= -65
+        why: anycastCloserOnly
+          ? "STUN Anycast 边缘节点物理距离比本站单播源站更近，且服务端 TCP 握手往返吻合、无异网 IP 泄漏。"
+          : delta <= -65
           ? "UDP 显著快于 HTTP TCP：高度疑似代理仅接管了 TCP，而 UDP 直接走本地物理宽带穿透！"
           : delta >= 110
           ? "UDP 显著慢于 TCP：疑似经过 UDP-over-TCP (UoT) 二次隧道封装或远端中继。"
@@ -2073,13 +2129,18 @@
           const c = ev.candidate.candidate || "";
           const mLocal = c.match(/([0-9a-fA-F-]{8,}\.local)\b/);
           if (mLocal) lanItems.add(mLocal[1]);
-          const ipMatch = c.match(/(?:\b|(?:candidate:\S+\s+\d+\s+\S+\s+\d+\s+))((?:\d{1,3}\.){3}\d{1,3}|[0-9a-fA-F:]{3,39})\b/);
-          const addr = ev.candidate.address || (ipMatch && ipMatch[1]) || "";
-          if (!addr || addr.endsWith(".local")) return;
-          if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.|fc|fd|fe80:)/i.test(addr)) {
+          const ipMatch = c.match(/(?:\b|(?:candidate:\S+\s+\d+\s+\S+\s+\d+\s+))((?:\d{1,3}\.){3}\d{1,3}|\[?[0-9a-fA-F:]{3,39}\]?)(?:\b|\s|$)/);
+          const rawAddr = ev.candidate.address || (ipMatch && ipMatch[1]) || "";
+          if (!rawAddr || String(rawAddr).endsWith(".local")) return;
+          const addr = cleanIp(rawAddr);
+          if (!addr) return;
+          const isSrflx = /\btyp\s+(?:srflx|prflx|relay)\b/i.test(c) || /^(?:srflx|prflx|relay)$/i.test(ev.candidate.type || "");
+          if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|fc[0-9a-f]{0,2}:|fd[0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)/i.test(addr)) {
             lanItems.add(addr);
-          } else if (addr !== "0.0.0.0" && addr !== "::") {
-            if (firstSrflxMs == null) firstSrflxMs = Math.max(1, Math.round(performance.now() - tStart));
+          } else if (/^(0\.0\.0\.0|127\.|169\.254\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|192\.0\.0\.|198\.1[89]\.|::1?$|2001:0?db8:)/i.test(addr)) {
+            return;
+          } else {
+            if (isSrflx && firstSrflxMs == null) firstSrflxMs = Math.max(1, Math.round(performance.now() - tStart));
             pubIps.add(addr);
           }
         };
@@ -2122,7 +2183,7 @@
     }
     if (!R.ip) return;
     const leaked = getLeakedWebrtcIps();
-    const directSame = pubList.every(x => x === R.ip || netPrefix(x) === netPrefix(R.ip));
+    const directSame = pubList.every(x => cleanIp(x) === cleanIp(R.ip) || netPrefix(x) === netPrefix(R.ip));
     const lkCC = leaked.length ? candidateCC(leaked[0]) : "";
     const suffix = leaked.length
       ? (R.ipCC === "CN" && lkCC && lkCC !== "CN"
@@ -2139,11 +2200,12 @@
   async function reconcileCandidateIpMeta() {
     R.ipMeta = R.ipMeta || {};
     const candidates = new Set();
+    const selfIp = cleanIp(R.ip);
     const addIfUnfamiliar = ip => {
       if (!ip || typeof ip !== "string") return;
-      const clean = ip.trim();
-      if (!clean || clean === R.ip) return;
-      if (R.ip && netPrefix(clean) && netPrefix(clean) === netPrefix(R.ip)) return;
+      const clean = cleanIp(ip);
+      if (!clean || clean === selfIp) return;
+      if (selfIp && netPrefix(clean) && netPrefix(clean) === netPrefix(selfIp)) return;
       if (!R.ipMeta[clean]) candidates.add(clean);
     };
     if (Array.isArray(R.rtc)) R.rtc.forEach(addIfUnfamiliar);
@@ -2156,7 +2218,11 @@
     if (batch.length) {
       const res = await getJSON(`./api/who/ip-meta?ips=${encodeURIComponent(batch.join(","))}`, 2800, "omit").catch(() => null);
       if (res?.ok && res.items && typeof res.items === "object") {
-        Object.assign(R.ipMeta, res.items);
+        for (const [k, val] of Object.entries(res.items)) {
+          const ck = cleanIp(k);
+          if (ck) R.ipMeta[ck] = val;
+          R.ipMeta[k] = val;
+        }
       }
     }
     refreshWebrtcProbeRow();
@@ -2165,7 +2231,9 @@
 
   // 6. IPv6 EUI-64 Hardware MAC Leak Check (1 item: v6mac)
   function probeV6Mac() {
-    const v6Pool = [R.ip, R.stack?.v6, ...(Array.isArray(R.rtc) ? R.rtc : []), ...Object.values(R.exits || {}).map(x => x?.ip)].filter(x => x && String(x).includes(":"));
+    const v6Pool = [R.ip, R.stack?.v6, ...(Array.isArray(R.rtc) ? R.rtc : []), ...Object.values(R.exits || {}).map(x => x?.ip)]
+      .map(cleanIp)
+      .filter(x => x && x.includes(":"));
     if (!v6Pool.length) {
       R.v6mac = null;
       setProbe("v6mac", "当前无 IPv6 流量（无网卡 MAC 泄露风险）", { tone: "ok" });
@@ -4057,7 +4125,8 @@
     if (!R.latDone || R.httpRtt == null) {
       out.rtt = { level: "info", summary: R.coarseTimer ? "浏览器开启了时钟降精度保护，无法精确测量毫秒级往返差" : "等待浏览器热连接、服务端握手与 UDP 候选三维测距…" };
     } else {
-      const udpBypass = R.stunRttMs != null && (R.httpRtt - R.stunRttMs) >= 75;
+      const tcpMatchesDirect = R.srvTcpRtt != null && (R.httpRtt - R.srvTcpRtt) < 42 && !getLeakedWebrtcIps().length;
+      const udpBypass = R.stunRttMs != null && (R.httpRtt - R.stunRttMs) >= 75 && !tcpMatchesDirect;
       if (udpBypass) {
         out.rtt = { level: "bad", summary: `UDP 旁路穿帮：HTTP TCP 往返需 ${R.httpRtt} ms，但 STUN UDP 仅 ${R.stunRttMs} ms，暴露本地宽带直连 UDP！` };
       } else if (R.srvTcpRtt != null) {
@@ -4108,7 +4177,7 @@
           : `WebRTC UDP 穿透泄漏了与代理出口不同的真实公网 IP：${leakedRtc.join(", ")}`
       };
     } else {
-      const sameNet = rtcList.length && rtcList.every(x => x === R.ip || netPrefix(x) === netPrefix(R.ip));
+      const sameNet = rtcList.length && rtcList.every(x => cleanIp(x) === cleanIp(R.ip) || netPrefix(x) === netPrefix(R.ip));
       out.webrtc = {
         level: "ok",
         summary: rtcList.length
@@ -4458,7 +4527,7 @@
           return { left: `海外 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: "直连 🇨🇳CN" };
         }
         const foreignEx = R.ipCC === "CN"
-          ? Object.values(R.exits || {}).find(v => v?.cc && v.cc !== "CN")
+          ? Object.entries(R.exits || {}).find(([k, v]) => v?.cc && v.cc !== "CN" && !isSafariSubprobeRelay(k, v))?.[1]
           : null;
         if (foreignEx) {
           return { left: "直连 🇨🇳CN", op: "≠", right: `代理 ${flagEmoji(foreignEx.cc)}${foreignEx.cc}` };

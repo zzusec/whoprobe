@@ -64,8 +64,10 @@ INTEL_CACHE = SimpleTTLCache(maxsize=1024, ttl_sec=600.0)
 ASN_CACHE = SimpleTTLCache(maxsize=1024, ttl_sec=3600.0)
 TLS443_CACHE = SimpleTTLCache(maxsize=2048, ttl_sec=900.0)
 CIDR_CACHE = SimpleTTLCache(maxsize=32, ttl_sec=21600.0)  # 6 hours
+RAW_TLS443_CACHE = SimpleTTLCache(maxsize=2048, ttl_sec=900.0)
 _CIDR_LOCKS: dict[str, threading.Lock] = {}
 _CIDR_GLOBAL_LOCK = threading.Lock()
+_INTEL_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=48, thread_name_prefix="intel")
 
 # ---------------------------------------------------------------------------
 # 已知自治系统分类表 & 关键字 & IP 租赁经纪商特征
@@ -679,6 +681,8 @@ def _fetch_onionoo(ip: str, ip_ver: int) -> dict[str, Any] | None:
         return {
             "torRelay": len(exact) > 0,
             "torExit": is_exit,
+            "isTorRelay": len(exact) > 0,
+            "isTorExit": is_exit,
             "nicknames": [str(r.get("nickname") or "") for r in exact[:3]],
             "neighbourRelays": len(neigh),
         }
@@ -762,25 +766,65 @@ def _decode_der_cert(der_bytes: bytes) -> dict[str, Any]:
     }
 
 
-def inspect_exit_tls_443(ip: str, asn: int | None = None) -> dict[str, Any]:
-    """
-    对来访客户端公网 IP 的 443 端口进行一次轻量只读 TLS 证书探查（缓存 15 分钟）：
-    1. 家庭宽带通常处于 NAT/防火墙后，443 关闭或超时；若开放说明该出口运行公网服务或为服务器节点。
-    2. 若该 IP 不属于微软/苹果/雅虎/Google 等大厂 ASN，但其 443 端口却返回了这些大厂的有效证书，
-       或能通过大厂 SNI 的完整加密签名校验，即可实锤 VLESS-Reality / ShadowTLS / SNI 透明转发伪装！
-    """
+def _probe_raw_tls_443(ip: str) -> dict[str, Any]:
+    """仅执行 TCP:443 连通性与无 SNI 默认证书抓取（可与 Stage 1 多源情报完全并行，不依赖 ASN）。"""
+    cached = RAW_TLS443_CACHE.get(ip)
+    if isinstance(cached, dict):
+        return cached
+
+    t0 = time.monotonic()
+    raw: dict[str, Any] = {
+        "port443Open": False,
+        "tlsActive": False,
+        "tlsVersion": None,
+        "cipher": None,
+        "rttMs": None,
+        "certInfo": {},
+    }
+    try:
+        raw_sock = socket.create_connection((ip, 443), timeout=1.2)
+    except Exception:
+        RAW_TLS443_CACHE.set(ip, raw)
+        return raw
+
+    raw["port443Open"] = True
+    raw["rttMs"] = round((time.monotonic() - t0) * 1000.0, 1)
+
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        raw_sock.settimeout(1.2)
+        with ctx.wrap_socket(raw_sock) as ssock:
+            raw["tlsActive"] = True
+            raw["tlsVersion"] = ssock.version()
+            ciph = ssock.cipher()
+            raw["cipher"] = ciph[0] if ciph else None
+            der = ssock.getpeercert(binary_form=True)
+            if der:
+                raw["certInfo"] = _decode_der_cert(der)
+    except Exception:
+        try:
+            raw_sock.close()
+        except Exception:
+            pass
+
+    RAW_TLS443_CACHE.set(ip, raw)
+    return raw
+
+
+def _finalize_tls_443(ip: str, raw: dict[str, Any], asn: int | None = None) -> dict[str, Any]:
     cache_key = f"{ip}:{asn or 0}"
     cached = TLS443_CACHE.get(cache_key)
     if isinstance(cached, dict):
         return cached
 
-    t0 = time.monotonic()
     result: dict[str, Any] = {
         "probed": True,
-        "port443Open": False,
-        "tlsActive": False,
-        "tlsVersion": None,
-        "cipher": None,
+        "port443Open": bool(raw.get("port443Open")),
+        "tlsActive": bool(raw.get("tlsActive")),
+        "tlsVersion": raw.get("tlsVersion"),
+        "cipher": raw.get("cipher"),
         "subjectCN": None,
         "issuerOrg": None,
         "sans": [],
@@ -789,40 +833,14 @@ def inspect_exit_tls_443(ip: str, asn: int | None = None) -> dict[str, Any]:
         "realityBrand": None,
         "realityDomain": None,
         "verdict": "closed",
-        "rttMs": None,
+        "rttMs": raw.get("rttMs"),
     }
 
-    # Step 1: 尝试 TCP 连接 443（超时 1.4 秒，绝不拖慢接口）
-    try:
-        raw_sock = socket.create_connection((ip, 443), timeout=1.4)
-    except Exception:
+    if not result["port443Open"]:
         TLS443_CACHE.set(cache_key, result)
         return result
 
-    result["port443Open"] = True
-    result["rttMs"] = round((time.monotonic() - t0) * 1000.0, 1)
-
-    # Step 2: 无 SNI / 宽松模式提取默认证书
-    cert_info: dict[str, Any] = {}
-    try:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        raw_sock.settimeout(1.5)
-        with ctx.wrap_socket(raw_sock) as ssock:
-            result["tlsActive"] = True
-            result["tlsVersion"] = ssock.version()
-            ciph = ssock.cipher()
-            result["cipher"] = ciph[0] if ciph else None
-            der = ssock.getpeercert(binary_form=True)
-            if der:
-                cert_info = _decode_der_cert(der)
-    except Exception:
-        try:
-            raw_sock.close()
-        except Exception:
-            pass
-
+    cert_info = raw.get("certInfo") or {}
     if cert_info:
         cn = cert_info.get("subjectCN") or ""
         issuer_org = cert_info.get("issuerOrg") or cert_info.get("issuerCN") or ""
@@ -846,14 +864,13 @@ def inspect_exit_tls_443(ip: str, asn: int | None = None) -> dict[str, Any]:
             if result["realitySuspect"]:
                 break
 
-    # Step 3: 若 443 端口开放但无默认证书返回（典型配置了严格 serverNames 的 Reality 转发器），
-    # 用系统根证书池做一次高频诱饵域名 (www.microsoft.com) 密码学真实验签探测！
+    # 若 443 开放但无默认证书返回（典型配置严格 serverNames 的 Reality 转发器），做一次高频诱饵域名验签
     if result["port443Open"] and not result["realitySuspect"] and not result["sans"]:
         if asn not in {8075, 8068, 8069, 20940, 16625}:
             try:
                 strict_ctx = ssl.create_default_context()
-                with socket.create_connection((ip, 443), timeout=1.1) as s2:
-                    s2.settimeout(1.2)
+                with socket.create_connection((ip, 443), timeout=0.9) as s2:
+                    s2.settimeout(1.0)
                     with strict_ctx.wrap_socket(s2, server_hostname="www.microsoft.com") as ss2:
                         result["tlsActive"] = True
                         result["tlsVersion"] = ss2.version()
@@ -874,6 +891,20 @@ def inspect_exit_tls_443(ip: str, asn: int | None = None) -> dict[str, Any]:
     return result
 
 
+def inspect_exit_tls_443(ip: str, asn: int | None = None) -> dict[str, Any]:
+    """
+    对来访客户端公网 IP 的 443 端口进行一次轻量只读 TLS 证书探查（缓存 15 分钟）：
+    1. 家庭宽带通常处于 NAT/防火墙后，443 关闭或超时；若开放说明该出口运行公网服务或为服务器节点。
+    2. 若该 IP 不属于微软/苹果/雅虎/Google 等大厂 ASN，但其 443 端口却返回了这些大厂的有效证书，
+       或能通过大厂 SNI 的完整加密签名校验，即可实锤 VLESS-Reality / ShadowTLS / SNI 透明转发伪装！
+    """
+    cache_key = f"{ip}:{asn or 0}"
+    cached = TLS443_CACHE.get(cache_key)
+    if isinstance(cached, dict):
+        return cached
+    return _finalize_tls_443(ip, _probe_raw_tls_443(ip), asn)
+
+
 # ---------------------------------------------------------------------------
 # DNSBL (DoH) 与 CIDR 列表 + /24 脏邻居 + 全 ASN 滥用密度
 # ---------------------------------------------------------------------------
@@ -888,12 +919,12 @@ def _check_single_dnsbl(entry: dict[str, Any], ip: str, ip_ver: int) -> dict[str
         return {"id": entry["id"], "name": entry["name"], "kind": entry["kind"], "status": "skip", "listed": False}
     qname = f"{_reverse_ipv4(ip)}.{entry['zone']}"
     doh_urls = [
-        f"https://dns.google/resolve?name={qname}&type=A",
-        f"https://cloudflare-dns.com/dns-query?name={qname}&type=A",
+        (f"https://dns.google/resolve?name={qname}&type=A", 1.8),
+        (f"https://cloudflare-dns.com/dns-query?name={qname}&type=A", 1.4),
     ]
-    for url in doh_urls:
+    for url, t_lim in doh_urls:
         try:
-            d = _http_json(url, timeout=3.2, headers={"Accept": "application/dns-json"})
+            d = _http_json(url, timeout=t_lim, headers={"Accept": "application/dns-json"})
             st = d.get("Status")
             if st == 3:
                 return {"id": entry["id"], "name": entry["name"], "kind": entry["kind"], "status": "ok", "listed": False, "codes": [], "proxy": False}
@@ -1068,32 +1099,45 @@ def fetch_asn_profile(asn: int, prefix: str | None = None) -> dict[str, Any]:
 
     profile: dict[str, Any] = {"asn": asn}
 
-    def _ripe(call: str, params: dict[str, str]) -> Any:
+    def _ripe(call: str, params: dict[str, str], t_sec: float = 1.9) -> Any:
         q = urllib.parse.urlencode({**params, "sourceapp": "whoprobe"})
-        return _http_json(f"https://stat.ripe.net/data/{call}/data.json?{q}", timeout=4.2)
+        return _http_json(f"https://stat.ripe.net/data/{call}/data.json?{q}", timeout=t_sec)
 
-    tasks: dict[str, Any] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        tasks["overview"] = pool.submit(_ripe, "as-overview", {"resource": f"AS{asn}"})
-        tasks["pdb"] = pool.submit(_http_json, f"https://www.peeringdb.com/api/net?asn={asn}", 4.2)
-        tasks["rdap"] = pool.submit(
+    tasks: dict[str, concurrent.futures.Future[Any]] = {
+        "overview": _INTEL_POOL.submit(_ripe, "as-overview", {"resource": f"AS{asn}"}, 1.8),
+        "pdb": _INTEL_POOL.submit(_http_json, f"https://www.peeringdb.com/api/net?asn={asn}", 1.8),
+        "rdap": _INTEL_POOL.submit(
             _http_json,
             f"https://rdap.org/autnum/{asn}",
-            4.2,
+            1.9,
             {"Accept": "application/rdap+json"},
-        )
-        tasks["guide"] = pool.submit(_http_json, f"https://ip.guide/AS{asn}", 4.5)
-        if prefix:
-            tasks["rpki"] = pool.submit(_ripe, "rpki-validation", {"resource": f"AS{asn}", "prefix": prefix})
+        ),
+        "guide": _INTEL_POOL.submit(_http_json, f"https://ip.guide/AS{asn}", 1.9),
+        "ann": _INTEL_POOL.submit(_ripe, "announced-prefixes", {"resource": f"AS{asn}"}, 1.9),
+    }
+    if prefix:
+        tasks["rpki"] = _INTEL_POOL.submit(_ripe, "rpki-validation", {"resource": f"AS{asn}", "prefix": prefix}, 1.7)
 
-    try:
-        ov = tasks["overview"].result().get("data") or {}
+    # 硬挂钟上限 1.8 秒，任何超时慢源直接跳过，绝不阻塞 HTTP 响应
+    concurrent.futures.wait(list(tasks.values()), timeout=1.8)
+
+    def _done_val(key: str) -> Any | None:
+        fut = tasks.get(key)
+        if fut and fut.done():
+            try:
+                return fut.result()
+            except Exception:
+                return None
+        return None
+
+    ov_raw = _done_val("overview")
+    if isinstance(ov_raw, dict):
+        ov = ov_raw.get("data") or {}
         profile["holder"] = ov.get("holder")
-    except Exception:
-        pass
 
-    try:
-        pdb_data = (tasks["pdb"].result().get("data") or [])
+    pdb_raw = _done_val("pdb")
+    if isinstance(pdb_raw, dict):
+        pdb_data = pdb_raw.get("data") or []
         if pdb_data and isinstance(pdb_data[0], dict):
             n0 = pdb_data[0]
             profile["pdb"] = {
@@ -1104,23 +1148,19 @@ def fetch_asn_profile(asn: int, prefix: str | None = None) -> dict[str, Any]:
                 "traffic": n0.get("info_traffic"),
                 "scope": n0.get("info_scope"),
             }
-    except Exception:
-        pass
 
-    try:
-        rdap_as = tasks["rdap"].result()
+    rdap_as = _done_val("rdap")
+    if isinstance(rdap_as, dict):
         evs = {e.get("eventAction"): e.get("eventDate") for e in (rdap_as.get("events") or []) if isinstance(e, dict)}
         profile["regDate"] = evs.get("registration")
         profile["asCountry"] = _cc(rdap_as.get("country"))
         profile["rdapName"] = rdap_as.get("name")
         port43 = str(rdap_as.get("port43") or "")
         profile["asRir"] = re.sub(r"^whois\.|\.(net|org)$", "", port43, flags=re.I).upper() or None
-    except Exception:
-        pass
 
     routes: list[str] = []
-    try:
-        gd = tasks["guide"].result()
+    gd = _done_val("guide")
+    if isinstance(gd, dict):
         v4_routes = (gd.get("routes") or {}).get("v4")
         if isinstance(v4_routes, list):
             routes = [str(r) for r in v4_routes if isinstance(r, str)]
@@ -1128,19 +1168,16 @@ def fetch_asn_profile(asn: int, prefix: str | None = None) -> dict[str, Any]:
             profile["asCountry"] = _cc(gd.get("country"))
         if not profile.get("asRir"):
             profile["asRir"] = str(gd.get("rir") or "").upper() or None
-    except Exception:
-        pass
 
     if not routes:
-        try:
-            ann = _ripe("announced-prefixes", {"resource": f"AS{asn}"}).get("data") or {}
+        ann_raw = _done_val("ann")
+        if isinstance(ann_raw, dict):
+            ann = ann_raw.get("data") or {}
             routes = [
                 str(item.get("prefix"))
                 for item in (ann.get("prefixes") or [])
                 if isinstance(item, dict) and isinstance(item.get("prefix"), str) and ":" not in item["prefix"]
             ]
-        except Exception:
-            pass
 
     if routes:
         merged_routes, v4_count = _merge_route_cidrs(routes)
@@ -1148,12 +1185,19 @@ def fetch_asn_profile(asn: int, prefix: str | None = None) -> dict[str, Any]:
         profile["v4Ips"] = v4_count
         profile["_mergedRoutes"] = merged_routes
 
-    if "rpki" in tasks:
-        try:
-            rp = tasks["rpki"].result().get("data") or {}
-            profile["rpki"] = rp.get("status")
-        except Exception:
-            pass
+    rp_raw = _done_val("rpki")
+    if isinstance(rp_raw, dict):
+        rp = rp_raw.get("data") or {}
+        profile["rpki"] = rp.get("status")
+
+    # 统一输出前端可直接消费的标准字段别名
+    pdb_obj = profile.get("pdb") if isinstance(profile.get("pdb"), dict) else {}
+    profile["name"] = profile.get("holder") or pdb_obj.get("name") or profile.get("rdapName")
+    profile["peeringdbType"] = pdb_obj.get("type")
+    profile["trafficRatio"] = pdb_obj.get("ratio")
+    profile["v4Size"] = profile.get("v4Ips")
+    profile["prefixesV4Count"] = profile.get("v4Prefixes")
+    profile["asnRegDate"] = profile.get("regDate")
 
     ASN_CACHE.set(cache_key, profile)
     return profile
@@ -1378,38 +1422,54 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
 
     t_start = time.monotonic()
 
-    # Stage 1: 并发拉取 8 大情报源 + RDAP + Shodan + StopForumSpam + OTX + Tor Onionoo + 12 项 DNSBL + 15 项 CIDR
+    # Stage 1: 共享线程池并发拉取 8 大情报源 + RDAP + Shodan + SFS + OTX + Onionoo + 12 项 DNSBL + 15 项 CIDR + :443 握手
     source_fns = [
         _src_ipapiis, _src_ipquery, _src_iplocate, _src_blackbox,
         _src_ipapi, _src_ipinfo, _src_ipleak, _src_freeipapi,
     ]
     sources: list[dict[str, Any]] = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
-        f_srcs = [pool.submit(fn, norm_ip) for fn in source_fns]
-        f_rdap = pool.submit(_fetch_rdap_ip, norm_ip)
-        f_shodan = pool.submit(_fetch_shodan, norm_ip)
-        f_sfs = pool.submit(_fetch_sfs, norm_ip)
-        f_otx = pool.submit(_fetch_otx, norm_ip, ip_ver)
-        f_tor = pool.submit(_fetch_onionoo, norm_ip, ip_ver)
-        f_dnsbls = [pool.submit(_check_single_dnsbl, entry, norm_ip, ip_ver) for entry in DNSBLS]
-        f_cidrs = [pool.submit(load_cidr_list, entry, 4.8) for entry in CIDR_LISTS] if ip_ver == 4 else []
+    f_srcs = [_INTEL_POOL.submit(fn, norm_ip) for fn in source_fns]
+    f_rdap = _INTEL_POOL.submit(_fetch_rdap_ip, norm_ip)
+    f_shodan = _INTEL_POOL.submit(_fetch_shodan, norm_ip)
+    f_sfs = _INTEL_POOL.submit(_fetch_sfs, norm_ip)
+    f_otx = _INTEL_POOL.submit(_fetch_otx, norm_ip, ip_ver)
+    f_tor = _INTEL_POOL.submit(_fetch_onionoo, norm_ip, ip_ver)
+    f_dnsbls = [_INTEL_POOL.submit(_check_single_dnsbl, entry, norm_ip, ip_ver) for entry in DNSBLS]
+    f_cidrs = [_INTEL_POOL.submit(load_cidr_list, entry, 2.4) for entry in CIDR_LISTS] if ip_ver == 4 else []
+    f_raw443 = _INTEL_POOL.submit(_probe_raw_tls_443, norm_ip) if enable_active_443 else None
 
-        for fut in f_srcs:
+    all_s1 = [*f_srcs, f_rdap, f_shodan, f_sfs, f_otx, f_tor, *f_dnsbls, *f_cidrs]
+    if f_raw443 is not None:
+        all_s1.append(f_raw443)
+
+    # 硬挂钟预算 2.6 秒：慢源后台自然收尾，绝不调用 shutdown(wait=True) 卡死请求
+    concurrent.futures.wait(all_s1, timeout=2.6)
+
+    def _safe_res(fut: concurrent.futures.Future[Any] | None, default: Any = None) -> Any:
+        if fut is not None and fut.done():
             try:
-                res = fut.result()
-                if isinstance(res, dict):
-                    sources.append(res)
+                return fut.result()
             except Exception:
-                pass
+                return default
+        return default
 
-        rdap_ip = f_rdap.result()
-        shodan = f_shodan.result()
-        sfs = f_sfs.result()
-        otx = f_otx.result()
-        onionoo = f_tor.result()
-        dnsbl_results = [f.result() for f in f_dnsbls]
-        loaded_cidrs = [f.result() for f in f_cidrs]
+    for fut in f_srcs:
+        res = _safe_res(fut)
+        if isinstance(res, dict):
+            sources.append(res)
+
+    rdap_ip = _safe_res(f_rdap)
+    shodan = _safe_res(f_shodan)
+    sfs = _safe_res(f_sfs)
+    otx = _safe_res(f_otx)
+    onionoo = _safe_res(f_tor)
+    dnsbl_results = [
+        _safe_res(f, {"id": entry["id"], "name": entry["name"], "kind": entry["kind"], "status": "timeout", "listed": False})
+        for entry, f in zip(DNSBLS, f_dnsbls)
+    ]
+    loaded_cidrs = [_safe_res(f) for f in f_cidrs]
+    raw_tls443 = _safe_res(f_raw443, {"port443Open": False, "tlsActive": False, "certInfo": {}, "rttMs": None})
 
     # 提取去重定位共识（按底层数据源家族去重）
     family_best: dict[str, dict[str, Any]] = {}
@@ -1419,7 +1479,14 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
         fam = GEO_FAMILY.get(s["id"], s["id"])
         w = float(SOURCE_WEIGHTS.get(s["id"], {}).get("geo", 1.0))
         if fam not in family_best or w > family_best[fam]["w"]:
-            family_best[fam] = {"country": s["country"], "city": s.get("city"), "tz": s.get("tz"), "w": w, "by": s["name"]}
+            family_best[fam] = {
+                "country": s["country"],
+                "region": s.get("region"),
+                "city": s.get("city"),
+                "tz": s.get("tz"),
+                "w": w,
+                "by": s["name"],
+            }
 
     country_weights: dict[str, float] = {}
     country_by: dict[str, list[str]] = {}
@@ -1432,6 +1499,9 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
     ranked_countries = sorted(country_weights.items(), key=lambda x: x[1], reverse=True)
     consensus_country = ranked_countries[0][0] if ranked_countries else None
     country_support = round(ranked_countries[0][1] / total_geo_w, 2) if ranked_countries else 1.0
+    consensus_city = next((it["city"] for it in family_best.values() if it["country"] == consensus_country and it.get("city")), None)
+    consensus_region = next((it["region"] for it in family_best.values() if it["country"] == consensus_country and it.get("region")), None)
+    consensus_tz = next((it["tz"] for it in family_best.values() if it["country"] == consensus_country and it.get("tz")), None) or next((s.get("tz") for s in sources if s.get("tz")), None)
 
     # 主 ASN / 前缀 / PTR 汇总
     asn_candidates = [s["asn"] for s in sources if isinstance(s.get("asn"), int)]
@@ -1440,12 +1510,9 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
     hostname = next((s.get("hostname") for s in sources if s.get("hostname")), None) or ((shodan.get("hostnames") or [None])[0] if shodan else None)
     ptr_hint = classify_ptr_hostname(hostname)
 
-    # Stage 2: 并行拉取 BGP ASN 档案 + 主动 :443 TLS/Reality 反向证书验真
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool2:
-        f_asn = pool2.submit(fetch_asn_profile, primary_asn, primary_prefix) if primary_asn else None
-        f_tls443 = pool2.submit(inspect_exit_tls_443, norm_ip, primary_asn) if enable_active_443 else None
-        asn_prof = f_asn.result() if f_asn else {}
-        tls443 = f_tls443.result() if f_tls443 else {"probed": False, "verdict": "skipped"}
+    # Stage 2: 拉取 BGP ASN 档案（硬上限 1.8s）+ 基于已采集 :443 证书执行毫秒级 Reality 归属核验
+    asn_prof = fetch_asn_profile(primary_asn, primary_prefix) if primary_asn else {}
+    tls443 = _finalize_tls_443(norm_ip, raw_tls443, primary_asn) if enable_active_443 else {"probed": False, "verdict": "skipped"}
 
     # Stage 3: CIDR 命中、同 /24 脏邻居与全 ASN 滥用密度计算
     cidr_hits: list[dict[str, Any]] = []
@@ -1740,12 +1807,16 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
         },
         "consensus": {
             "country": consensus_country,
+            "region": consensus_region,
+            "city": consensus_city,
+            "timezone": consensus_tz,
             "countrySupport": country_support,
             "countries": [{"cc": c, "by": country_by[c]} for c, _ in ranked_countries],
             "regCountry": reg_country,
             "isNative": is_native,
             "aiBlockedRegion": consensus_country in AI_BLOCKED_COUNTRIES if consensus_country else False,
             "asn": primary_asn,
+            "org": orgs[0] if orgs else asn_prof.get("name"),
             "prefix": primary_prefix,
             "hostname": hostname,
             "ptrType": ptr_hint.get("type"),

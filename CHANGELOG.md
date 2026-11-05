@@ -1,5 +1,22 @@
 # Changelog
 
+## [v6.0.1] - 2026-11-05
+
+### Fixed & Improved
+- **高延迟住宅代理链路（RTT ≥ 400ms）与超大型 ISP 冷启动极速收敛**：
+  - `probe.py`：`lookup_ip_geo` 改为常驻线程池并发竞速（`ip-api` + `ipwho.is` + 并行 `PTR` 反向解析），硬上限压缩至 `≤ 2.3s`。
+  - `egress_intel.py`：移除 `with ThreadPoolExecutor` 阻塞式 `shutdown(wait=True)`，将主动 `:443` 证书抓取并入 Stage 1 与 8 大情报源并行执行，并为 Stage 1（`2.6s`）与 BGP ASN 档案查询（`1.8s`，`ip.guide` 与 RIPE `announced-prefixes` 并行竞速）设立严格硬挂钟预算，使冷启动大型宽带 ASN 全量信誉查询从 `9–15s` 降至 `< 3s`。
+  - 前端 `runAll()` 将 `/api/who/me`、`/api/who/intel` 与多目标分流探针改为全并行渐进式渲染，消除慢代理串行超时累加。
+- **多源出口元数据自动回填（消除单点故障）**：当主接口受代理抖动或策略限制时，自动使用 8 源情报共识（`/api/who/intel`）或客户端国际 GeoIP / Cloudflare Trace 备援回填出口 IP、国家、时区、经纬度与 ASN，杜绝顶栏 KPI 与六大场景卡片卡在「读取中 / 评估中」。
+- **Fail-Closed 风控不确定性计分修正**：修复核心网络核验项因超时处于 `info` 未核验态时按 `0` 扣分误判 `100 A+` 的缺陷；未完成核验项现计入不确定性惩罚并封顶等级，明确提示可单项重测。
+- **无被动 SYN 抓包时的物理光缆 RTT 测距兜底**：当连接复用、IPv6 或跨层代理未捕获被动 TCP SYN 握手耗时时，自动基于出口与服务端粗粒度大圆距离计算海底/陆地光缆物理直连基准（及全球光速上限），精准抓捕高 RTT 跨洲住宅代理中转。
+- **指纹浏览器高阶矛盾与清存储缓存复活识别**：
+  - 新增 Chromium 高熵 `Client Hints` 时空矛盾检测：识别自称现代 Chrome（`≥ 129`）或搭载 Apple Silicon（`Apple M1–M5`，出厂最低 `macOS 11+`）却将 `platformVersion` 伪装/回退为 `macOS 10.15` 的指纹浏览器配置漏洞。
+  - 在「伪装环境自检」视角下，当检测到用户清空 `LocalStorage` 试图伪装新访客但被 `HTTP ETag` 缓存或 `IndexedDB` 认出回访时，自动纳入伪装破绽计分并置顶告警。
+  - 修正公开威胁 CIDR 命中分类统计（覆盖 `attack` / `spam` / `tor` 网段库）与 `asnProfile` PeeringDB 展示字段映射。
+
+---
+
 ## [v6.0.0] - 2026-11-05
 
 ### Added

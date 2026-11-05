@@ -851,28 +851,133 @@
   /* ---------- 128 Genuine Sniffer Implementations ---------- */
 
   // 1. Server-side L3/L4/L7 packet & HTTP probe (26 items: 18 net + 8 hdr)
+  const isThreatCidrHit = h => ["attack", "spam", "tor", "threat"].includes(h?.kind) || (h?.pts || 0) > 0;
+
+  function expectedDirectRttMs() {
+    if (R.ipLat == null || R.ipLon == null || !Array.isArray(R.srvCoords) || R.srvCoords.length !== 2) return null;
+    const km = haversineKm(R.ipLat, R.ipLon, R.srvCoords[0], R.srvCoords[1]);
+    if (!Number.isFinite(km)) return null;
+    // 海底/陆地光缆折算系数 (~1.45x 大圆光速往返 + 22ms 接入网与路由开销)
+    return { km: Math.round(km), expectedMs: Math.round(km * 0.0145 + 22) };
+  }
+
+  function backfillExitMeta(meta = {}) {
+    if (!meta) return;
+    let changed = false;
+    if (!R.ip && meta.ip) {
+      R.ip = String(meta.ip).trim();
+      const ipVerStr = R.ip.includes(":") ? "IPv6" : "IPv4";
+      setProbe("ip", `${R.ip} (${ipVerStr})`);
+      changed = true;
+    }
+    if (!R.ipCC && meta.cc) {
+      R.ipCC = String(meta.cc).trim().toUpperCase();
+      changed = true;
+    }
+    if (!R.ipCity && meta.city) {
+      R.ipCity = meta.city;
+      changed = true;
+    }
+    if (R.ipCC && (!R.srv || !R.srv.geo?.countryCode)) {
+      const locParts = [`${flagEmoji(R.ipCC)} ${countryName(R.ipCC)}`, meta.region, meta.city || R.ipCity].filter(Boolean);
+      setProbe("geo", `${locParts.join(" · ")}（${meta.source || "多源回填"}）`);
+    }
+    if (R.ipLat == null && meta.lat != null && meta.lon != null) {
+      R.ipLat = +meta.lat;
+      R.ipLon = +meta.lon;
+      setProbe("coords", `${(+meta.lat).toFixed(4)}, ${(+meta.lon).toFixed(4)}`);
+      changed = true;
+    }
+    if (!R.asn && meta.asn) {
+      const a = String(meta.asn).trim();
+      R.asn = a ? (a.toUpperCase().startsWith("AS") ? a.toUpperCase() : `AS${a}`) : "";
+      changed = true;
+    }
+    if (!R.org && meta.org) {
+      R.org = String(meta.org).trim();
+      changed = true;
+    }
+    if ((R.asn || R.org) && (!R.srv || !(R.srv.geo?.isp || R.srv.geo?.org))) {
+      setProbe("isp", [R.asn, R.org].filter(Boolean).join(" · "));
+    }
+    if (!R.ipTz && meta.timezone) {
+      const off = tzOffsetMin(meta.timezone);
+      R.ipTz = meta.timezone;
+      R.ipTzOff = off;
+      setProbe("tzip", `${meta.timezone} (UTC${fmtUtcOffset(off)})`);
+      changed = true;
+    }
+    if (!R.netKind && (R.ip || R.asn || R.org)) {
+      const isRelay = isAppleRelay(R.ip || "");
+      const isDc = !isRelay && (meta.hosting === true || isDataCenterIp({ asn: R.asn, org: R.org, isp: R.org }));
+      const isMob = !!meta.mobile;
+      R.netKind = isRelay ? "relay" : isDc ? "dc" : isMob ? "mobile" : "isp";
+      setProbe("nettype",
+        isRelay ? "Apple iCloud 专用代理转发"
+          : isDc ? "数据中心 / 云服务器机房线路 (IDC/VPS)"
+          : isMob ? "蜂窝移动数据网络 (4G/5G)"
+          : "家庭宽带 / 商业原生 ISP 线路",
+        { tone: isDc ? "bad" : "ok" }
+      );
+      changed = true;
+    }
+    if (changed && R.ip) {
+      const kpiIp = $("#kpiExitIp");
+      if (kpiIp) kpiIp.textContent = R.ip;
+      const kpiGeo = $("#kpiExitGeo");
+      if (kpiGeo) {
+        kpiGeo.textContent = [R.ipCC ? `${flagEmoji(R.ipCC)} ${countryName(R.ipCC)}` : "", R.ipCity, R.asn, R.org].filter(Boolean).join(" · ") || "已通过备用链路识别出口";
+      }
+      const ispBadge = $("#ispTypeBadge");
+      if (ispBadge && R.netKind) {
+        const isDc = R.netKind === "dc";
+        ispBadge.textContent = R.netKind === "relay" ? "iCloud 代理" : isDc ? "机房 / VPS" : R.netKind === "mobile" ? "蜂窝移动" : "原生家宽/ISP";
+        ispBadge.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium " + (
+          isDc ? "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
+            : "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
+        );
+      }
+      if (!R.exits) R.exits = {};
+      if (!R.exits.ex_self) {
+        const lbl = [countryName(R.ipCC), R.ipCity, R.org].filter(Boolean).join(" · ");
+        R.exits.ex_self = { ip: R.ip, cc: R.ipCC, label: lbl };
+        setProbe("ex_self", `${R.ipCC ? flagEmoji(R.ipCC) + " " : ""}${R.ip}${lbl ? " · " + lbl : ""}`);
+        setRouteRow("ex_self", `${R.ipCC ? flagEmoji(R.ipCC) + " " : ""}${R.ip}`, lbl, R.netKind === "dc" ? "warn" : "ok");
+      }
+    }
+  }
+
   async function probeServer() {
     const t0 = Date.now();
     let data = null;
     try {
-      data = await getJSON(`./api/who/me?t=${t0}`, 6500, "omit");
+      data = await getJSON(`./api/who/me?t=${t0}`, 11000, "omit");
+      if (!data) {
+        data = await getJSON(`./api/who/me?t=${Date.now()}&r=retry`, 7500, "omit");
+      }
       // If socket was freshly established and BPF sniffer buffer is 50ms behind, retry once cleanly
       if (data && (!data.packet || !data.packet.tcp)) {
         await new Promise(r => setTimeout(r, 160));
-        const retry = await getJSON(`./api/who/me?t=${Date.now()}&r=1`, 4500, "omit").catch(() => null);
+        const retry = await getJSON(`./api/who/me?t=${Date.now()}&r=1`, 5500, "omit").catch(() => null);
         if (retry && retry.packet && retry.packet.tcp) data = retry;
       }
     } catch (e) {}
     const t1 = Date.now();
 
     if (!data) {
-      ["ip", "geo", "coords", "isp", "nettype", "tzip", "ptr", "clock", "proto", "tcpfp", "ipquirk", "ja4t", "tunnel", "ja4", "ja3", "tlsext", "pqkex", "ech", "h2fp",
-       "h_ua", "h_lang", "h_chua", "h_plat", "h_arch", "h_enc", "h_sec", "h_dnt"].forEach(k => setNA(k, "服务端探针请求超时"));
+      const onlySrv = ["ptr", "clock", "proto", "tcpfp", "ipquirk", "ja4t", "tunnel", "ja4", "ja3", "tlsext", "pqkex", "ech", "h2fp",
+       "h_ua", "h_lang", "h_chua", "h_plat", "h_arch", "h_enc", "h_sec", "h_dnt"];
+      if (!R.ip) onlySrv.unshift("ip", "geo", "coords", "isp", "nettype", "tzip");
+      onlySrv.forEach(k => setNA(k, "服务端探针请求超时"));
       return;
     }
 
     R.srv = data;
+    if (Array.isArray(data.serverCoords) && data.serverCoords.length === 2) {
+      R.srvCoords = data.serverCoords;
+    }
     const g = data.geo || data.ipGeo || {};
+    if (g.city) R.ipCity = g.city;
     const pkt = data.packet || {};
     const tcp = pkt.tcp || null;
     const tls = pkt.tlsClientHello || pkt.tls || null;
@@ -1038,6 +1143,21 @@
       );
     }
     setRouteRow("ex_self", `${flagEmoji(cc)} ${ip}`, [countryName(cc), g.city, org].filter(Boolean).join(" · "), isDc ? "warn" : "ok");
+
+    // 若 probeLatency 先于慢链路 probeServer 返回，在此补齐服务端 TCP 握手耗时对比
+    const lateSrvRtt = tcp ? (tcp.minHandshakeRttMs ?? tcp.handshakeRttMs ?? null) : null;
+    if (lateSrvRtt != null) {
+      R.srvTcpRtt = Math.round(lateSrvRtt);
+      if (R.latDone && R.httpRtt != null) {
+        const diff = Math.round(R.httpRtt - R.srvTcpRtt);
+        const extraText = diff >= 45 ? ` · 浏览器多绕 +${diff} ms` : " · 往返吻合";
+        setProbe("tcprtt", `浏览器 ${R.httpRtt} ms vs 服务端握手 ${R.srvTcpRtt} ms${extraText}`, {
+          tone: diff >= 100 ? "bad" : diff >= 45 ? "warn" : "ok"
+        });
+        $("#kpiRttVal").textContent = `${R.httpRtt} ms / 握手 ${R.srvTcpRtt} ms`;
+        updateUdpRttProbe();
+      }
+    }
   }
 
   // 1b. Multi-Source Egress Intelligence, BGP/RDAP Lease, 12 DNSBLs, /24 Dirty Neighbours & Active :443 Reality Back-Probe (12 items: reality443 + 11 rep_*)
@@ -1046,6 +1166,10 @@
   function applyIntelToProbes(intel) {
     if (!intel || !intel.ok) {
       REP_PROBE_IDS.forEach(k => setNA(k, "出口多源情报暂不可达"));
+      const pill = $("#purityPill");
+      if (pill && pill.textContent.includes("--")) {
+        pill.textContent = "信誉超时";
+      }
       return;
     }
     const p = intel.purity || {};
@@ -1063,8 +1187,20 @@
     const nb = ci.neighbours || {};
     const prefixTag = intel.isSelfEgress === false ? `[查 ${intel.targetIp}] ` : "";
 
-    // Update KPI 3 purity pill if this is the visitor's own egress
+    // Update KPI 3 purity pill & backfill missing exit metadata if this is the visitor's own egress
     if (intel.isSelfEgress !== false) {
+      backfillExitMeta({
+        ip: intel.targetIp,
+        cc: c.country,
+        city: c.city,
+        region: c.region,
+        timezone: c.timezone,
+        asn: c.asn,
+        org: c.org || ap.name,
+        hosting: (v.hosting?.E || 0) >= 0.55 || inf.cls === "hosting" || !!ci.x4bDatacenter,
+        mobile: inf.cls === "mobile",
+        source: "8源情报共识"
+      });
       const pill = $("#purityPill");
       if (pill && p.score != null) {
         pill.textContent = `纯净度 ${p.score}·${p.grade}`;
@@ -1200,7 +1336,7 @@
     }
 
     // 11) rep_cidr: 15 CIDR Netsets & X4BNet DC/VPN
-    const threatHits = (ci.hits || []).filter(h => h.kind === "threat");
+    const threatHits = (ci.hits || []).filter(isThreatCidrHit);
     const cidrNames = Array.from(new Set([
       ...(ci.hits || []).map(h => h.name),
       ci.x4bDatacenter ? "X4BNet 机房段" : "",
@@ -1251,19 +1387,26 @@
   }
 
   async function probeIntel() {
-    const selfData = await getJSON(`./api/who/intel?t=${Date.now()}`, 9500, "omit").catch(() => null);
+    const pSelf = (async () => {
+      let d = await getJSON(`./api/who/intel?t=${Date.now()}`, 15000, "omit").catch(() => null);
+      if (!d) d = await getJSON(`./api/who/intel?t=${Date.now()}&r=1`, 10000, "omit").catch(() => null);
+      return d;
+    })();
+    const pExt = externalQueryIp
+      ? getJSON(`./api/who/intel?ip=${encodeURIComponent(externalQueryIp)}&t=${Date.now()}`, 15000, "omit").catch(() => null)
+      : Promise.resolve(null);
+
+    const [selfData, extData] = await Promise.all([pSelf, pExt]);
     if (selfData && selfData.ok) {
       R.intel = selfData;
     }
-    if (externalQueryIp) {
-      const extData = await getJSON(`./api/who/intel?ip=${encodeURIComponent(externalQueryIp)}&t=${Date.now()}`, 9500, "omit").catch(() => null);
-      if (extData && extData.ok && !extData.isSelfEgress) {
-        R.extIntel = extData;
-      } else {
-        R.extIntel = null;
-      }
+    if (extData && extData.ok && !extData.isSelfEgress) {
+      R.extIntel = extData;
     } else {
       R.extIntel = null;
+    }
+    if (R.intel && R.extIntel) {
+      applyIntelToProbes(R.intel);
     }
     applyIntelToProbes(R.extIntel || R.intel);
     syncExtIpBanner();
@@ -1319,8 +1462,13 @@
     for (let i = 0; i < 5; i++) {
       const u = new URL(`./api/who/ping?seq=s${i}&t=${Date.now()}`, location.href).href;
       const t0 = performance.now();
-      const ok = await fetch(u, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(3500) })
-        .then(async r => { if (!r.ok) return false; await r.text(); return true; }, () => false);
+      const ok = await fetch(u, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(4500) })
+        .then(async r => {
+          if (!r.ok) return false;
+          const j = await r.json().catch(() => null);
+          if (j && Array.isArray(j.serverCoords) && j.serverCoords.length === 2) R.srvCoords = j.serverCoords;
+          return true;
+        }, () => false);
       const wall = performance.now() - t0;
       if (!ok) continue;
       await new Promise(r => setTimeout(r, 5));
@@ -1399,7 +1547,18 @@
       });
       $("#kpiRttVal").textContent = `${R.httpRtt} ms / 握手 ${R.srvTcpRtt} ms`;
     } else if (R.httpRtt != null) {
-      setProbe("tcprtt", `浏览器往返 ${R.httpRtt} ms（连接复用未重测握手）`);
+      const geoBase = expectedDirectRttMs();
+      if (geoBase) {
+        const gDiff = Math.round(R.httpRtt - geoBase.expectedMs);
+        const gTone = (gDiff >= 145 && R.httpRtt >= 290) ? "bad" : (gDiff >= 95 && R.httpRtt >= 230) ? "warn" : "ok";
+        setProbe("tcprtt", `浏览器往返 ${R.httpRtt} ms vs 光缆物理基准 ~${geoBase.expectedMs} ms (${geoBase.km} km${gDiff >= 95 ? ` · 多绕 +${gDiff} ms` : ""})`, {
+          tone: gTone,
+          why: `5 次热连接采样最小值: ${samples.map(x => Math.round(x) + "ms").join(", ")}\n出口距服务端大圆距离: ${geoBase.km} km`
+        });
+      } else {
+        const absTone = R.httpRtt >= 360 ? "bad" : R.httpRtt >= 270 ? "warn" : "neutral";
+        setProbe("tcprtt", `浏览器往返 ${R.httpRtt} ms${R.httpRtt >= 270 ? "（高于洲际直连光缆物理上限）" : "（连接复用未重测握手）"}`, { tone: absTone });
+      }
       $("#kpiRttVal").textContent = `HTTP ${R.httpRtt} ms`;
     } else {
       setNA("tcprtt", "网络计时受限");
@@ -1455,10 +1614,22 @@
 
     // International GeoIP exit (api.ip.sb + fallback ipwho.is)
     const pIntl = (async () => {
-      let j = await getJSON("https://api.ip.sb/geoip", 5000).catch(() => null);
+      let j = await getJSON("https://api.ip.sb/geoip", 6500).catch(() => null);
       if (!j || !j.ip) {
-        const j2 = await getJSON("https://ipwho.is/", 5000).catch(() => null);
-        if (j2 && j2.ip) j = { ip: j2.ip, country_code: j2.country_code, city: j2.city, organization: j2.connection?.isp || j2.connection?.org };
+        const j2 = await getJSON("https://ipwho.is/", 6500).catch(() => null);
+        if (j2 && j2.ip) {
+          j = {
+            ip: j2.ip,
+            country_code: j2.country_code,
+            region: j2.region,
+            city: j2.city,
+            timezone: j2.timezone?.id || (typeof j2.timezone === "string" ? j2.timezone : ""),
+            latitude: j2.latitude,
+            longitude: j2.longitude,
+            asn: j2.connection?.asn,
+            organization: j2.connection?.isp || j2.connection?.org
+          };
+        }
       }
       if (!j?.ip) {
         setNA("ex_intl", "国际探针不可达");
@@ -1470,11 +1641,23 @@
       R.exits.ex_intl = { ip: j.ip, cc, label: sub };
       setProbe("ex_intl", `${flagEmoji(cc)} ${j.ip} · ${sub}`);
       setRouteRow("ex_intl", `${flagEmoji(cc)} ${j.ip}`, sub, "ok");
+      backfillExitMeta({
+        ip: j.ip,
+        cc,
+        city: j.city,
+        region: j.region,
+        timezone: j.timezone,
+        lat: j.latitude,
+        lon: j.longitude,
+        asn: j.asn,
+        org: j.organization || j.isp,
+        source: "国际客户端 GeoIP 备援"
+      });
     })();
 
     // ChatGPT, Claude, Cloudflare edge traces
     const runTraceProbe = async (key, url, name) => {
-      const raw = await getText(url, 5200).catch(() => "");
+      const raw = await getText(url, 6500).catch(() => "");
       const kv = parseCfTrace(raw);
       if (!kv.ip) {
         setNA(key, `${name} 边缘不可达或被拦截`);
@@ -1486,6 +1669,9 @@
       R.exits[key] = { ip: kv.ip, cc, colo: kv.colo, http: kv.http, kex: kv.kex, sni: kv.sni, warp: kv.warp, gateway: kv.gateway, label: sub };
       setProbe(key, `${flagEmoji(cc)} ${kv.ip} · ${sub}`);
       setRouteRow(key, `${flagEmoji(cc)} ${kv.ip}`, sub, "ok");
+      if (key === "ex_cf") {
+        backfillExitMeta({ ip: kv.ip, cc, source: "Cloudflare Trace 备援" });
+      }
       return kv;
     };
 
@@ -1982,6 +2168,11 @@
       else if (realWin && dev.osv && dev.osv !== realWin && +realWin < +dev.osv) {
         R.osFontMismatch = `UA 自称 Windows ${dev.osv}，但系统内置图标字库仅到 Windows ${realWin}`;
       }
+    }
+    // Safari / Firefox 不支持 UA-CH 且将 macOS UA 永久冻结在 10_15_7，标注为 11+ 以免误导；
+    // 而 Chromium (V8) 在 HTTPS 下必然返回真实 platformVersion (12–26+)，若仍停在 10.15 则保留原值交由 fpb 抓伪装！
+    if (dev.os === "macOS" && dev.osv === "10.15" && !hi.platformVersion && R.engine && R.engine !== "V8") {
+      dev.osv = "11+";
     }
     R.dev = dev;
     const osLabel = [dev.os, dev.osv].filter(Boolean).join(" ") + (dev.model ? ` (${dev.model})` : "");
@@ -3538,20 +3729,41 @@
       };
     }
 
-    // 9. rtt: 3D Physical Distance Triangulation (Browser HTTP vs Server TCP vs WebRTC STUN UDP)
-    if (!R.latDone || R.httpRtt == null || R.srvTcpRtt == null) {
+    // 9. rtt: 3D Physical Distance Triangulation (Browser HTTP vs Server TCP vs WebRTC STUN UDP + Geo Fiber Floor)
+    if (!R.latDone || R.httpRtt == null) {
       out.rtt = { level: "info", summary: R.coarseTimer ? "浏览器开启了时钟降精度保护，无法精确测量毫秒级往返差" : "等待浏览器热连接、服务端握手与 UDP 候选三维测距…" };
     } else {
-      const extra = R.httpRtt - R.srvTcpRtt;
       const udpBypass = R.stunRttMs != null && (R.httpRtt - R.stunRttMs) >= 75;
       if (udpBypass) {
         out.rtt = { level: "bad", summary: `UDP 旁路穿帮：HTTP TCP 往返需 ${R.httpRtt} ms，但 STUN UDP 仅 ${R.stunRttMs} ms，暴露本地宽带直连 UDP！` };
-      } else if (extra >= 95) {
-        out.rtt = { level: "bad", summary: `物理测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但浏览器实际往返高达 ${R.httpRtt} ms（多绕了 +${extra} ms 代理路程）` };
-      } else if (extra >= 42) {
-        out.rtt = { level: "warn", summary: `往返存在额外开销：浏览器往返 ${R.httpRtt} ms 比服务端握手 ${R.srvTcpRtt} ms 慢了 +${extra} ms，疑似经过代理中转` };
+      } else if (R.srvTcpRtt != null) {
+        const extra = R.httpRtt - R.srvTcpRtt;
+        if (extra >= 95) {
+          out.rtt = { level: "bad", summary: `物理测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但浏览器实际往返高达 ${R.httpRtt} ms（多绕了 +${extra} ms 代理路程）` };
+        } else if (extra >= 42) {
+          out.rtt = { level: "warn", summary: `往返存在额外开销：浏览器往返 ${R.httpRtt} ms 比服务端握手 ${R.srvTcpRtt} ms 慢了 +${extra} ms，疑似经过代理中转` };
+        } else {
+          out.rtt = { level: "ok", summary: `三维测距吻合：浏览器 HTTP (${R.httpRtt} ms) 与服务端 TCP 握手 (${R.srvTcpRtt} ms) 基本一致` };
+        }
       } else {
-        out.rtt = { level: "ok", summary: `三维测距吻合：浏览器 HTTP (${R.httpRtt} ms) 与服务端 TCP 握手 (${R.srvTcpRtt} ms) 基本一致` };
+        const geoBase = expectedDirectRttMs();
+        const geoExtra = geoBase ? Math.round(R.httpRtt - geoBase.expectedMs) : null;
+        if (geoBase && geoExtra >= 145 && R.httpRtt >= 290) {
+          out.rtt = { level: "bad", summary: `物理光速测距抓获中转：出口距服务端约 ${geoBase.km} km（直连光缆基准 ~${geoBase.expectedMs} ms），但实测热连接往返高达 ${R.httpRtt} ms（多绕 +${geoExtra} ms 代理路程）` };
+        } else if (geoBase && geoExtra >= 95 && R.httpRtt >= 230) {
+          out.rtt = { level: "warn", summary: `往返延迟高于地理直连基准：距服务端约 ${geoBase.km} km（直连基准 ~${geoBase.expectedMs} ms），实测 HTTP 往返 ${R.httpRtt} ms（偏慢 +${geoExtra} ms），疑似代理中转` };
+        } else if (!geoBase && R.httpRtt >= 360) {
+          out.rtt = { level: "bad", summary: `物理往返延迟异常：单次热连接 HTTP 往返高达 ${R.httpRtt} ms（远超全球海底光缆直连物理上限），实锤跨洲多跳代理中转` };
+        } else if (!geoBase && R.httpRtt >= 270) {
+          out.rtt = { level: "warn", summary: `热连接 HTTP 往返达 ${R.httpRtt} ms，显著高于常规洲际直连延迟，疑似经过代理中转` };
+        } else {
+          out.rtt = {
+            level: "ok",
+            summary: geoBase
+              ? `地理光缆测距吻合：浏览器 HTTP 往返 ${R.httpRtt} ms 符合 ${geoBase.km} km 物理直连范围（基准 ~${geoBase.expectedMs} ms）`
+              : `浏览器热连接 HTTP 往返 ${R.httpRtt} ms，未见跨洲中转延迟异常`
+          };
+        }
       }
     }
 
@@ -3571,7 +3783,7 @@
     const hostE = R.intel?.votes?.hosting?.E || 0;
     const anonE = Math.max(R.intel?.votes?.vpn?.E || 0, R.intel?.votes?.proxy?.E || 0, R.intel?.votes?.tor?.E || 0);
     const infCls = R.intel?.asnProfile?.inferred?.cls || "";
-    if (!R.srv) {
+    if (!R.srv && !R.intel && !R.netKind) {
       out.dc = { level: "info", summary: "正在融合 8 大情报源核查出口 ASN 与运营商类型…" };
     } else if (R.netKind === "dc" || hostE >= 0.55 || infCls === "hosting" || R.intel?.cidr?.x4bDatacenter) {
       const conf = hostE > 0 ? ` · 多源机房置信度 ${Math.round(hostE * 100)}%` : "";
@@ -3608,7 +3820,7 @@
       out.reputation = { level: "info", summary: "正在并发核验 12 家实时黑名单、15 份攻击网段库与同 /24 脏邻居…" };
     } else {
       const blCnt = R.intel.dnsbl?.listedCount || 0;
-      const cidrHits = (R.intel.cidr?.hits || []).filter(h => h.kind === "threat").length;
+      const cidrHits = (R.intel.cidr?.hits || []).filter(isThreatCidrHit).length;
       const dirty = R.intel.cidr?.neighbours?.dirtyCount || 0;
       const whole = (R.intel.cidr?.neighbours?.wholeBlockListed || []).length > 0;
       const pScore = R.intel.purity?.score ?? 90;
@@ -3736,6 +3948,20 @@
     if ((gpuOs === "Windows" && R.dev?.os && R.dev.os !== "Windows") || (gpuOs === "Apple" && R.dev?.os && !/^(macOS|iOS|iPadOS)$/.test(R.dev.os))) {
       fpbHits.push(`显卡驱动渲染栈属于 ${gpuOs}，却声称运行在 ${R.dev.os}`);
     }
+    if (R.dev?.os === "macOS" && R.engine === "V8") {
+      const pvRaw = String(R.hi?.platformVersion || "").trim();
+      const pvMaj = pvRaw ? parseInt(pvRaw, 10) : NaN;
+      const isAppleSil = /Apple M\d/i.test(R.gpuClean || R.gpuRaw || "");
+      if (window.isSecureContext && claimedChrome >= 95 && !navigator.userAgentData) {
+        fpbHits.push(`自称桌面 Chrome ${claimedChrome}，但缺失 Chromium 原生 navigator.userAgentData 接口`);
+      } else if (!Number.isNaN(pvMaj) && pvMaj > 0 && pvMaj <= 10 && isAppleSil) {
+        fpbHits.push(`硬件时空穿帮：显卡为 ${R.gpuClean}（出厂最低 macOS 11+），但高熵 Client Hints 却自报仅支持 Intel 的 macOS ${pvRaw}`);
+      } else if (!Number.isNaN(pvMaj) && pvMaj > 0 && pvMaj <= 10 && claimedChrome >= 129) {
+        fpbHits.push(`系统与内核版本矛盾：Chrome ${claimedChrome} 早已停止支持 macOS 10.15，但高熵平台版本仍伪装为 ${pvRaw}`);
+      } else if (!pvRaw && window.isSecureContext && claimedChrome >= 110 && isAppleSil) {
+        fpbHits.push(`高熵 Client Hints 异常：自称 Chrome ${claimedChrome} + ${R.gpuClean}，但 platformVersion 为空导致系统回退暴露为冻结的 macOS 10.15`);
+      }
+    }
     if (R.gpuSoft) fpbHits.push("使用 SwiftShader / Basic Render 软件虚拟显卡");
 
     out.fpb = fpbHits.length
@@ -3761,9 +3987,20 @@
       ? { level: "bad", summary: `检出自动化控制框架特征：${R.botHits.join(" · ")}` }
       : { level: "ok", summary: "未发现 WebDriver、CDP 注入钩子或无头浏览器特征" };
 
-    // 20. fp: Cross-Site Tracking Resistance (Counted in Privacy Mode)
+    // 20. fp: Cross-Site Tracking Resistance & Partial Storage Wipe / ETag Resurrection
     const protectedFp = ["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind);
-    if (protectedFp) {
+    const lsCleared = !R.traceSurvived || !R.traceSurvived.includes("LocalStorage");
+    const cacheResurrected = lsCleared && (!!R.etag?.seen || (R.traceSurvived || []).length > 0);
+    R.cacheResurrected = cacheResurrected;
+
+    if (cacheResurrected) {
+      out.fp = {
+        level: "bad",
+        summary: R.etag?.seen
+          ? `防关联隔离穿帮：已清空本地存储试图伪装新访客，但浏览器 HTTP ETag 缓存 (${R.etag.id.slice(0, 8)}) 仍直接认出老身份！`
+          : `防关联残留复活：LocalStorage 虽已清除，但 ${R.traceSurvived.join(" / ")} 仍保留旧标记 (${R.traceTag})！`
+      };
+    } else if (protectedFp) {
       out.fp = { level: "ok", summary: `已受 ${R.shieldLabel} 保护，跨站静态指纹已被动态打散` };
     } else if (R.etag?.seen || (R.traceSurvived || []).length > 1) {
       out.fp = { level: "bad", summary: `无防指纹保护且已被缓存 ETag / 多重存储跨会话锁定 (硬件码 ${R.hwId})` };
@@ -3803,12 +4040,13 @@
     if (currentScene === "privacy") {
       return ["webrtc", "dns", "fp", "fpb", "tamper", "bot"].includes(id);
     }
+    if (id === "fp" && R.cacheResurrected) return true;
     return def[2].includes("disguise");
   }
 
   function renderChecksAndScore(recordHistory = false) {
     const checks = evaluateAllChecks();
-    let badCnt = 0, warnCnt = 0, okCnt = 0, penalty = 0;
+    let badCnt = 0, warnCnt = 0, okCnt = 0, unverifiedCnt = 0, penalty = 0;
 
     const styleMap = {
       ok: {
@@ -3842,6 +4080,7 @@
     };
 
     const RETESTABLE = new Set(["tz", "lang", "syslang", "dns", "split", "conn", "synspoof", "reality", "rtt", "webrtc", "dc", "lease", "reputation", "subpixel", "hwvirt"]);
+    const TIMEOUT_SENSITIVE = new Set(["tz", "lang", "split", "reality", "rtt", "dc", "lease", "reputation"]);
 
     for (const [id] of [...CORE_CHECKS, ...PROTO_CHECKS]) {
       const row = CHECK_EL[id];
@@ -3854,6 +4093,14 @@
         if (res.level === "bad") { badCnt++; penalty += (CHECK_WEIGHTS[id] || 6) * 1.85; }
         else if (res.level === "warn") { warnCnt++; penalty += (CHECK_WEIGHTS[id] || 5) * 0.95; }
         else if (res.level === "ok") { okCnt++; }
+        else if (
+          TIMEOUT_SENSITIVE.has(id) &&
+          !(id === "dc" && R.netKind === "relay") &&
+          !(id === "reality" && R.intel && !R.intel.tls443?.probed) &&
+          !(id === "rtt" && R.coarseTimer)
+        ) {
+          unverifiedCnt++;
+        }
       }
 
       // Segment bar update (keep flex-1 for 20-segment flex bar)
@@ -3903,13 +4150,28 @@
       }
     }
 
+    // Fail-closed uncertainty penalty: 超时未完成核验的核心网络项绝不能当作 0 扣分白送 A+！
+    if (R.finished && unverifiedCnt > 0) {
+      penalty += unverifiedCnt * 5.5 + (!R.ipCC ? 14 : 0);
+    }
+
     const score = Math.max(5, Math.min(100, Math.round(100 - penalty)));
-    const grade = score >= 92 && badCnt === 0 ? "A+" : score >= 85 && badCnt === 0 ? "A" : score >= 75 ? "B" : score >= 60 ? "C" : score >= 42 ? "D" : "F";
+    let grade = score >= 92 && badCnt === 0 ? "A+" : score >= 85 && badCnt === 0 ? "A" : score >= 75 ? "B" : score >= 60 ? "C" : score >= 42 ? "D" : "F";
+    if (R.finished && unverifiedCnt > 0) {
+      if (!R.ipCC || unverifiedCnt >= 5) {
+        if (grade === "A+" || grade === "A" || grade === "B") grade = "C";
+      } else if (unverifiedCnt >= 2) {
+        if (grade === "A+" || grade === "A") grade = "B";
+      } else if (grade === "A+") {
+        grade = "A";
+      }
+    }
     const totalIssues = badCnt + warnCnt;
 
     R.score = score;
     R.grade = grade;
     R.totalIssues = totalIssues;
+    R.unverifiedCnt = unverifiedCnt;
 
     $("#scoreNum").textContent = String(score);
     const gBadge = $("#gradeBadge");
@@ -3921,7 +4183,9 @@
           : "bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-400"
       );
     }
-    $("#scoreSub").textContent = totalIssues === 0
+    $("#scoreSub").textContent = totalIssues === 0 && R.finished && unverifiedCnt > 0
+      ? `有 ${unverifiedCnt} 项网络情报探针超时未完成核验，已按风控不确定性降级评分`
+      : totalIssues === 0
       ? "当前网络信誉、底层协议栈与系统指纹高度自洽"
       : badCnt > 0
       ? `检出 ${badCnt} 项高危穿帮与 ${warnCnt} 项可疑信号，易触发风控验证`
@@ -3930,7 +4194,7 @@
     $("#issueCount").textContent = String(totalIssues);
     $("#issueCount").className = "text-3xl font-bold tracking-tight font-mono tabular-nums " + (
       badCnt > 0 ? "text-red-600 dark:text-red-400"
-        : warnCnt > 0 ? "text-amber-600 dark:text-amber-400"
+        : (warnCnt > 0 || (R.finished && unverifiedCnt > 0)) ? "text-amber-600 dark:text-amber-400"
         : "text-teal-600 dark:text-teal-400"
     );
     $("#cntBad").textContent = String(badCnt);
@@ -3946,6 +4210,8 @@
 
     $("#topGiveaway").textContent = rankedIssues.length
       ? `头号暴露项：${rankedIssues[0].title}`
+      : (R.finished && unverifiedCnt > 0)
+      ? `已通过 ${okCnt} 项 · ${unverifiedCnt} 项网络探针超时未核验（可点对应行重测）`
       : `${CORE_CHECKS.filter(c => isCheckCounted(c[0])).length} 项计分风控核验全部通过`;
 
     const pBox = $("#priorityBox"), pList = $("#priorityList");
@@ -4021,7 +4287,7 @@
     const isLeased = !!(intel?.asnProfile?.lease?.leased || intel?.asnProfile?.lease?.possible);
     const realityHit = !!intel?.tls443?.realitySuspect;
     const blCnt = intel?.dnsbl?.listedCount || 0;
-    const cidrHits = (intel?.cidr?.hits || []).filter(h => h.kind === "threat").length;
+    const cidrHits = (intel?.cidr?.hits || []).filter(isThreatCidrHit).length;
     const dirty = intel?.cidr?.neighbours?.dirtyCount || 0;
     const wholeBlock = (intel?.cidr?.neighbours?.wholeBlockListed || []).length > 0;
     const asnAbuse = intel?.asnProfile?.abuseDensity?.ratio || 0;
@@ -4101,7 +4367,7 @@
   }
 
   function renderScenarios() {
-    if (!R.srv && !R.intel && !R.extIntel) return;
+    if (!R.srv && !R.intel && !R.extIntel && !R.ipCC && !R.finished) return;
     const sc = computeScenarios();
     R.scenarios = sc;
     let passCnt = 0;
@@ -4187,8 +4453,8 @@
       ? `${flagEmoji(origin.cc)} ${countryName(origin.cc)}用户`
       : "未知来源地区";
 
-    const exitCity = R.srv?.geo?.city || "";
-    const exitText = R.ipCC ? `${flagEmoji(R.ipCC)} ${[exitCity, countryName(R.ipCC)].filter(Boolean).join(", ")}（按 IP 估）` : "读取中…";
+    const exitCity = R.srv?.geo?.city || R.ipCity || R.intel?.consensus?.city || "";
+    const exitText = R.ipCC ? `${flagEmoji(R.ipCC)} ${[exitCity, countryName(R.ipCC)].filter(Boolean).join(", ")}（按 IP 估）` : (R.finished ? "出口查询超时" : "读取中…");
 
     // Snapshot 4-Grid
     $("#snapOrigin").textContent = originText;
@@ -4230,16 +4496,28 @@
         sub = checks.reputation.summary;
       } else if (checks.fpb?.level === "bad") {
         alertTone = "bad";
-        head = "最要命的一条：跨线程或内核语法拆穿了伪装环境";
+        head = "最要命的一条：硬件与内核特征拆穿了指纹浏览器伪装";
         sub = checks.fpb.summary;
+      } else if (R.cacheResurrected) {
+        alertTone = "bad";
+        head = "最要命的一条：你清掉了本地记录，网站还是靠浏览器缓存认出了你";
+        sub = checks.fp?.summary || "已清空本地存储试图伪装新访客，但 HTTP ETag 缓存或残余存储仍暴露回访身份。";
       } else if (checks.tz?.level === "bad") {
         alertTone = "bad";
         head = "一眼识破的破绽：出口 IP 在海外，电脑时钟却还在原时区";
         sub = checks.tz.summary;
+      } else if (checks.rtt?.level === "bad") {
+        alertTone = "bad";
+        head = "物理测距露馅：往返延迟远超直连光缆上限，暴露多跳代理中转";
+        sub = checks.rtt.summary;
       } else if (checks.tamper?.level === "bad" || checks.tamper?.level === "warn") {
         alertTone = checks.tamper.level;
         head = "浏览器环境存在插件钩子或请求头不一致";
         sub = checks.tamper.summary;
+      } else if (R.finished && (R.unverifiedCnt || 0) > 0) {
+        alertTone = "warn";
+        head = `部分网络情报探针响应超时（${R.unverifiedCnt} 项未核验）`;
+        sub = "当前代理链路延迟较高或阻断了部分探测接口，可点击下方对应行的「重测」按钮单独补测。";
       }
 
       wowEl.className = "rounded-lg border p-3.5 text-xs leading-relaxed " + (
@@ -4706,7 +4984,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "6.0.0",
+        version: "6.0.1",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,
@@ -4777,17 +5055,40 @@
     renderPortrait();
     renderTargetSimulator();
 
-    // Phase 3: Network L3-L7 Packet Probe + Parallel Multi-Source Intel & Hardware/Browser/Exit Probes
-    await probeServer();
+    // Phase 3: 全并行启动服务端抓包、多源出口情报、分流矩阵与异步硬件探针（消除高延迟住宅代理串行等待！）
+    // 先发出首包 /api/who/me 以优先捕获干净 TCP SYN，80ms 后立即并发启动全部探针；一旦关键链路返回即渐进刷新 UI
+    const pSrv = probeServer().then(() => {
+      if (seq === runSeq) {
+        renderChecksAndScore(false);
+        renderPortrait();
+        renderTargetSimulator();
+      }
+    });
+    await new Promise(r => setTimeout(r, 80));
     if (seq !== runSeq) return;
-    renderChecksAndScore(false);
-    renderPortrait();
-    renderTargetSimulator();
+
+    const pIntel = probeIntel().then(() => {
+      if (seq === runSeq) {
+        renderChecksAndScore(false);
+        renderPortrait();
+        renderTargetSimulator();
+      }
+    });
+    const pExits = probeQuicAndExits().then(() => {
+      if (seq === runSeq) {
+        renderChecksAndScore(false);
+        renderPortrait();
+        renderTargetSimulator();
+      }
+    });
+    // 等待 pSrv 完成或最多 1.2s 后启动延迟与微脉冲探测，既保证 R.srvTcpRtt 就绪，又绝不被慢连接卡死
+    const pLat = Promise.race([pSrv, new Promise(r => setTimeout(r, 1200))]).then(() => probeLatency());
 
     await Promise.all([
-      probeIntel(),
-      probeLatency(),
-      probeQuicAndExits(),
+      pSrv,
+      pIntel,
+      pLat,
+      pExits,
       probeDns(),
       probeWebrtc(),
       probeAudioStack(),

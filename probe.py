@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import concurrent.futures
 import gzip
 import hashlib
 import json
@@ -83,6 +84,9 @@ class TTLCache:
 GEO_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
 PTR_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
 PACKET_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
+_GEO_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="geo")
+_SERVER_COORDS: list[float] | None = None
+_SERVER_COORDS_LOCK = threading.Lock()
 
 
 def is_private_or_loopback(ip: str) -> bool:
@@ -98,7 +102,7 @@ def is_private_or_loopback(ip: str) -> bool:
     return False
 
 
-def lookup_ptr(ip: str, timeout: float = 1.2) -> str | None:
+def lookup_ptr(ip: str, timeout: float = 0.75) -> str | None:
     clean = ip.split("%")[0].strip()
     if is_private_or_loopback(clean):
         return None
@@ -123,17 +127,7 @@ def lookup_ptr(ip: str, timeout: float = 1.2) -> str | None:
     return val
 
 
-def lookup_ip_geo(ip: str) -> dict:
-    """查询客户端 IP 的归属地、ASN、ISP、机房/代理属性（ip-api 主源 + ipwho.is 备源）。"""
-    clean_ip = ip.split("%")[0].strip()
-    priv = is_private_or_loopback(clean_ip)
-    cache_key = "__self__" if priv else clean_ip
-
-    cached = GEO_CACHE.get(cache_key)
-    if isinstance(cached, dict):
-        return cached
-
-    # 主源: ip-api.com (包含 hosting / proxy / mobile / reverse / asname 字段)
+def _fetch_geo_ipapi(clean_ip: str, priv: bool) -> dict | None:
     fields = (
         "status,message,country,countryCode,regionName,city,lat,lon,"
         "timezone,isp,org,as,asname,reverse,mobile,proxy,hosting,query"
@@ -143,91 +137,167 @@ def lookup_ip_geo(ip: str) -> dict:
         if priv
         else f"http://ip-api.com/json/{urllib.parse.quote(clean_ip)}?fields={fields}"
     )
-    try:
-        req = urllib.request.Request(url1, headers={"User-Agent": "WhoProbe/2.0"})
-        with urllib.request.urlopen(req, timeout=3.0) as resp:
-            raw = json.loads(resp.read().decode("utf-8", errors="replace"))
-        if raw.get("status") == "success":
-            asn_str = raw.get("as") or ""
-            asn_num = asn_str.split(" ")[0] if asn_str.startswith("AS") else asn_str
-            ptr = raw.get("reverse") or lookup_ptr(raw.get("query", clean_ip))
-            out = {
-                "ok": True,
-                "source": "ip-api",
-                "ip": raw.get("query") or clean_ip,
-                "socketIp": clean_ip,
-                "isLoopbackFallback": priv,
-                "country": raw.get("country") or "",
-                "countryCode": (raw.get("countryCode") or "").upper(),
-                "region": raw.get("regionName") or "",
-                "city": raw.get("city") or "",
-                "lat": raw.get("lat"),
-                "lon": raw.get("lon"),
-                "timezone": raw.get("timezone") or "",
-                "isp": raw.get("isp") or "",
-                "org": raw.get("org") or "",
-                "asn": asn_num,
-                "asFull": asn_str,
-                "asName": raw.get("asname") or "",
-                "ptr": ptr or "",
-                "mobile": bool(raw.get("mobile")),
-                "proxy": bool(raw.get("proxy")),
-                "hosting": bool(raw.get("hosting")),
-            }
-            out["hostingInferred"] = infer_datacenter(out)
-            GEO_CACHE.set(cache_key, out)
-            return out
-    except Exception:
-        pass
+    req = urllib.request.Request(url1, headers={"User-Agent": "WhoProbe/2.0"})
+    with urllib.request.urlopen(req, timeout=2.1) as resp:
+        raw = json.loads(resp.read().decode("utf-8", errors="replace"))
+    if raw.get("status") != "success":
+        return None
+    asn_str = raw.get("as") or ""
+    asn_num = asn_str.split(" ")[0] if asn_str.startswith("AS") else asn_str
+    out = {
+        "ok": True,
+        "source": "ip-api",
+        "ip": raw.get("query") or clean_ip,
+        "socketIp": clean_ip,
+        "isLoopbackFallback": priv,
+        "country": raw.get("country") or "",
+        "countryCode": (raw.get("countryCode") or "").upper(),
+        "region": raw.get("regionName") or "",
+        "city": raw.get("city") or "",
+        "lat": raw.get("lat"),
+        "lon": raw.get("lon"),
+        "timezone": raw.get("timezone") or "",
+        "isp": raw.get("isp") or "",
+        "org": raw.get("org") or "",
+        "asn": asn_num,
+        "asFull": asn_str,
+        "asName": raw.get("asname") or "",
+        "ptr": raw.get("reverse") or "",
+        "mobile": bool(raw.get("mobile")),
+        "proxy": bool(raw.get("proxy")),
+        "hosting": bool(raw.get("hosting")),
+    }
+    out["hostingInferred"] = infer_datacenter(out)
+    return out
 
-    # 备源: ipwho.is (HTTPS 免费免 Key)
+
+def _fetch_geo_ipwhois(clean_ip: str, priv: bool) -> dict | None:
     url2 = "https://ipwho.is/" if priv else f"https://ipwho.is/{urllib.parse.quote(clean_ip)}"
-    try:
-        req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0 WhoProbe/2.0"})
-        with urllib.request.urlopen(req2, timeout=3.2) as resp2:
-            raw2 = json.loads(resp2.read().decode("utf-8", errors="replace"))
-        if raw2.get("success") is not False and raw2.get("ip"):
-            conn = raw2.get("connection") or {}
-            tz = raw2.get("timezone") or {}
-            asn_val = conn.get("asn")
-            asn_str = f"AS{asn_val}" if asn_val else ""
-            ptr = lookup_ptr(raw2.get("ip", clean_ip))
-            out = {
-                "ok": True,
-                "source": "ipwho.is",
-                "ip": raw2.get("ip") or clean_ip,
-                "socketIp": clean_ip,
-                "isLoopbackFallback": priv,
-                "country": raw2.get("country") or "",
-                "countryCode": (raw2.get("country_code") or "").upper(),
-                "region": raw2.get("region") or "",
-                "city": raw2.get("city") or "",
-                "lat": raw2.get("latitude"),
-                "lon": raw2.get("longitude"),
-                "timezone": (tz.get("id") if isinstance(tz, dict) else "") or "",
-                "isp": conn.get("isp") or "",
-                "org": conn.get("org") or "",
-                "asn": asn_str,
-                "asFull": f"{asn_str} {conn.get('org') or ''}".strip(),
-                "asName": conn.get("domain") or "",
-                "ptr": ptr or "",
-                "mobile": False,
-                "proxy": False,
-                "hosting": False,
-            }
-            out["hostingInferred"] = infer_datacenter(out)
-            out["hosting"] = out["hostingInferred"]
-            GEO_CACHE.set(cache_key, out)
-            return out
-    except Exception as exc:
-        return {
-            "ok": False,
-            "ip": clean_ip,
-            "socketIp": clean_ip,
-            "error": str(exc),
-        }
+    req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0 WhoProbe/2.0"})
+    with urllib.request.urlopen(req2, timeout=2.3) as resp2:
+        raw2 = json.loads(resp2.read().decode("utf-8", errors="replace"))
+    if raw2.get("success") is False or not raw2.get("ip"):
+        return None
+    conn = raw2.get("connection") or {}
+    tz = raw2.get("timezone") or {}
+    asn_val = conn.get("asn")
+    asn_str = f"AS{asn_val}" if asn_val else ""
+    out = {
+        "ok": True,
+        "source": "ipwho.is",
+        "ip": raw2.get("ip") or clean_ip,
+        "socketIp": clean_ip,
+        "isLoopbackFallback": priv,
+        "country": raw2.get("country") or "",
+        "countryCode": (raw2.get("country_code") or "").upper(),
+        "region": raw2.get("region") or "",
+        "city": raw2.get("city") or "",
+        "lat": raw2.get("latitude"),
+        "lon": raw2.get("longitude"),
+        "timezone": (tz.get("id") if isinstance(tz, dict) else "") or "",
+        "isp": conn.get("isp") or "",
+        "org": conn.get("org") or "",
+        "asn": asn_str,
+        "asFull": f"{asn_str} {conn.get('org') or ''}".strip(),
+        "asName": conn.get("domain") or "",
+        "ptr": "",
+        "mobile": False,
+        "proxy": False,
+        "hosting": False,
+    }
+    out["hostingInferred"] = infer_datacenter(out)
+    out["hosting"] = out["hostingInferred"]
+    return out
+
+
+def lookup_ip_geo(ip: str) -> dict:
+    """并发竞速查询客户端 IP 的归属地、ASN、ISP、机房属性与 PTR（硬上限 ≤ 2.3s，杜绝慢源串联阻塞）。"""
+    clean_ip = ip.split("%")[0].strip()
+    priv = is_private_or_loopback(clean_ip)
+    cache_key = "__self__" if priv else clean_ip
+
+    cached = GEO_CACHE.get(cache_key)
+    if isinstance(cached, dict):
+        return cached
+
+    f_primary = _GEO_POOL.submit(_fetch_geo_ipapi, clean_ip, priv)
+    f_backup = _GEO_POOL.submit(_fetch_geo_ipwhois, clean_ip, priv)
+    f_ptr = None if priv else _GEO_POOL.submit(lookup_ptr, clean_ip, 0.75)
+
+    chosen: dict | None = None
+    # 优先给包含 hosting/mobile/proxy 原生标记的 ip-api 1.5s 窗口；超时或失败立即采用已就绪的备源
+    concurrent.futures.wait([f_primary], timeout=1.5)
+    if f_primary.done():
+        try:
+            chosen = f_primary.result()
+        except Exception:
+            chosen = None
+
+    if chosen is None:
+        pending = [f for f in (f_primary, f_backup) if not f.done()]
+        if pending:
+            concurrent.futures.wait(pending, timeout=0.9, return_when=concurrent.futures.FIRST_COMPLETED)
+        for fut in (f_primary, f_backup):
+            if fut.done():
+                try:
+                    cand = fut.result()
+                    if isinstance(cand, dict) and cand.get("ok"):
+                        chosen = cand
+                        break
+                except Exception:
+                    continue
+        if chosen is None:
+            still = [f for f in (f_primary, f_backup) if not f.done()]
+            if still:
+                concurrent.futures.wait(still, timeout=0.6, return_when=concurrent.futures.FIRST_COMPLETED)
+                for fut in still:
+                    if fut.done():
+                        try:
+                            cand = fut.result()
+                            if isinstance(cand, dict) and cand.get("ok"):
+                                chosen = cand
+                                break
+                        except Exception:
+                            continue
+
+    if isinstance(chosen, dict) and chosen.get("ok"):
+        if not chosen.get("ptr") and f_ptr is not None:
+            try:
+                chosen["ptr"] = f_ptr.result(timeout=0.15) or ""
+            except Exception:
+                chosen["ptr"] = ""
+            chosen["hostingInferred"] = infer_datacenter(chosen)
+        GEO_CACHE.set(cache_key, chosen)
+        return chosen
 
     return {"ok": False, "ip": clean_ip, "socketIp": clean_ip, "error": "lookup_failed"}
+
+
+def get_server_coarse_coords() -> list[float] | None:
+    """获取服务端所在城市的粗粒度经纬度（保留 1 位小数，仅用于物理光纤 RTT 下界测算，不暴露服务端 IP）。"""
+    global _SERVER_COORDS
+    if _SERVER_COORDS is not None:
+        return _SERVER_COORDS
+    cached = GEO_CACHE.get("__self__")
+    if isinstance(cached, dict) and isinstance(cached.get("lat"), (int, float)) and isinstance(cached.get("lon"), (int, float)):
+        with _SERVER_COORDS_LOCK:
+            _SERVER_COORDS = [round(float(cached["lat"]), 1), round(float(cached["lon"]), 1)]
+            return _SERVER_COORDS
+    return None
+
+
+def start_server_geo_prewarmer() -> None:
+    def _worker() -> None:
+        global _SERVER_COORDS
+        try:
+            g = lookup_ip_geo("127.0.0.1")
+            if isinstance(g.get("lat"), (int, float)) and isinstance(g.get("lon"), (int, float)):
+                with _SERVER_COORDS_LOCK:
+                    _SERVER_COORDS = [round(float(g["lat"]), 1), round(float(g["lon"]), 1)]
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, daemon=True, name="srv-geo-prewarm").start()
 
 
 DATACENTER_KEYWORDS = (
@@ -855,6 +925,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 "seq": seq_raw,
                 "serverTimeMs": round(time.time() * 1000, 2),
                 "serverPerfUs": round(time.perf_counter() * 1_000_000),
+                "serverCoords": get_server_coarse_coords(),
             })
             return
 
@@ -921,6 +992,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             self._send_json({
                 "ok": True,
                 "serverTimeMs": round(time.time() * 1000, 2),
+                "serverCoords": get_server_coarse_coords(),
                 "clientIp": client_ip,
                 "ipVersion": 6 if ":" in client_ip else 4,
                 "geo": geo,
@@ -1071,6 +1143,7 @@ def main() -> None:
         return
 
     ENABLE_ACTIVE_443 = not args.no_active_probe
+    start_server_geo_prewarmer()
     egress_intel.start_cidr_prewarmer()
 
     if args.sniff_iface:

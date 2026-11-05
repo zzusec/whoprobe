@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
   <title>WhoProbe · 网站眼里的你 — L3–L7 全栈指纹、BGP 出口情报与伪装风控诊断</title>
   <meta name="description" content="零权限弹窗读取 148 项网络协议栈、TCP TSval 时钟、:443 Reality 偷证书反向验真、8 源欺诈/BGP 租赁情报、同 /24 脏邻居、硬件光栅化与 52 项原型谎言，精准评估 6 大业务准入与防关联破绽。">
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.0.0">
-  <link rel="stylesheet" href="./assets/style.css?v=7.0.0">
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.1.0">
+  <link rel="stylesheet" href="./assets/style.css?v=7.1.0">
   <script>
     (function () {
       try {
@@ -21,13 +21,6 @@
   </script>
 </head>
 <body class="min-h-screen bg-[#F5F6F8] text-zinc-900 antialiased dark:bg-[#0B0C0E] dark:text-zinc-100">
-  <!--
-    THESIS: Forensic network & browser diagnostic workbench that reads like a calm editorial dossier rather than a wall of nested status boxes.
-    OWN-WORLD: Precision alabaster (#F5F6F8) and obsidian (#0B0C0E) canvas, elevated paper sheets with 1px architectural hairlines, ink primary controls, and semantic status colors reserved strictly for actual risk signals.
-    STORY: Within three seconds the visitor reads how anti-fraud engines perceive them, sees their composite health score and top-3 fixes, and drills into 24 checks, 6 business scenarios, 8-route split matrix, or 148 raw probes via progressive workspace tabs.
-    FIRST VIEWPORT: Quiet 56px top bar above a 2-column asymmetric diagnostic stage (7-col editorial portrait on left, 5-col score monument + top fixes + 3-row core telemetry ledger on right), anchored below by the 4-tab workspace switcher.
-  -->
-
   <!-- 广告拦截本地样式诱饵（仅在页面内测量高度，不加载外部广告内容） -->
   <div id="ad-slot" class="adsbox ad-banner ad-placeholder pub_300x250 pub_300x250m pub_728x90 text-ad textAd text_ad text_ads text-ads text-ad-links ad-unit ad-zone banner-ads" aria-hidden="true" style="position:fixed;left:-9999px;top:-9999px;width:300px;height:250px;pointer-events:none;">&nbsp;</div>
 
@@ -38,7 +31,7 @@
 
   <!-- Quiet Responsive Command Bar -->
   <header class="top-chrome sm:sticky sm:top-0 z-40 w-full bg-[#F5F6F8]/90 backdrop-blur-xl border-b border-zinc-950/[0.06] dark:bg-[#0B0C0E]/90 dark:border-white/[0.06]">
-    <div class="max-w-[1220px] mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="max-w-[1240px] mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-2.5 min-h-[54px]">
         <!-- Brand & Live Telemetry Status -->
         <div class="flex items-center gap-2.5 min-w-0">
@@ -58,12 +51,12 @@
           <span class="text-[15px] font-semibold tracking-tight text-zinc-950 dark:text-white">WhoProbe</span>
           <span class="hidden lg:inline-block h-3.5 w-px bg-zinc-300 dark:bg-zinc-800" aria-hidden="true"></span>
           <span id="liveStatusPill" class="hidden lg:inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400 truncate">
-            <span id="liveDot" class="size-1.5 shrink-0 rounded-full bg-blue-600 animate-pulse"></span>
+            <span id="liveDot" class="size-1.5 shrink-0 rounded-full animate-pulse bg-blue-600"></span>
             <span id="liveStatusText" class="truncate">正在初始化 148 项无感嗅探…</span>
           </span>
         </div>
 
-        <!-- Primary Action & Quiet Utility Group (Stays on Row 1 on Mobile!) -->
+        <!-- Primary Action & Quiet Utility Group -->
         <div class="flex items-center gap-1.5 sm:gap-2 sm:order-3">
           <button id="btnRerun" type="button" class="py-1.5 px-2.5 sm:px-3 inline-flex items-center gap-1.5 text-xs font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-50 disabled:pointer-events-none transition dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">
             <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
@@ -73,11 +66,11 @@
           <div class="inline-flex items-center rounded-lg bg-white ring-1 ring-zinc-950/[0.08] divide-x divide-zinc-950/[0.06] overflow-hidden dark:bg-[#14171C] dark:ring-white/[0.08] dark:divide-white/[0.07]">
             <button id="btnMask" type="button" aria-pressed="false" class="py-1.5 px-2 sm:px-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition dark:text-zinc-300 dark:hover:bg-white/[0.05]" title="模糊隐藏 IP、城市、坐标与运营商，方便安全截图">
               <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
-              <span id="btnMaskText" class="hidden md:inline">隐私打码</span>
+              <span id="btnMaskText" class="hidden md:inline">打码</span>
             </button>
             <button id="btnCopyTxt" type="button" class="py-1.5 px-2 sm:px-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition dark:text-zinc-300 dark:hover:bg-white/[0.05]" title="复制纯文本诊断摘要">
               <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-              <span id="btnCopyTxtLabel" class="hidden md:inline">复制报告</span>
+              <span id="btnCopyTxtLabel" class="hidden md:inline">复制</span>
             </button>
             <button id="btnCopyJson" type="button" class="py-1.5 px-2 sm:px-2.5 inline-flex items-center text-xs font-mono font-medium text-zinc-700 hover:bg-zinc-50 transition dark:text-zinc-300 dark:hover:bg-white/[0.05]" title="复制全部 148 项原始 JSON 数据">
               <span>JSON</span>
@@ -89,7 +82,7 @@
           </div>
         </div>
 
-        <!-- IP Lookup + Perspective Switch (Inline on Desktop, Clean Full-Width Row 2 on Mobile with Zero Overflow) -->
+        <!-- IP Lookup + Perspective Switch -->
         <div class="flex items-center gap-2 w-full sm:w-auto sm:order-2 sm:ms-auto">
           <form id="ipQueryForm" class="flex-1 sm:flex-initial min-w-0 inline-flex items-center rounded-lg bg-white ring-1 ring-zinc-950/[0.08] px-1 py-0.5 dark:bg-[#14171C] dark:ring-white/[0.08]" aria-label="查询任意公网 IP 信誉与 BGP 情报">
             <input id="ipQueryInput" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="查公网 IP…" class="w-full sm:w-32 md:w-36 min-w-0 py-1 px-2 text-xs font-mono bg-transparent text-zinc-900 placeholder:text-zinc-500 focus:outline-none dark:text-zinc-100 dark:placeholder:text-zinc-400">
@@ -101,7 +94,7 @@
               伪装自检
             </button>
             <button type="button" data-scene="privacy" role="tab" aria-selected="false" class="scene-btn py-1 px-2 sm:px-2.5 inline-flex items-center text-xs font-medium rounded-md text-zinc-600 hover:text-zinc-950 transition dark:text-zinc-400 dark:hover:text-zinc-100">
-              隐私防追踪
+              防追踪
             </button>
           </div>
         </div>
@@ -110,220 +103,263 @@
   </header>
 
   <!-- App Built-in WebView Banner -->
-  <div id="inAppBanner" hidden class="max-w-[1220px] mx-auto px-4 sm:px-6 lg:px-8 pt-5">
+  <div id="inAppBanner" hidden class="max-w-[1240px] mx-auto px-4 sm:px-6 lg:px-8 pt-4">
     <div class="surface-sheet rounded-xl px-4 py-3 text-xs text-amber-900 bg-amber-50/90 border-amber-200/80 flex items-center justify-between gap-3 dark:bg-amber-500/10 dark:border-amber-500/20 dark:text-amber-200">
       <span id="inAppText">当前运行在应用内置 WebView 中，检测结果仅代表该内置容器。若需测试日常主力浏览器，请在系统浏览器中打开。</span>
-      <button id="btnCopyUrl" type="button" class="shrink-0 py-1 px-2.5 rounded-md bg-white ring-1 ring-amber-300 text-amber-900 font-medium hover:bg-amber-100 dark:bg-zinc-900 dark:ring-amber-500/30 dark:text-amber-200">复制页面链接</button>
+      <button id="btnCopyUrl" type="button" class="shrink-0 py-1 px-2.5 rounded-md bg-white ring-1 ring-amber-300 text-amber-900 font-medium hover:bg-amber-100 dark:bg-zinc-900 dark:ring-amber-500/30 dark:text-amber-200">复制链接</button>
     </div>
   </div>
 
   <!-- Arbitrary External IP Inspection Banner -->
-  <div id="extIpBanner" hidden class="max-w-[1220px] mx-auto px-4 sm:px-6 lg:px-8 pt-5">
+  <div id="extIpBanner" hidden class="max-w-[1240px] mx-auto px-4 sm:px-6 lg:px-8 pt-4">
     <div class="surface-sheet rounded-xl px-4 py-3 text-xs flex flex-wrap items-center justify-between gap-3">
       <div class="flex flex-wrap items-center gap-2.5 min-w-0">
-        <span class="inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-semibold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">外部 IP 情报检视</span>
+        <span class="inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-semibold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">外部 IP 检视</span>
         <span id="extIpVal" class="font-mono font-semibold text-sm text-zinc-950 dark:text-white">--</span>
         <span id="extPurityBadge" class="inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">查询中…</span>
         <span id="extIpMeta" class="text-zinc-600 dark:text-zinc-400 truncate">正在拉取 8 源欺诈库、RDAP 租赁、12 项 DNSBL 与 :443 证书画像…</span>
       </div>
       <div class="flex items-center gap-2 shrink-0">
-        <button id="btnJumpRep" type="button" class="py-1 px-2.5 rounded-md ring-1 ring-zinc-950/[0.1] bg-zinc-50 text-zinc-800 font-medium hover:bg-zinc-100 transition dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">查看情报明细</button>
-        <button id="btnResetSelfIp" type="button" class="py-1 px-2.5 rounded-md bg-zinc-900 text-white font-medium hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">返回本机出口</button>
+        <button id="btnJumpRep" type="button" class="py-1 px-2.5 rounded-md ring-1 ring-zinc-950/[0.1] bg-zinc-50 text-zinc-800 font-medium hover:bg-zinc-100 transition dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">情报明细</button>
+        <button id="btnResetSelfIp" type="button" class="py-1 px-2.5 rounded-md bg-zinc-900 text-white font-medium hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">返回本机</button>
       </div>
     </div>
   </div>
 
-  <!-- Main Diagnostic Workbench -->
-  <main id="appMain" class="max-w-[1220px] mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 space-y-6">
+  <!-- Main Visual Diagnostic Workbench -->
+  <main id="appMain" class="max-w-[1240px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-5 space-y-4">
 
-    <!-- Zone 1: Composed Two-Sheet Hero Diagnostic Stage -->
-    <section aria-label="网站侧写与伪装健康度总览" class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+    <!-- Zone 1: Visual Score Gauge + Live Network Topology & 6-Tile Identity Matrix -->
+    <section aria-label="抗风控仪表盘与实时链路拓扑" class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
 
-      <!-- Left Sheet (7 cols): Editorial Forensic Portrait ("网站眼里的你") -->
-      <article class="lg:col-span-7 surface-sheet rounded-2xl p-5 sm:p-7 flex flex-col justify-between gap-5">
-        <div class="space-y-4">
-          <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h1 class="text-xl sm:text-[21px] font-semibold tracking-[-0.02em] text-zinc-950 dark:text-white">网站眼里的你</h1>
-            <span id="portraitElapsed" class="text-xs font-mono text-zinc-500 dark:text-zinc-400">无感扫描中 · 点击下划线词条溯源</span>
-          </div>
-
-          <!-- Primary Verdict Callout -->
-          <div id="wowAlert" class="rounded-xl border border-zinc-200/80 bg-zinc-50/80 px-4 py-3 text-[13px] leading-relaxed text-zinc-700 dark:bg-white/[0.03] dark:border-white/[0.08] dark:text-zinc-200">
-            <div class="flex items-start gap-3">
-              <span id="wowIcon" class="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-700 font-bold text-[11px] dark:bg-zinc-800 dark:text-zinc-200">…</span>
-              <div class="min-w-0 flex-1">
-                <p id="wowTitle" class="font-semibold text-zinc-950 dark:text-white">正在交叉核验底层协议栈、出口证书与浏览器自报身份…</p>
-                <p id="wowDesc" class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">对比 TCP SYN 内核指纹、TSval 时钟、:443 Reality 反向验真、BGP 租赁与光栅化特征。</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Clean Editorial Narrative Prose -->
-          <div id="storyProse" class="space-y-3 text-[14.5px] leading-[1.82] text-zinc-700 dark:text-zinc-300 max-w-[66ch]">
-            <p class="text-zinc-500 dark:text-zinc-400">正在汇总全部无感探针读数并生成完整风控画像…</p>
-          </div>
-        </div>
-
-        <!-- Unboxed Hairline Key-Facts Strip + Persona Tags -->
-        <div class="pt-4 border-t border-zinc-950/[0.06] dark:border-white/[0.07] space-y-4">
-          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
-            <div class="min-w-0">
-              <dt class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">推断真实来源</dt>
-              <dd id="snapOrigin" class="mt-0.5 text-[13px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">分析中…</dd>
-            </div>
-            <div class="min-w-0">
-              <dt class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">当前网络出口</dt>
-              <dd id="snapExit" class="maskable mt-0.5 text-[13px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">分析中…</dd>
-            </div>
-            <div class="min-w-0">
-              <dt class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">系统与物理屏幕</dt>
-              <dd id="snapDevice" class="mt-0.5 text-[13px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">分析中…</dd>
-            </div>
-            <div class="min-w-0">
-              <dt class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">显卡与设备定位</dt>
-              <dd id="snapGpu" class="mt-0.5 text-[13px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">分析中…</dd>
-            </div>
-          </dl>
-
-          <div class="pt-3.5 border-t border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center gap-1.5" id="personaTags" aria-label="风控画像标签">
-            <span class="py-0.5 px-2.5 rounded-full text-xs bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">生成画像标签中…</span>
-          </div>
-        </div>
-      </article>
-
-      <!-- Right Sheet (5 cols): Health Verdict Monument + Priority Fixes + Core Telemetry Ledger -->
-      <aside class="lg:col-span-5 surface-sheet rounded-2xl p-5 sm:p-7 flex flex-col justify-between gap-5">
-        <!-- Top: Score & 20-Segment Spectrum -->
+      <!-- Left Sheet (4 cols): SVG Ring Gauge + Visual Conflict Diff Pills -->
+      <aside class="lg:col-span-4 surface-sheet rounded-2xl p-5 flex flex-col justify-between gap-4">
         <div>
           <div class="flex items-center justify-between gap-2">
-            <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">环境自洽与抗风控评分</h2>
+            <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">抗风控健康度</h2>
             <div class="flex items-center gap-1.5">
-              <span id="sceneBadge" class="inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">伪装自检视角</span>
-              <span id="gradeBadge" class="inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">评估中</span>
-            </div>
-          </div>
-
-          <div class="mt-4 flex items-baseline justify-between gap-3">
-            <div class="flex items-baseline gap-2">
-              <span id="scoreNum" class="text-5xl sm:text-[54px] font-semibold tracking-[-0.04em] font-mono tabular-nums leading-none text-zinc-950 dark:text-white">--</span>
-              <span class="text-sm font-mono text-zinc-500 dark:text-zinc-400">/ 100</span>
-            </div>
-            <div class="flex items-center gap-2">
               <span id="cmpBadge" hidden class="text-[11px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"></span>
-              <div id="histSpark" hidden class="sr-only" aria-hidden="true"></div>
+              <span id="sceneBadge" class="inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">伪装自检</span>
             </div>
           </div>
 
-          <div id="segBar" class="mt-4 flex items-center gap-1 h-1.5" aria-label="20项核心风控状态条"></div>
-          <p id="scoreSub" class="mt-2.5 text-[13px] text-zinc-600 dark:text-zinc-400 leading-snug">正在交叉比对 20 项核心风控维度…</p>
+          <!-- Radial Gauge + Issue Pill Counters -->
+          <div class="mt-4 flex items-center gap-4">
+            <div class="relative size-[108px] shrink-0 flex items-center justify-center">
+              <svg viewBox="0 0 116 116" class="size-full" aria-hidden="true">
+                <circle cx="58" cy="58" r="48" fill="none" stroke-width="9" class="stroke-zinc-200/80 dark:stroke-zinc-800"></circle>
+                <circle id="scoreRingArc" cx="58" cy="58" r="48" fill="none" stroke-width="9" stroke-linecap="round" stroke-dasharray="301.59" stroke-dashoffset="260" class="score-ring-arc stroke-zinc-400 dark:stroke-zinc-500"></circle>
+              </svg>
+              <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                <span id="scoreNum" class="text-[32px] font-bold tracking-[-0.04em] font-mono tabular-nums leading-none text-zinc-950 dark:text-white">--</span>
+                <span id="gradeBadge" class="mt-1 inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">评估中</span>
+              </div>
+            </div>
 
-          <!-- Compact Issue Count & Breakdown -->
-          <div class="mt-4 pt-4 border-t border-zinc-950/[0.06] dark:border-white/[0.07] space-y-1.5">
-            <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="min-w-0 flex-1 space-y-2.5">
               <div class="flex items-baseline gap-1.5">
-                <span id="issueCount" class="text-xl font-bold font-mono tabular-nums text-zinc-900 dark:text-white">--</span>
-                <span id="issueUnit" class="text-xs font-medium text-zinc-600 dark:text-zinc-400">处可能暴露你</span>
+                <span id="issueCount" class="text-2xl font-bold font-mono tabular-nums leading-none text-zinc-900 dark:text-white">--</span>
+                <span id="issueUnit" class="text-xs font-semibold text-zinc-700 dark:text-zinc-300">处暴露破绽</span>
               </div>
-              <div class="flex items-center gap-3 text-xs text-zinc-600 dark:text-zinc-400">
-                <span class="inline-flex items-center gap-1">
-                  <span class="size-1.5 rounded-full bg-rose-500"></span>
-                  <span>高危</span>
-                  <b id="cntBad" class="font-mono text-rose-700 dark:text-rose-300">0</b>
-                </span>
-                <span class="inline-flex items-center gap-1">
-                  <span class="size-1.5 rounded-full bg-amber-500"></span>
-                  <span>可疑</span>
-                  <b id="cntWarn" class="font-mono text-amber-700 dark:text-amber-300">0</b>
-                </span>
-                <span class="inline-flex items-center gap-1">
-                  <span class="size-1.5 rounded-full bg-emerald-500"></span>
-                  <span>通过</span>
-                  <b id="cntOk" class="font-mono text-emerald-700 dark:text-emerald-300">0</b>
-                </span>
+
+              <!-- 3 Visual Status Pills -->
+              <div class="grid grid-cols-3 gap-1.5 text-center">
+                <div class="rounded-lg py-1.5 px-1 bg-rose-50/90 dark:bg-rose-500/12">
+                  <div id="cntBad" class="text-sm font-bold font-mono text-rose-700 dark:text-rose-300">0</div>
+                  <div class="text-[10.5px] font-medium text-rose-800/80 dark:text-rose-300/80">高危</div>
+                </div>
+                <div class="rounded-lg py-1.5 px-1 bg-amber-50/90 dark:bg-amber-500/12">
+                  <div id="cntWarn" class="text-sm font-bold font-mono text-amber-800 dark:text-amber-300">0</div>
+                  <div class="text-[10.5px] font-medium text-amber-900/80 dark:text-amber-300/80">可疑</div>
+                </div>
+                <div class="rounded-lg py-1.5 px-1 bg-emerald-50/90 dark:bg-emerald-500/12">
+                  <div id="cntOk" class="text-sm font-bold font-mono text-emerald-700 dark:text-emerald-300">0</div>
+                  <div class="text-[10.5px] font-medium text-emerald-800/80 dark:text-emerald-300/80">通过</div>
+                </div>
               </div>
             </div>
-            <p id="topGiveaway" class="text-xs text-zinc-500 dark:text-zinc-400 truncate">正在排查头号破绽…</p>
           </div>
+
+          <!-- 20-Segment Spectrum Bar -->
+          <div id="segBar" class="mt-4 flex items-center gap-1 h-2" aria-label="20项核心风控状态条"></div>
+          <p id="scoreSub" class="mt-2 text-xs text-zinc-500 dark:text-zinc-400 truncate">正在交叉比对 20 项核心风控维度…</p>
+          <p id="topGiveaway" class="sr-only"></p>
+          <div id="histSpark" hidden class="sr-only" aria-hidden="true"></div>
         </div>
 
-        <!-- Middle: Priority Top-3 Fixes ("先改这几项") -->
-        <div id="priorityBox" hidden class="rounded-xl border border-amber-200/80 bg-amber-50/60 p-4 dark:bg-amber-500/[0.07] dark:border-amber-500/20">
-          <div class="flex items-center justify-between gap-2 mb-2.5">
-            <span class="text-xs font-semibold text-amber-950 dark:text-amber-200">先改这几项（点击定位修复指南）</span>
+        <!-- Bottom of Left Card: Crisp Visual Conflict Diff List (Zero Long Paragraphs!) -->
+        <div class="pt-3.5 border-t border-zinc-950/[0.06] dark:border-white/[0.07]">
+          <div id="priorityBox" hidden class="space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-semibold text-zinc-800 dark:text-zinc-200">头号穿帮项（点按查看改法）</span>
+              <span id="priorityMoreHint" class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400"></span>
+            </div>
+            <ol id="priorityList" class="space-y-1.5"></ol>
           </div>
-          <ol id="priorityList" class="space-y-2 text-xs leading-relaxed"></ol>
-        </div>
 
-        <!-- Bottom: Clean 3-Row Core Telemetry Ledger (Replaces extra KPI boxes) -->
-        <div class="pt-4 border-t border-zinc-950/[0.06] dark:border-white/[0.07] divide-y divide-zinc-950/[0.06] dark:divide-white/[0.07] text-xs">
-          <!-- Row A: Exit IP & Reputation -->
-          <div class="pb-3 flex items-start justify-between gap-3">
+          <div id="allClearBox" class="rounded-xl px-3.5 py-3 flex items-center gap-2.5 bg-emerald-50/75 dark:bg-emerald-500/10">
+            <span class="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold bg-emerald-600 text-white">✓</span>
             <div class="min-w-0">
-              <span class="text-zinc-500 dark:text-zinc-400">出口纯净度与归属</span>
-              <div id="kpiExitIp" class="maskable mt-0.5 text-sm font-semibold font-mono tabular-nums text-zinc-950 dark:text-white truncate">读取出口 IP…</div>
-              <p id="kpiExitGeo" class="maskable mt-0.5 text-zinc-500 dark:text-zinc-400 truncate">正在查询 ASN 与归属地…</p>
+              <div id="allClearTitle" class="text-xs font-semibold text-emerald-950 dark:text-emerald-200">正在扫描协议栈与信誉库…</div>
+              <div id="allClearSub" class="text-[11px] text-emerald-800/80 dark:text-emerald-300/80 truncate">核验完成后在此列出需要处理的异常</div>
             </div>
-            <div class="flex flex-col items-end gap-1 shrink-0">
-              <span id="purityPill" class="inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-mono font-semibold bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" title="出口 IP 综合纯净度评分">信誉 --</span>
-              <span id="ispTypeBadge" class="inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">识别中</span>
-            </div>
-          </div>
-
-          <!-- Row B: Handshake RTT -->
-          <div class="py-3 flex items-center justify-between gap-3">
-            <span class="text-zinc-500 dark:text-zinc-400 shrink-0">物理握手测距</span>
-            <span id="kpiRttVal" class="font-mono font-medium text-zinc-900 dark:text-zinc-100 truncate">测速中…</span>
-          </div>
-
-          <!-- Row C: Cross-Site & Hardware Tracking Lock -->
-          <div class="pt-3 flex items-center justify-between gap-3">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2">
-                <span class="text-zinc-500 dark:text-zinc-400">跨站与硬件锁定码</span>
-                <button id="btnForget" type="button" hidden class="text-[11px] font-medium text-blue-600 hover:underline dark:text-blue-400">清除留痕</button>
-              </div>
-              <div class="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span id="kpiFpId" class="text-[13px] font-semibold font-mono tabular-nums text-zinc-950 dark:text-white truncate">计算中…</span>
-                <span id="kpiHwId" class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400 truncate">硬件码: --</span>
-              </div>
-              <p id="kpiVisitState" class="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400 truncate">正在校验缓存 ETag 与 4 大存储…</p>
-            </div>
-            <svg id="fpSigil" viewBox="0 0 64 64" class="size-10 shrink-0 stroke-zinc-700 dark:stroke-zinc-300 fill-none opacity-80" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"></svg>
           </div>
         </div>
       </aside>
+
+      <!-- Right Sheet (8 cols): Live 3-Hop Topology Diagram + 6 Visual Identity Tiles -->
+      <article class="lg:col-span-8 surface-sheet rounded-2xl p-5 flex flex-col justify-between gap-4">
+        <div class="space-y-3.5">
+          <!-- Title + 1-Line Verdict Pill -->
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-baseline gap-2.5">
+              <h1 class="text-lg sm:text-[19px] font-semibold tracking-[-0.02em] text-zinc-950 dark:text-white">网站眼里的你</h1>
+              <span id="portraitElapsed" class="text-xs font-mono text-zinc-500 dark:text-zinc-400">扫描中…</span>
+            </div>
+
+            <div id="wowAlert" class="inline-flex items-center gap-2 rounded-full border border-zinc-200/80 bg-zinc-50 px-3 py-1 text-xs dark:bg-white/[0.04] dark:border-white/[0.08] max-w-full">
+              <span id="wowIcon" class="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold bg-zinc-300 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100">…</span>
+              <span id="wowTitle" class="font-semibold truncate text-zinc-900 dark:text-zinc-100">正在交叉核验底层协议栈与出口证书…</span>
+              <span id="wowDesc" class="sr-only"></span>
+            </div>
+          </div>
+
+          <!-- Signature Visual #1: Live 3-Node Network & Protocol Path Map -->
+          <div id="netPathViz" class="topo-canvas rounded-xl p-3 sm:p-3.5" aria-label="实时网络链路与指纹拓扑">
+            <div class="grid grid-cols-1 md:grid-cols-[1.08fr_auto_1.22fr_auto_1.05fr] items-center gap-2">
+
+              <!-- Node 1: Client Device & Local Exposure -->
+              <div class="rounded-xl bg-white p-3 ring-1 ring-zinc-950/[0.06] dark:bg-[#151820] dark:ring-white/[0.07] min-w-0">
+                <div class="flex items-center justify-between gap-1.5">
+                  <span class="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                    <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="12" x="3" y="4" rx="2"/><line x1="2" x2="22" y1="20" y2="20"/></svg>
+                    <span>真实端侧</span>
+                  </span>
+                  <span id="topoClientTag" class="py-0.5 px-1.5 rounded text-[10px] font-medium whitespace-nowrap shrink-0 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">本地</span>
+                </div>
+                <div id="snapOrigin" class="maskable mt-1.5 text-[13.5px] font-semibold text-zinc-950 dark:text-white truncate">识别中…</div>
+                <div id="snapDevice" class="mt-0.5 text-[11px] font-mono text-zinc-500 dark:text-zinc-400 truncate">读取系统与时区…</div>
+                <span id="snapExit" class="sr-only"></span>
+                <span id="snapGpu" class="sr-only"></span>
+              </div>
+
+              <!-- Connector 1: Local -> Egress (Split-Tunnel / Relay Check) -->
+              <div class="flex md:flex-col items-center justify-center gap-1 py-0.5">
+                <span id="topoLink1Badge" class="py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap bg-zinc-200/80 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">探测分流</span>
+                <svg class="hidden md:block w-11 h-3 overflow-visible" viewBox="0 0 44 12" aria-hidden="true">
+                  <line id="topoLine1" x1="2" y1="6" x2="36" y2="6" stroke-width="2" stroke-dasharray="4 4" class="topo-flow-anim stroke-zinc-400 dark:stroke-zinc-600"></line>
+                  <path id="topoArrow1" d="M33 2.5 L40 6 L33 9.5" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="stroke-zinc-400 dark:stroke-zinc-600"></path>
+                </svg>
+                <span id="topoLink1Sub" class="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 whitespace-nowrap">路由比对</span>
+              </div>
+
+              <!-- Node 2: Egress IP, ASN & Purity -->
+              <div class="rounded-xl bg-white p-3 ring-1 ring-zinc-950/[0.08] shadow-2xs dark:bg-[#151820] dark:ring-white/[0.1] min-w-0">
+                <div class="flex items-center justify-between gap-1.5">
+                  <span id="ispTypeBadge" class="inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">识别中</span>
+                  <span id="purityPill" class="inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-mono font-semibold whitespace-nowrap shrink-0 bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">信誉 --</span>
+                </div>
+                <div id="kpiExitIp" class="maskable mt-1.5 text-[14px] font-bold font-mono tabular-nums text-zinc-950 dark:text-white truncate">读取出口 IP…</div>
+                <div id="kpiExitGeo" class="maskable mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 truncate">正在查询归属与 ASN…</div>
+              </div>
+
+              <!-- Connector 2: Egress -> Probe Edge (TCP SYN OS / RTT / :443 Reality) -->
+              <div class="flex md:flex-col items-center justify-center gap-1 py-0.5">
+                <span id="topoLink2Badge" class="py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap bg-zinc-200/80 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">握手抓包</span>
+                <svg class="hidden md:block w-11 h-3 overflow-visible" viewBox="0 0 44 12" aria-hidden="true">
+                  <line id="topoLine2" x1="2" y1="6" x2="36" y2="6" stroke-width="2" stroke-dasharray="4 4" class="topo-flow-anim stroke-zinc-400 dark:stroke-zinc-600"></line>
+                  <path id="topoArrow2" d="M33 2.5 L40 6 L33 9.5" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="stroke-zinc-400 dark:stroke-zinc-600"></path>
+                </svg>
+                <span id="kpiRttVal" class="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 whitespace-nowrap">测速中…</span>
+              </div>
+
+              <!-- Node 3: Cross-Site Tracking & ETag Lock -->
+              <div class="rounded-xl bg-white p-3 ring-1 ring-zinc-950/[0.06] dark:bg-[#151820] dark:ring-white/[0.07] min-w-0">
+                <div class="flex items-center justify-between gap-1.5">
+                  <span class="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                    <svg id="fpSigil" viewBox="0 0 64 64" class="size-4 shrink-0 stroke-zinc-700 dark:stroke-zinc-300 fill-none" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"></svg>
+                    <span>追踪锁定</span>
+                  </span>
+                  <button id="btnForget" type="button" hidden class="text-[10px] font-semibold whitespace-nowrap shrink-0 text-blue-600 hover:underline dark:text-blue-400">清除留痕</button>
+                </div>
+                <div id="kpiFpId" class="mt-1.5 text-[12.5px] font-bold font-mono tabular-nums text-zinc-950 dark:text-white truncate">计算中…</div>
+                <div id="kpiVisitState" class="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 truncate">校验缓存 ETag…</div>
+                <span id="kpiHwId" class="sr-only"></span>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Signature Visual #2: 6-Tile Scannable Hardware, Protocol & Sandbox Matrix -->
+          <div id="identityTiles" class="grid grid-cols-2 sm:grid-cols-3 gap-2.5" aria-label="六维环境指标速览">
+            <div class="rounded-xl bg-zinc-50/90 p-3 dark:bg-white/[0.03] h-[76px] animate-pulse"></div>
+            <div class="rounded-xl bg-zinc-50/90 p-3 dark:bg-white/[0.03] h-[76px] animate-pulse"></div>
+            <div class="rounded-xl bg-zinc-50/90 p-3 dark:bg-white/[0.03] h-[76px] animate-pulse"></div>
+            <div class="rounded-xl bg-zinc-50/90 p-3 dark:bg-white/[0.03] h-[76px] animate-pulse"></div>
+            <div class="rounded-xl bg-zinc-50/90 p-3 dark:bg-white/[0.03] h-[76px] animate-pulse"></div>
+            <div class="rounded-xl bg-zinc-50/90 p-3 dark:bg-white/[0.03] h-[76px] animate-pulse"></div>
+          </div>
+        </div>
+
+        <!-- Compact Persona Tags + Optional Collapsible Narrative Prose -->
+        <div class="pt-3 border-t border-zinc-950/[0.06] dark:border-white/[0.07]">
+          <details class="group">
+            <summary class="flex flex-wrap items-center justify-between gap-2 list-none select-none">
+              <div class="flex flex-wrap items-center gap-1.5 min-w-0 flex-1" id="personaTags" aria-label="风控画像标签">
+                <span class="py-0.5 px-2.5 rounded-full text-xs bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">生成画像标签中…</span>
+              </div>
+              <span class="shrink-0 inline-flex items-center gap-1 py-1 px-2.5 rounded-lg text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100 transition">
+                <span>文字版侧写</span>
+                <svg class="prose-chevron size-3.5 transition-transform duration-150" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </span>
+            </summary>
+            <div id="storyProse" class="mt-3 pt-3 border-t border-zinc-950/[0.05] dark:border-white/[0.06] space-y-2.5 text-[13.5px] leading-[1.78] text-zinc-700 dark:text-zinc-300">
+              <p class="text-zinc-500 dark:text-zinc-400">正在汇总全部无感探针读数…</p>
+            </div>
+          </details>
+        </div>
+      </article>
     </section>
 
-    <!-- Zone 2: Progressive-Disclosure Workspace (Eliminates Endless Vertical Card Stack) -->
-    <section aria-label="深度诊断工作区" class="space-y-4">
-      <!-- Segmented Workspace Switcher with Live Scent Badges -->
+    <!-- Zone 2: 6 Business Scenario Visual Pass-Rate Strip (Direct Graphic Meters, Zero Extra Clicks) -->
+    <section id="scenarioSection" aria-label="六大业务场景准入仪表" class="surface-sheet rounded-2xl p-4 sm:p-5">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-zinc-950 dark:text-white">六大业务场景准入模拟</h2>
+          <span id="scenarioTargetBadge" class="hidden sm:inline text-xs text-zinc-500 dark:text-zinc-400">融合 8 源欺诈库 + 当前浏览器指纹</span>
+        </div>
+        <span id="scenarioSummaryBadge" class="inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">评估中…</span>
+      </div>
+      <div id="scenarioGrid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+        <!-- Populated dynamically with icons, scores & colored progress bars -->
+      </div>
+    </section>
+
+    <!-- Zone 3: 3-Tab Deep Diagnostic Workspace -->
+    <section aria-label="深度诊断工作区" class="space-y-3.5">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <nav id="workspaceTabs" class="flex items-center gap-1 overflow-x-auto p-1 rounded-xl bg-zinc-200/65 dark:bg-[#15181F] w-full sm:w-auto" role="tablist" aria-label="诊断视图切换">
           <button type="button" role="tab" data-wstab="checks" aria-selected="true" class="ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs font-semibold transition bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white">
             <span>逐项风控体检</span>
             <span id="tabChecksBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-100 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">24</span>
           </button>
-          <button type="button" role="tab" data-wstab="scenarios" aria-selected="false" class="ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs font-medium transition text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
-            <span>业务场景准入</span>
-            <span id="tabScenariosBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">--/6</span>
-          </button>
           <button type="button" role="tab" data-wstab="routes" aria-selected="false" class="ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs font-medium transition text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
-            <span>分流与地区模拟</span>
+            <span>8 路分流与地区模拟</span>
             <span id="tabRoutesBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">8 路</span>
           </button>
           <button type="button" role="tab" data-wstab="probes" aria-selected="false" class="ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs font-medium transition text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
-            <span>原始探针库</span>
+            <span>148 项原始探针库</span>
             <span id="probeCountBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">0/148</span>
           </button>
         </nav>
       </div>
 
-      <!-- Panel 1 (Default Active): 24 Cross-Layer Disguise & Protocol Checks -->
+      <!-- Panel 1 (Default Active): 24 Cross-Layer Disguise & Protocol Checks (2-Column Visual Cards, Anomalies First) -->
       <div id="panelChecks" data-wspanel="checks" class="ws-panel surface-sheet rounded-2xl overflow-hidden">
-        <div class="px-6 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 class="text-base font-semibold text-zinc-950 dark:text-white">伪装矛盾、深层协议与出口情报逐项体检</h2>
-            <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">20 项跨层一致性与信誉核验 + 4 项现代连接安全诊断 · 修改代理或系统设置后可点对应行「重测」即时验证</p>
+        <div class="px-5 py-3.5 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-wrap items-baseline gap-2">
+            <h2 class="text-sm sm:text-base font-semibold text-zinc-950 dark:text-white">24 项跨层一致性与协议体检</h2>
+            <span class="text-xs text-zinc-500 dark:text-zinc-400">异常项自动置顶 · 改完设置可点「重测」即时验证</span>
           </div>
           <div id="checkFilterBar" class="inline-flex rounded-lg bg-zinc-100 p-0.5 dark:bg-zinc-800/80">
             <button type="button" data-ckfilter="all" class="ckf-btn py-1 px-3 text-xs font-medium rounded-md bg-white text-zinc-950 shadow-2xs dark:bg-zinc-900 dark:text-white">全部 24</button>
@@ -332,62 +368,41 @@
           </div>
         </div>
 
-        <div class="px-6 py-2.5 bg-zinc-50/70 border-b border-zinc-950/[0.05] dark:bg-white/[0.02] dark:border-white/[0.06]">
-          <h3 class="text-xs font-semibold text-zinc-600 dark:text-zinc-400">核心伪装、底层硬件与出口信誉一致性（20 项）</h3>
-        </div>
-        <div id="coreChecksList" class="divide-y divide-zinc-950/[0.06] dark:divide-white/[0.06]"></div>
+        <div class="p-4 sm:p-5 space-y-4">
+          <div id="coreChecksList" class="grid grid-cols-1 lg:grid-cols-2 gap-2.5"></div>
 
-        <div class="px-6 py-2.5 bg-zinc-50/70 border-y border-zinc-950/[0.05] dark:bg-white/[0.02] dark:border-white/[0.06]">
-          <h3 class="text-xs font-semibold text-zinc-600 dark:text-zinc-400">传输层安全与中间人解密排查（4 项 · 不扣伪装分）</h3>
-        </div>
-        <div id="protoChecksList" class="divide-y divide-zinc-950/[0.06] dark:divide-white/[0.06]"></div>
-      </div>
-
-      <!-- Panel 2: 6 Business Scenario Suitability Meters (Un-nested Hairline Grid) -->
-      <div id="panelScenarios" data-wspanel="scenarios" hidden class="ws-panel">
-        <div id="scenarioSection" class="surface-sheet rounded-2xl overflow-hidden">
-          <div class="px-6 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 class="text-base font-semibold text-zinc-950 dark:text-white">六大业务场景准入与风控通过率模拟</h2>
-              <p id="scenarioTargetBadge" class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">实时融合当前出口信誉 + 浏览器指纹</p>
-            </div>
-            <span id="scenarioSummaryBadge" class="inline-flex items-center py-1 px-3 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">正在拉取多源信誉与脏邻居数据…</span>
-          </div>
-          <div id="scenarioGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-zinc-950/[0.06] dark:bg-white/[0.06]">
-            <!-- Populated dynamically as flat architectural cells (no nested cards) -->
+          <div class="pt-3 border-t border-zinc-950/[0.06] dark:border-white/[0.07]">
+            <h3 class="mb-2.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">传输层加密与隧道状态（4 项 · 不计入扣分）</h3>
+            <div id="protoChecksList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5"></div>
           </div>
         </div>
       </div>
 
-      <!-- Panel 3: 8-Route Outbound Split Matrix + Target Country Alignment Simulator -->
+      <!-- Panel 2: 8-Route Outbound Split Matrix + Target Country Alignment Simulator -->
       <div id="panelRoutes" data-wspanel="routes" hidden class="ws-panel surface-sheet rounded-2xl overflow-hidden divide-y divide-zinc-950/[0.06] dark:divide-white/[0.07]">
-        <!-- Sub-section A: 8-Route Split Matrix -->
         <div>
-          <div class="px-6 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
+          <div class="px-5 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 class="text-base font-semibold text-zinc-950 dark:text-white">多目标路由与分流照妖镜</h2>
-              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">并发请求国内外、AI 平台与双栈探针，抓捕规则分流漏底与双栈泄漏</p>
+              <h2 class="text-base font-semibold text-zinc-950 dark:text-white">8 路并发分流矩阵</h2>
+              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">实测国内外、OpenAI / Claude 与 IPv4/v6 双栈出口是否漏底</p>
             </div>
             <span id="splitSummaryBadge" class="inline-flex items-center py-1 px-3 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">探测中</span>
           </div>
-          <div id="routeMatrix" class="grid grid-cols-1 md:grid-cols-2 gap-px bg-zinc-950/[0.06] dark:bg-white/[0.06] text-xs">
-            <!-- Populated dynamically -->
-          </div>
+          <div id="routeMatrix" class="grid grid-cols-1 md:grid-cols-2 gap-px bg-zinc-950/[0.06] dark:bg-white/[0.06] text-xs"></div>
         </div>
 
-        <!-- Sub-section B: Target Country Alignment Simulator -->
         <div>
-          <div class="px-6 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
+          <div class="px-5 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 class="text-base font-semibold text-zinc-950 dark:text-white">目标国家 / 地区伪装对齐模拟</h2>
-              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">选择你想伪装成的目标地区，逐项核验当前出口、原生信誉、时区、语言、DNS 与 WebRTC 是否露馅</p>
+              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">选择你想伪装的目标地区，检查 6 大维度是否对齐</p>
             </div>
             <span id="targetVerdictBadge" class="inline-flex items-center py-1 px-3 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">评估中…</span>
           </div>
 
-          <div class="px-6 py-4 bg-zinc-50/50 dark:bg-white/[0.015] border-b border-zinc-950/[0.06] dark:border-white/[0.06] flex flex-wrap items-center justify-between gap-3">
+          <div class="px-5 py-3.5 bg-zinc-50/50 dark:bg-white/[0.015] border-b border-zinc-950/[0.06] dark:border-white/[0.06] flex flex-wrap items-center justify-between gap-3">
             <div id="targetQuickPills" class="flex flex-wrap items-center gap-1.5">
-              <button type="button" data-tgcc="" class="tg-pill py-1 px-2.5 rounded-lg text-xs font-medium bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">自动（按当前出口）</button>
+              <button type="button" data-tgcc="" class="tg-pill py-1 px-2.5 rounded-lg text-xs font-medium bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">自动（按出口）</button>
               <button type="button" data-tgcc="US" class="tg-pill py-1 px-2.5 rounded-lg text-xs font-medium bg-white ring-1 ring-zinc-950/[0.08] text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-800 dark:ring-white/[0.08] dark:text-zinc-300">🇺🇸 美国</button>
               <button type="button" data-tgcc="JP" class="tg-pill py-1 px-2.5 rounded-lg text-xs font-medium bg-white ring-1 ring-zinc-950/[0.08] text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-800 dark:ring-white/[0.08] dark:text-zinc-300">🇯🇵 日本</button>
               <button type="button" data-tgcc="SG" class="tg-pill py-1 px-2.5 rounded-lg text-xs font-medium bg-white ring-1 ring-zinc-950/[0.08] text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-800 dark:ring-white/[0.08] dark:text-zinc-300">🇸🇬 新加坡</button>
@@ -408,13 +423,13 @@
         </div>
       </div>
 
-      <!-- Panel 4: 148 Full Sniffer Data Explorer -->
+      <!-- Panel 3: 148 Full Sniffer Data Explorer -->
       <div id="explorerSection" data-wspanel="probes" hidden class="ws-panel surface-sheet rounded-2xl overflow-hidden">
-        <div class="px-6 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] space-y-3.5">
+        <div class="px-5 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 class="text-base font-semibold text-zinc-950 dark:text-white">148 项原始探针读数库</h2>
-              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">点击任意行可复制读数；悬停「?」查看风控原理与完整字段（除底部 2 项手动实测外，其余 146 项均为自动无感采集）</p>
+              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">点击任意行复制读数；悬停「?」查看检测原理</p>
             </div>
             <div class="relative w-full sm:w-72">
               <div class="absolute inset-y-0 start-0 flex items-center pointer-events-none ps-3">
@@ -432,9 +447,9 @@
     </section>
 
     <!-- Quiet Footer -->
-    <footer class="pt-2 pb-6 text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap items-center justify-between gap-2">
-      <span>WhoProbe v7.0.0 · 被动 L3/L4 BPF 嗅探 · :443 伪装验真 · 多源 BGP 信誉 · 148 项全栈检测</span>
-      <span>所有交叉判定均在当前会话实时计算，服务端不持久化保存访问者 IP 或指纹日志</span>
+    <footer class="pt-1 pb-5 text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap items-center justify-between gap-2">
+      <span>WhoProbe v7.1.0 · 被动 L3/L4 BPF 嗅探 · :443 伪装验真 · 多源 BGP 信誉 · 148 项全栈检测</span>
+      <span>当前会话实时计算 · 零持久化日志</span>
     </footer>
   </main>
 
@@ -442,6 +457,6 @@
   <div id="globalTip" role="tooltip" hidden class="fixed z-50 max-w-xs sm:max-w-sm rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-100 shadow-xl pointer-events-none whitespace-pre-line dark:border-white/[0.12] dark:bg-zinc-900"></div>
   <div id="toastBar" hidden class="fixed bottom-5 right-5 z-50 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-950 dark:border-white"></div>
 
-  <script src="./assets/app.js?v=7.0.0"></script>
+  <script src="./assets/app.js?v=7.1.0"></script>
 </body>
 </html>

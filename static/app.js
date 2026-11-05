@@ -1,4 +1,4 @@
-/* WhoProbe v7.0.0 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.2.1 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -499,6 +499,12 @@
     const hay = [geo.isp, geo.org, geo.asFull, geo.asName, geo.ptr].filter(Boolean).join(" ");
     return !!(geo.hosting || geo.hostingInferred || (asnNum && DC_ASN.has(asnNum)) || DC_RE.test(hay));
   }
+  const MOBILE_RE = /\b5gc\b|\b5g\b|\b4g\b|\blte\b|cellular|mobile|mobility|wireless|cmnet|cmiot|chinamobile|china mobile|unicom mobile|t-mobile|verizon wireless|at&t mobility|docomo|kddi|vodafone/i;
+  function isMobileIp(geo) {
+    if (!geo) return false;
+    const hay = [geo.isp, geo.org, geo.asFull, geo.asName, geo.ptr].filter(Boolean).join(" ");
+    return !!(geo.mobile || MOBILE_RE.test(hay));
+  }
   const RELAY4 = [[104, 28], [172, 224], [172, 225], [172, 226], [146, 75], [140, 248]];
   function isAppleRelay(ip) {
     const s = String(ip || "");
@@ -522,6 +528,119 @@
   function netPrefix(ip) {
     if (!ip) return "";
     return ip.includes(":") ? expandV6(ip).slice(0, 4).join(":") : ip.split(".").slice(0, 2).join(".");
+  }
+
+  function normalizeCarrierKey(info = {}) {
+    const ip = String(info.ip || "").trim().toLowerCase();
+    const asnNum = String(info.asn || "").replace(/^AS/i, "").trim();
+    const hay = [info.isp, info.org, info.asFull, info.asName, info.label].filter(Boolean).join(" ").toLowerCase();
+    if (
+      /^240e:/.test(ip) ||
+      /^(4134|4809|4812|4816|58466|134764|140486)$/.test(asnNum) ||
+      /chinanet|china ?telecom|chinatelecom|\bctcc\b|中国电信|电信/.test(hay)
+    ) return "cn-telecom";
+    if (
+      /^2409:8/.test(ip) ||
+      /^(9808|24400|24547|56040|56041|56042|56044|56046|56047|56048)$/.test(asnNum) ||
+      /china ?mobile|chinamobile|cmnet|cmiot|中国移动|移动/.test(hay)
+    ) return "cn-mobile";
+    if (
+      /^2408:8/.test(ip) ||
+      /^(4837|10099|17621|17622|17623|17816)$/.test(asnNum) ||
+      /china ?unicom|china169|unicom|uninet|中国联通|联通/.test(hay)
+    ) return "cn-unicom";
+    if (/^240c:|^2001:da8:/.test(ip) || /^4538$/.test(asnNum) || /cernet|教育网/.test(hay)) return "cn-cernet";
+    const cleaned = hay
+      .replace(/\bas\d+\b/g, " ")
+      .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length >= 3 && !/^(the|inc|llc|ltd|corp|corporation|company|co|communications|communication|telecom|telecommunications|network|networks|holdings|group|province|city|broadband|internet|services|service|wireless|mobile|mobility|cellular|5gc|data|technology|technologies)$/.test(w));
+    if (cleaned.length) return `org:${cleaned[0]}`;
+    if (asnNum) return `as:${asnNum}`;
+    return "";
+  }
+
+  function isCellularNativeLink(uaOs, osMismatch) {
+    if (osMismatch || R.netKind === "dc" || R.netKind === "relay") return false;
+    if (R.netKind === "mobile") return true;
+    try {
+      if (navigator.connection && navigator.connection.type === "cellular") return true;
+    } catch (e) {}
+    if (/^(iOS|Android|HarmonyOS)$/.test(uaOs || "") && R.ipCC && (!R.tz || tzCC(R.tz) === R.ipCC)) {
+      return true;
+    }
+    return false;
+  }
+
+  function isSameCarrierCandidate(candIp) {
+    if (!candIp || !R.ip) return false;
+    if (candIp === R.ip) return true;
+    if (netPrefix(candIp) && netPrefix(candIp) === netPrefix(R.ip)) return true;
+    if (R.netKind === "dc" || R.netKind === "relay") return false;
+
+    const meta = R.ipMeta?.[candIp] || null;
+    if (meta?.hosting) return false;
+    const matchedExit = Object.values(R.exits || {}).find(x => x && x.ip === candIp);
+    const candCC = meta?.cc || matchedExit?.cc || (/^240[89ce]:/i.test(candIp) ? "CN" : "");
+    if (!candCC || !R.ipCC || candCC !== R.ipCC) return false;
+
+    const exitKey = normalizeCarrierKey({
+      ip: R.ip,
+      asn: R.asn,
+      org: R.org,
+      isp: R.srv?.geo?.isp,
+      asFull: R.srv?.geo?.asFull,
+      asName: R.srv?.geo?.asName
+    });
+    const candKey = normalizeCarrierKey({
+      ip: candIp,
+      asn: meta?.asn,
+      org: meta?.org,
+      isp: meta?.isp,
+      asFull: meta?.asFull,
+      label: matchedExit?.label
+    });
+    if (exitKey && candKey && exitKey === candKey) return true;
+    if (meta?.asn && R.asn && String(meta.asn).replace(/^AS/i, "") === String(R.asn).replace(/^AS/i, "")) return true;
+    if ((candIp === R.stack?.v4 || candIp === R.stack?.v6) && (!candKey || !exitKey)) return true;
+    return false;
+  }
+
+  function getLeakedWebrtcIps() {
+    const rtcList = Array.isArray(R.rtc) ? R.rtc : [];
+    if (!rtcList.length || !R.ip) return [];
+    return rtcList.filter(ip => !isSameCarrierCandidate(ip));
+  }
+
+  function analyzeExitSplit() {
+    const ex = R.exits || {};
+    const validExits = Object.entries(ex).filter(([, v]) => v && v.ip);
+    const countries = new Set(validExits.map(([, v]) => v.cc).filter(Boolean));
+    const cnIp = ex.ex_cn;
+    const cnLeak = !!(cnIp && cnIp.cc === "CN" && R.ipCC && R.ipCC !== "CN");
+    if (cnLeak) {
+      return { state: "cn-leak", countries, distinctCount: Math.max(2, countries.size), validExits };
+    }
+    if (countries.size > 1) {
+      return { state: "multi-country", countries, distinctCount: countries.size, validExits };
+    }
+    const v4Prefixes = new Set(validExits.filter(([, v]) => !v.ip.includes(":")).map(([, v]) => netPrefix(v.ip)).filter(Boolean));
+    const v6Prefixes = new Set(validExits.filter(([, v]) => v.ip.includes(":")).map(([, v]) => netPrefix(v.ip)).filter(Boolean));
+    const hasUnalignedExit = validExits.some(([k, v]) => k !== "ex_self" && netPrefix(v.ip) !== netPrefix(R.ip) && !isSameCarrierCandidate(v.ip));
+    if ((v4Prefixes.size > 1 || v6Prefixes.size > 1) && hasUnalignedExit) {
+      return { state: "multi-prefix", countries, distinctCount: v4Prefixes.size + v6Prefixes.size, validExits };
+    }
+    if (v4Prefixes.size >= 1 && v6Prefixes.size >= 1 && hasUnalignedExit) {
+      return { state: "dual-stack-mismatch", countries, distinctCount: 2, validExits };
+    }
+    return {
+      state: "ok",
+      dualStackAligned: v4Prefixes.size >= 1 && v6Prefixes.size >= 1,
+      cgnatAligned: v4Prefixes.size > 1 || v6Prefixes.size > 1,
+      countries,
+      distinctCount: 1,
+      validExits
+    };
   }
 
   const JS_FEATURES = [
@@ -956,7 +1075,7 @@
     if (!R.netKind && (R.ip || R.asn || R.org)) {
       const isRelay = isAppleRelay(R.ip || "");
       const isDc = !isRelay && (meta.hosting === true || isDataCenterIp({ asn: R.asn, org: R.org, isp: R.org }));
-      const isMob = !!meta.mobile;
+      const isMob = !isDc && (!!meta.mobile || isMobileIp({ org: R.org, isp: R.org, asFull: R.asn }));
       R.netKind = isRelay ? "relay" : isDc ? "dc" : isMob ? "mobile" : "isp";
       setProbe("nettype",
         isRelay ? "Apple iCloud 专用代理转发"
@@ -1069,7 +1188,7 @@
     // Network type
     const isRelay = isAppleRelay(ip);
     const isDc = !isRelay && isDataCenterIp(g);
-    const isMob = !!g.mobile;
+    const isMob = !isDc && isMobileIp(g);
     R.netKind = isRelay ? "relay" : isDc ? "dc" : isMob ? "mobile" : "isp";
     setProbe("nettype",
       isRelay ? "Apple iCloud 专用代理转发"
@@ -1106,16 +1225,25 @@
       });
       setProbe("ja4t", `${tcp.ja4t || "–"} · Win=${tcp.window} · MSS=${tcp.mss || "?"} · WS=${ws}`);
 
+      const uaOsNow = R.dev?.os || "";
+      const claimAppleNow = /^(macOS|iOS|iPadOS)$/.test(uaOsNow);
+      const claimWinNow = uaOsNow === "Windows";
+      const osMisNow =
+        (fam === "windows" && !claimWinNow) ||
+        (fam === "apple" && !claimAppleNow) ||
+        (fam === "linux" && (claimAppleNow || claimWinNow));
+      const cellularMtuOk = isCellularNativeLink(uaOsNow, osMisNow) && tcp.mtu >= 1360 && tcp.mtu <= 1476;
       const tunLabels = {
         ethernet: `标准以太网直连 (MTU ${tcp.mtu})`,
         pppoe: `PPPoE 光猫拨号宽带 (MTU ${tcp.mtu})`,
-        wireguard: `疑似 WireGuard 隧道封装 (MTU ${tcp.mtu})`,
-        ipsec_or_tun: `疑似 IPsec / 代理 TUN 虚拟网卡 (MTU ${tcp.mtu})`,
+        wireguard: cellularMtuOk ? `蜂窝移动 4G/5G 原生承载封装 (MTU ${tcp.mtu})` : `疑似 WireGuard 隧道封装 (MTU ${tcp.mtu})`,
+        ipsec_or_tun: cellularMtuOk ? `蜂窝移动 GTP / CLAT 原生封装 (MTU ${tcp.mtu})` : `疑似 IPsec / 代理 TUN 虚拟网卡 (MTU ${tcp.mtu})`,
         openvpn_or_tun: `疑似 OpenVPN / 跨境隧道封装 (MTU ${tcp.mtu})`,
+        tunnel: cellularMtuOk ? `蜂窝移动承载链路封装 (MTU ${tcp.mtu})` : `非标准隧道 MTU ${tcp.mtu} (MSS ${tcp.mss})`,
         jumbo_cloud: `云服务器内网巨型帧 (MTU ${tcp.mtu})`
       };
       setProbe("tunnel", tunLabels[tun] || (tcp.mtu ? `MTU ${tcp.mtu} (MSS ${tcp.mss})` : "未携带 MSS"), {
-        tone: tun && !["ethernet", "pppoe"].includes(tun) ? "warn" : "neutral"
+        tone: tun && !["ethernet", "pppoe"].includes(tun) && !cellularMtuOk ? "warn" : (cellularMtuOk ? "ok" : "neutral")
       });
 
       // IP layer DF / IPID / ECN & TCP Timestamp clock Hz + stateless SYN-spoof check
@@ -1732,7 +1860,7 @@
       const v6 = r6?.ip && r6.ip.includes(":") ? r6.ip : "";
       R.stack = { v4, v6 };
       setProbe("stack", `IPv4: ${v4 || "无"} · IPv6: ${v6 || "未启用/仅IPv4"}`);
-      setRouteRow("stack", v4 && v6 ? "IPv4 + IPv6 双栈在线" : v4 ? "纯 IPv4 链路" : "纯 IPv6 链路", `v4: ${v4 || "–"} / v6: ${v6 || "无"}`, v4 && v6 ? "warn" : "ok");
+      setRouteRow("stack", v4 && v6 ? "IPv4 + IPv6 双栈在线" : v4 ? "纯 IPv4 链路" : "纯 IPv6 链路", `v4: ${v4 || "–"} / v6: ${v6 || "无"}`, "ok");
     })();
 
     const [, , , , cfKv] = await Promise.all([pCn, pIntl, pGpt, pClaude, pCf, pStack]);
@@ -1754,32 +1882,55 @@
       tone: hasH3 ? "ok" : "neutral"
     });
 
-    // Update split summary badge & workspace tab scent badge
-    const prefixes = new Set(Object.values(R.exits).map(x => netPrefix(x?.ip)).filter(Boolean));
-    const cnSplitHit = R.exits.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN";
+    R.exitsDone = true;
+    refreshExitSplitBadges();
+  }
+
+  function refreshExitSplitBadges() {
+    if (!R.exitsDone) return;
+    const sp = analyzeExitSplit();
+    const isBad = sp.state === "cn-leak";
+    const isWarn = sp.state === "multi-country" || sp.state === "multi-prefix" || sp.state === "dual-stack-mismatch";
     const badge = $("#splitSummaryBadge");
     if (badge) {
-      badge.textContent = prefixes.size > 1 ? `分流到 ${prefixes.size} 个网段` : "全局单一出口";
+      badge.textContent = isBad
+        ? "大陆分流漏底"
+        : isWarn
+        ? `分流到 ${sp.distinctCount} 个出口`
+        : sp.dualStackAligned
+        ? "同运营商双栈一致"
+        : sp.cgnatAligned
+        ? "同运营商 CGNAT 一致"
+        : "全局单一出口";
       badge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium " + (
-        cnSplitHit
+        isBad
           ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
-          : prefixes.size > 1
+          : isWarn
           ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
           : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
       );
     }
     const tabRt = $("#tabRoutesBadge");
     if (tabRt) {
-      tabRt.textContent = cnSplitHit ? "分流漏底" : prefixes.size > 1 ? `${prefixes.size} 网段` : "单一出口";
+      tabRt.textContent = isBad ? "分流漏底" : isWarn ? `${sp.distinctCount} 出口` : "单一出口";
       tabRt.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
-        cnSplitHit
+        isBad
           ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
-          : prefixes.size > 1
+          : isWarn
           ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
           : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
       );
     }
-    R.exitsDone = true;
+    if (R.stack && (R.stack.v4 || R.stack.v6)) {
+      const { v4, v6 } = R.stack;
+      const v6Leak = v4 && v6 && R.ip && !isSameCarrierCandidate(v6) && !isSameCarrierCandidate(v4);
+      setRouteRow(
+        "stack",
+        v4 && v6 ? "IPv4 + IPv6 双栈在线" : v4 ? "纯 IPv4 链路" : "纯 IPv6 链路",
+        `v4: ${v4 || "–"} / v6: ${v6 || "无"}`,
+        v6Leak ? "bad" : "ok"
+      );
+    }
   }
 
   // 4. Recursive DNS Resolver Probe (1 item: dns)
@@ -1936,12 +2087,10 @@
 
     if (!pubList.length) {
       setProbe("webrtc", "安全（未暴露公网 STUN 候选地址）", { tone: "ok" });
+    } else if (!R.ip) {
+      setProbe("webrtc", `${pubList.join(" · ")} (等待主出口归属核验…)`, { tone: "neutral" });
     } else {
-      const known = new Set([R.ip, R.stack?.v4, R.stack?.v6].filter(Boolean));
-      const leaked = pubList.filter(x => !known.has(x) && netPrefix(x) !== netPrefix(R.ip));
-      setProbe("webrtc", pubList.join(" · ") + (leaked.length ? " (与当前代理出口不符！)" : " (与出口一致)"), {
-        tone: leaked.length ? "bad" : "ok"
-      });
+      refreshWebrtcProbeRow();
     }
     updateUdpRttProbe();
 
@@ -1949,6 +2098,53 @@
     setProbe("lan", realLan.length ? `暴露真实局域网 IP: ${realLan.join(", ")}` : lanList.length ? `已由 mDNS 隐藏 (${lanList[0]})` : "未暴露局域网候选", {
       tone: realLan.length ? "warn" : "ok"
     });
+  }
+
+  function refreshWebrtcProbeRow() {
+    if (!R.rtcDone || R.rtc === "off") return;
+    const pubList = Array.isArray(R.rtc) ? R.rtc : [];
+    if (!pubList.length) {
+      setProbe("webrtc", "安全（未暴露公网 STUN 候选地址）", { tone: "ok" });
+      return;
+    }
+    if (!R.ip) return;
+    const leaked = getLeakedWebrtcIps();
+    const directSame = pubList.every(x => x === R.ip || netPrefix(x) === netPrefix(R.ip));
+    const suffix = leaked.length
+      ? " (与当前代理出口不符！)"
+      : directSame
+      ? " (与出口一致)"
+      : " (同国同运营商双栈/CGNAT，未跨网泄漏)";
+    setProbe("webrtc", pubList.join(" · ") + suffix, {
+      tone: leaked.length ? "bad" : "ok"
+    });
+  }
+
+  async function reconcileCandidateIpMeta() {
+    R.ipMeta = R.ipMeta || {};
+    const candidates = new Set();
+    const addIfUnfamiliar = ip => {
+      if (!ip || typeof ip !== "string") return;
+      const clean = ip.trim();
+      if (!clean || clean === R.ip) return;
+      if (R.ip && netPrefix(clean) && netPrefix(clean) === netPrefix(R.ip)) return;
+      if (!R.ipMeta[clean]) candidates.add(clean);
+    };
+    if (Array.isArray(R.rtc)) R.rtc.forEach(addIfUnfamiliar);
+    if (R.stack?.v4) addIfUnfamiliar(R.stack.v4);
+    if (R.stack?.v6) addIfUnfamiliar(R.stack.v6);
+    for (const v of Object.values(R.exits || {})) {
+      if (v?.ip) addIfUnfamiliar(v.ip);
+    }
+    const batch = Array.from(candidates).slice(0, 8);
+    if (batch.length) {
+      const res = await getJSON(`./api/who/ip-meta?ips=${encodeURIComponent(batch.join(","))}`, 2800, "omit").catch(() => null);
+      if (res?.ok && res.items && typeof res.items === "object") {
+        Object.assign(R.ipMeta, res.items);
+      }
+    }
+    refreshWebrtcProbeRow();
+    refreshExitSplitBadges();
   }
 
   // 6. IPv6 EUI-64 Hardware MAC Leak Check (1 item: v6mac)
@@ -3137,9 +3333,13 @@
 
     // High-res timer step
     let minStep = Infinity, last = performance.now();
-    for (let i = 0; i < 25000; i++) {
+    for (let i = 0; i < 120000; i++) {
       const cur = performance.now();
-      if (cur > last) { minStep = Math.min(minStep, cur - last); last = cur; }
+      if (cur > last) {
+        minStep = Math.min(minStep, cur - last);
+        last = cur;
+        if (i >= 15000) break;
+      }
     }
     setProbe("timer", minStep === Infinity ? "被冻结/粗化" : `最小步长 ${+minStep.toFixed(4)} ms${minStep >= 1 ? " (防指纹时钟降精度)" : " (微秒级高精度)"}`);
 
@@ -3161,24 +3361,59 @@
     try {
       const simdWasm = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 8, 1, 6, 0, 65, 0, 253, 15, 11]);
       const simdOk = typeof WebAssembly === "object" && typeof WebAssembly.validate === "function" && WebAssembly.validate(simdWasm);
-      const slices = [];
+      const timerResMs = Number.isFinite(minStep) ? minStep : 100;
       let acc = 1.000001;
-      for (let s = 0; s < 60; s++) {
-        const t0 = performance.now();
-        for (let k = 0; k < 18000; k++) {
-          acc = (acc * 1.0000003 + 0.0000007) % 1024;
+      if (timerResMs >= 5) {
+        for (let k = 0; k < 24000; k++) acc = (acc * 1.0000003 + 0.0000007) % 1024;
+        R.cpuBench = { simdOk, p50Ms: +timerResMs.toFixed(3), p98Ms: +timerResMs.toFixed(3), stealRatio: 1, timerQuantized: true, sink: acc };
+        setProbe("cpubench", `WASM SIMD ${simdOk ? "支持" : "不支持"} · 隐私粗化时钟 (${+timerResMs.toFixed(1)}ms 步长，跳过微秒抢占比对)`, {
+          tone: "ok",
+          why: `performance.now() 最小步长为 ${+timerResMs.toFixed(2)}ms，属浏览器防指纹降精度保护`
+        });
+      } else {
+        const targetSliceMs = timerResMs >= 0.4 ? 3.2 : 0.85;
+        let iters = 36000;
+        const calStart = performance.now();
+        while (iters < 1400000 && (performance.now() - calStart) < 18) {
+          const tCal = performance.now();
+          for (let k = 0; k < iters; k++) acc = (acc * 1.0000003 + 0.0000007) % 1024;
+          const dtCal = performance.now() - tCal;
+          if (dtCal >= targetSliceMs * 0.85) {
+            if (dtCal < targetSliceMs) iters = Math.min(1400000, Math.ceil(iters * (targetSliceMs / dtCal)));
+            break;
+          }
+          iters = Math.min(1400000, dtCal > 0 ? Math.ceil(iters * Math.min(8, (targetSliceMs / dtCal) * 1.15)) : iters * 4);
         }
-        slices.push(Math.max(0.005, performance.now() - t0));
+        const slices = [];
+        let zeroCnt = 0;
+        const benchStart = performance.now();
+        for (let s = 0; s < 28; s++) {
+          const t0 = performance.now();
+          for (let k = 0; k < iters; k++) {
+            acc = (acc * 1.0000003 + 0.0000007) % 1024;
+          }
+          const rawDt = performance.now() - t0;
+          if (rawDt <= 0) zeroCnt++;
+          slices.push(rawDt);
+          if (s >= 11 && (performance.now() - benchStart) >= 85) break;
+        }
+        const sorted = slices.slice().sort((a, b) => a - b);
+        const p50 = sorted[Math.floor(sorted.length * 0.5)] || 0;
+        const p98 = sorted[Math.floor(sorted.length * 0.98)] || 0;
+        const timerQuantized = zeroCnt > 0 || p50 < Math.max(0.15, timerResMs * 1.8);
+        const stealRatio = timerQuantized ? 1 : +(p98 / Math.max(p50, 0.1)).toFixed(2);
+        R.cpuBench = { simdOk, p50Ms: +p50.toFixed(3), p98Ms: +p98.toFixed(3), stealRatio, timerQuantized, sink: acc };
+        setProbe(
+          "cpubench",
+          timerQuantized
+            ? `WASM SIMD ${simdOk ? "支持" : "不支持"} · WebKit/隐私量化时钟 (${+timerResMs.toFixed(2)}ms 步长，物理端侧正常)`
+            : `WASM SIMD ${simdOk ? "支持" : "不支持"} · 单片中位 ${p50.toFixed(2)}ms · 抢占抖动比 p98/p50=${stealRatio}x`,
+          {
+            tone: stealRatio >= 5.5 ? "warn" : "ok",
+            why: `${slices.length} 组自适应时间片 (iters=${iters}) p50=${p50.toFixed(3)}ms, p98=${p98.toFixed(3)}ms, 时钟步长=${+timerResMs.toFixed(4)}ms（超售云主机或虚拟机发生 Hypervisor VM-Exit 时尾延迟显著放大）`
+          }
+        );
       }
-      const sorted = slices.slice().sort((a, b) => a - b);
-      const p50 = sorted[Math.floor(sorted.length * 0.5)];
-      const p98 = sorted[Math.floor(sorted.length * 0.98)];
-      const stealRatio = p50 > 0 ? +(p98 / p50).toFixed(2) : 1;
-      R.cpuBench = { simdOk, p50Ms: +p50.toFixed(3), p98Ms: +p98.toFixed(3), stealRatio, sink: acc };
-      setProbe("cpubench", `WASM SIMD ${simdOk ? "支持" : "不支持"} · 单片中位 ${p50.toFixed(2)}ms · 抢占抖动比 p98/p50=${stealRatio}x`, {
-        tone: stealRatio >= 5.5 ? "warn" : "ok",
-        why: `60 组紧致浮点时间片 p50=${p50.toFixed(3)}ms, p98=${p98.toFixed(3)}ms（超售云主机或虚拟机发生 Hypervisor VM-Exit 时尾延迟显著放大）`
-      });
     } catch (e) { setNA("cpubench"); }
 
     // 15c. Native Form Control Subpixel Geometry (uigeom)
@@ -3703,19 +3938,27 @@
     // 5. split: Multi-target Split Tunneling
     const ex = R.exits || {};
     const cnIp = ex.ex_cn;
-    const validExits = Object.entries(ex).filter(([, v]) => v && v.ip);
-    const prefixes = new Set(validExits.map(([, v]) => netPrefix(v.ip)).filter(Boolean));
-    const countries = new Set(validExits.map(([, v]) => v.cc).filter(Boolean));
+    const sp = analyzeExitSplit();
 
     if (!R.exitsDone) {
       out.split = { level: "info", summary: "正在并发比对国内外与 AI 平台分流出口…" };
-    } else if (cnIp && cnIp.cc === "CN" && ipCC && ipCC !== "CN") {
+    } else if (sp.state === "cn-leak" && cnIp) {
       out.split = { level: "bad", summary: `规则分流直接露底：本站走 ${ipCountry}，但大陆测速探针直连暴露真实国内宽带 (${cnIp.ip} · ${cnIp.label})！` };
-    } else if (countries.size > 1 || prefixes.size > 1) {
-      const detail = validExits.map(([k, v]) => `${({ ex_self: "本站", ex_cn: "国内", ex_intl: "国际", ex_gpt: "ChatGPT", ex_claude: "Claude", ex_cf: "CF" })[k] || k}:${v.cc || "?"}`).join(" / ");
-      out.split = { level: "warn", summary: `检测到多路代理分流：浏览器并发请求落在了 ${prefixes.size} 个不同网段 (${detail})` };
+    } else if (sp.state === "multi-country" || sp.state === "multi-prefix" || sp.state === "dual-stack-mismatch") {
+      const detail = sp.validExits.map(([k, v]) => `${({ ex_self: "本站", ex_cn: "国内", ex_intl: "国际", ex_gpt: "ChatGPT", ex_claude: "Claude", ex_cf: "CF" })[k] || k}:${v.cc || "?"}`).join(" / ");
+      out.split = {
+        level: "warn",
+        summary: sp.state === "multi-country"
+          ? `检测到跨国多路分流：并发请求落在了 ${sp.distinctCount} 个不同国家/地区 (${detail})`
+          : `检测到多路代理分流：并发请求落在了不同运营商/异构出口网段 (${detail})`
+      };
     } else {
-      out.split = { level: "ok", summary: `全局路由一致：所有测试目标均稳定走同一 ${ipCountry} 出口网段` };
+      out.split = {
+        level: "ok",
+        summary: sp.dualStackAligned || sp.cgnatAligned
+          ? `全局同源一致：所有可达目标均走同一 ${ipCountry} 运营商出口池（双栈 / CGNAT 正常选路）`
+          : `全局路由一致：所有测试目标均稳定走同一 ${ipCountry} 出口网段`
+      };
     }
 
     // 6. conn: Passive TCP/TLS Stack vs Claimed OS
@@ -3736,16 +3979,22 @@
       const hasGr = !!(tls?.hasGrease ?? tls?.grease);
       const noGrease = tls && !hasGr && R.engine === "V8";
       const tun = tcp.tunnelGuess || tcp.tunnelHint;
+      const cellularMtuOk = isCellularNativeLink(uaOs, osMismatch) && tcp.mtu >= 1360 && tcp.mtu <= 1476;
 
       if (osMismatch) {
         const tcpHuman = ({ windows: "Windows", apple: "macOS / iOS", linux: "Linux / Android" })[tcpFam] || tcp.osGuess || tcpFam;
         out.conn = { level: "bad", summary: `底层协议栈穿帮：UA 声称你在用 ${uaOs}，但替你发起 TCP 连接的机器却是 ${tcpHuman}（典型代理服务器代发连接特征）` };
       } else if (noGrease) {
         out.conn = { level: "bad", summary: `TLS 握手异常：声称为 Chromium 浏览器但缺失 GREASE 扩展，流量疑似被中间人解密重签或非原生浏览器发包` };
-      } else if (tun && !["ethernet", "pppoe"].includes(tun)) {
+      } else if (tun && !["ethernet", "pppoe"].includes(tun) && !cellularMtuOk) {
         out.conn = { level: "warn", summary: `TCP 协议栈系统吻合，但链路 MTU=${tcp.mtu} 暴露了 VPN / 虚拟网卡隧道封装特征 (${tun})` };
       } else {
-        out.conn = { level: "ok", summary: `TCP 初始 TTL=${tcp.initialTtl}、窗口选项与 TLS 指纹均与 ${uaOs || "自报系统"} 原生协议栈吻合` };
+        out.conn = {
+          level: "ok",
+          summary: cellularMtuOk
+            ? `TCP 初始 TTL=${tcp.initialTtl} 与 TLS 指纹吻合 ${uaOs || "端侧"} 原生栈，MTU=${tcp.mtu} 符合 4G/5G 蜂窝移动网络原生承载封装`
+            : `TCP 初始 TTL=${tcp.initialTtl}、窗口选项与 TLS 指纹均与 ${uaOs || "自报系统"} 原生协议栈吻合`
+        };
       }
     }
 
@@ -3828,16 +4077,23 @@
 
     // 10. webrtc: WebRTC STUN Leak & IPv6 MAC Leak
     const rtcList = Array.isArray(R.rtc) ? R.rtc : [];
-    const knownIps = new Set([R.ip, R.stack?.v4, R.stack?.v6].filter(Boolean));
-    const leakedRtc = rtcList.filter(x => !knownIps.has(x) && netPrefix(x) !== netPrefix(R.ip));
-    if (!R.rtcDone && !R.finished) {
-      out.webrtc = { level: "info", summary: "正在执行 STUN UDP 候选穿透与 IPv6 网卡地址核查…" };
+    const leakedRtc = getLeakedWebrtcIps();
+    if ((!R.rtcDone || (rtcList.length && !R.ip)) && !R.finished) {
+      out.webrtc = { level: "info", summary: "正在执行 STUN UDP 候选穿透与出口运营商同源核查…" };
     } else if (R.v6mac) {
       out.webrtc = { level: "bad", summary: `高危硬件泄漏：IPv6 地址中直接编码了物理网卡 MAC 地址 (${R.v6mac})！` };
     } else if (leakedRtc.length) {
       out.webrtc = { level: "bad", summary: `WebRTC UDP 穿透泄漏了与代理出口不同的真实公网 IP：${leakedRtc.join(", ")}` };
     } else {
-      out.webrtc = { level: "ok", summary: rtcList.length ? `WebRTC 反射地址 (${rtcList[0]}) 与当前出口一致，未漏真实 IP` : "WebRTC 未暴露额外公网候选地址，局域网地址已隐藏" };
+      const sameNet = rtcList.length && rtcList.every(x => x === R.ip || netPrefix(x) === netPrefix(R.ip));
+      out.webrtc = {
+        level: "ok",
+        summary: rtcList.length
+          ? (sameNet
+            ? `WebRTC 反射地址 (${rtcList[0]}) 与当前出口一致，未漏真实 IP`
+            : `WebRTC 公网候选 (${rtcList[0]}) 属同国同运营商双栈/CGNAT 地址池，未跨网泄漏`)
+          : "WebRTC 未暴露额外公网候选地址，局域网地址已隐藏"
+      };
     }
 
     // 11. dc: Multi-Source Weighted Voting Datacenter / Hosting / Proxy Check
@@ -3960,9 +4216,10 @@
           : `CPU 紧致微基准尾延迟比偏高 (p98/p50=${steal}x)，存在宿主机调度抢占抖动`
       };
     } else {
+      const jitterDesc = R.cpuBench?.timerQuantized ? "防指纹量化时钟保护正常" : `抢占抖动比 ${steal}x`;
       out.hwvirt = {
         level: "ok",
-        summary: `物理硬件特征自然：WASM SIMD 正常${hwc != null ? ` · ${hwc}/4 项视频硬解芯片就绪` : ""} · 抢占抖动比 ${steal}x`
+        summary: `物理硬件特征自然：WASM SIMD 正常${hwc != null ? ` · ${hwc}/4 项视频硬解芯片就绪` : ""} · ${jitterDesc}`
       };
     }
 
@@ -4154,7 +4411,7 @@
         case "split": return { single: "全局同出口" };
         case "conn": return { single: `${uaOs} 栈吻合` };
         case "rtt": return { single: `${R.httpRtt ?? "--"}ms 正常` };
-        case "dc": return { single: "原生宽带/ISP" };
+        case "dc": return { single: R.netKind === "mobile" ? "蜂窝移动/ISP" : "原生宽带/ISP" };
         case "lease": return { single: "原生直配段" };
         case "reputation": return { single: `纯净 ${R.intel?.purity?.score ?? "--"}` };
         default: return { single: "通过" };
@@ -5035,7 +5292,7 @@
 
     const p1 = `推断你来自${chip(originText, ["langs", "tz", "ex_cn"], cnLeak || (origin?.cc && origin.cc !== R.ipCC) ? "warn" : "default", !!cnLeak, "，")}当前出口位于${chip(exitText, ["ip", "geo"], "default", true, "。")}阅读语言为${chip(langStr, ["langs"], "default", false, "，")}系统时钟设在${chip(tzStr, ["tz", "tzoff"], checks.tz?.level === "bad" ? "bad" : "default", false, "，")}使用${chip(clockStr, ["hour"], "default", false, "。")}`;
     const p2 = `运行${chip(`${R.osLabel || "未知系统"} (${navigator.hardwareConcurrency || "?"} 核)`, ["os", "cpu", "arch"], "default", false, "，")}浏览器为${chip(`${R.engine || "?"} 内核 ${R.browserLabel || "浏览器"}`, ["browser", "engine", "engver"], "default", false, "，")}物理屏${chip(`${R.physScreen || "–"} · ${R.hz || 60}Hz`, ["screen", "hz"], "default", false, "，")}显卡${chip(cleanGpuShort, ["gpu", "webgpu"], R.gpuSoft ? "bad" : "default", false, "（")}${chip(rigLabel, ["gpu", "cpubench"], "default", false, "）。")}`;
-    const netTypeDesc = R.netKind === "dc" ? `机房线路 (${R.org || R.asn})` : `原生宽带 (${R.org || R.asn})`;
+    const netTypeDesc = R.netKind === "dc" ? `机房线路 (${R.org || R.asn})` : R.netKind === "mobile" ? `蜂窝移动 (${R.org || R.asn})` : `原生宽带 (${R.org || R.asn})`;
     const rttDesc = R.httpRtt != null && R.srvTcpRtt != null ? `HTTP ${R.httpRtt}ms / 握手 ${R.srvTcpRtt}ms` : "延迟已采样";
     const purityPhrase = pur?.score != null ? `纯净度${chip(`${pur.score}/100 (${pur.grade})`, ["rep_score", "rep_votes"], pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad", false, "，")}` : "";
     const p3 = `链路走${chip(netTypeDesc, ["isp", "nettype", "rep_asn"], R.netKind === "dc" ? "bad" : "ok", true, "，")}${purityPhrase}DNS 位于${chip(R.dnsCC ? `${flagEmoji(R.dnsCC)} ${countryName(R.dnsCC)}` : "未检出", ["dns", "ecs"], checks.dns?.level === "bad" ? "bad" : "default", false, "，")}测距${chip(rttDesc, ["tcprtt", "muxjitter"], checks.rtt?.level === "bad" ? "bad" : checks.rtt?.level === "warn" ? "warn" : "ok", false, "。")}`;
@@ -5346,6 +5603,9 @@
         reBtn.disabled = true;
         reBtn.textContent = "重测中…";
         for (const fn of fns) { try { await fn(); } catch (err) {} }
+        if (id === "webrtc" || id === "split") {
+          try { await reconcileCandidateIpMeta(); } catch (err) {}
+        }
         renderChecksAndScore(false);
         renderPortrait();
         renderTargetSimulator();
@@ -6351,7 +6611,8 @@
 
     if (seq !== runSeq) return;
 
-    // Phase 4: Derived Cross-Source Probes (IPv6 MAC, Shield Attribution, Composite Hardware/FP IDs)
+    // Phase 4: Derived Cross-Source Probes (Candidate IP Meta Reconciliation, IPv6 MAC, Shield Attribution, Composite Hardware/FP IDs)
+    await reconcileCandidateIpMeta();
     probeV6Mac();
     probeShield();
     await probeCompositeIds();

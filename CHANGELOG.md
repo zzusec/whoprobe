@@ -1,5 +1,17 @@
 # Changelog
 
+## [v7.2.1] - 2026-11-05
+
+### Fixed
+- **消除 iOS / Safari 与原生 4G/5G 双栈蜂窝网络下的 4 项误判**：
+  - **WebRTC 双栈与 5G CGNAT 同源核验 (`/api/who/ip-meta` + `isSameCarrierCandidate`)**：新增服务端轻量并发候选 IP 归属与运营商核验接口及运营商前缀归一算法；当 STUN 反射出的原生 IPv6 或异 `/16` CGNAT 公网 IP 与当前非机房出口同属一个国家与同一运营商时，准确判定为正常原生双栈/CGNAT 选路而非代理泄漏（跨国及机房/云代理泄漏仍 100% 拦截）。
+  - **多出口分流双栈与同运营商地址池去误报 (`analyzeExitSplit`)**：分离 IPv4 与 IPv6 前缀统计，同国同运营商下的 IPv4/IPv6 Happy Eyeballs 双栈并发或 5G CGNAT 多地址池不再误判为多路代理分流。
+  - **蜂窝移动 5GC / GTP / CLAT 原生承载 `MTU 1360–1476` 识别 (`infer_mobile` + `isCellularNativeLink`)**：补齐 `5GC` 等移动核心网自治系统识别；在原生端侧 TCP 协议栈吻合且非机房/中继出口的移动蜂窝链路上，`MTU 1420` 等承载封装不再误报为 VPN 隧道。
+  - **Safari / WebKit `1ms` 隐私时钟量化下的 CPU 抢占比校准 (`cpubench`)**：新增自适应时间片标定与粗化时钟保护守卫，彻底消除 WebKit `1.0ms` 量化步长除以 `0.005ms` 下限导致的 `200x` 虚假抢占告警。
+- **并发加速受限网络备援探针与可信 Cloudflare 源头校验**：国内外备援 GeoIP 探针改为并发竞速收敛，并在服务端校验官方 Cloudflare 边缘网段后安全提取 `CF-Connecting-IP`。
+
+---
+
 ## [v7.2.0] - 2026-11-05
 
 ### Added

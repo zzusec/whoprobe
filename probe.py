@@ -16,6 +16,7 @@ import collections
 import concurrent.futures
 import gzip
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
@@ -182,6 +183,7 @@ def _fetch_geo_ipapi(clean_ip: str, priv: bool) -> dict | None:
         "hosting": bool(raw.get("hosting")),
     }
     out["hostingInferred"] = infer_datacenter(out)
+    out["mobile"] = infer_mobile(out)
     return out
 
 
@@ -221,6 +223,7 @@ def _fetch_geo_ipwhois(clean_ip: str, priv: bool) -> dict | None:
     }
     out["hostingInferred"] = infer_datacenter(out)
     out["hosting"] = out["hostingInferred"]
+    out["mobile"] = infer_mobile(out)
     return out
 
 
@@ -332,6 +335,44 @@ def infer_datacenter(geo: dict) -> bool:
         str(geo.get(k) or "") for k in ("isp", "org", "asFull", "asName", "ptr")
     ).lower()
     return any(kw in hay for kw in DATACENTER_KEYWORDS)
+
+
+MOBILE_KEYWORDS = (
+    "5gc", " 5g", "5g ", "4g", "lte", "cellular", "mobile", "wireless",
+    "cmnet", "cmiot", "chinamobile", "china mobile", "unicom mobile",
+    "t-mobile", "verizon wireless", "at&t mobility", "docomo", "kddi",
+    "vodafone", "telefonica",
+)
+
+
+def infer_mobile(geo: dict) -> bool:
+    if geo.get("mobile"):
+        return True
+    hay = " ".join(
+        str(geo.get(k) or "") for k in ("isp", "org", "asFull", "asName", "ptr")
+    ).lower()
+    return any(kw in hay for kw in MOBILE_KEYWORDS)
+
+
+CLOUDFLARE_NETS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+        "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+        "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+        "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+        "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+        "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+    )
+)
+
+
+def is_cloudflare_edge_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip.split("%")[0].strip())
+    except ValueError:
+        return False
+    return any(addr in net for net in CLOUDFLARE_NETS)
 
 
 # ============================================================================
@@ -918,6 +959,11 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
 
     def _extract_client_ip(self) -> str:
         xri = (self.headers.get("X-Real-IP") or "").strip()
+        cf_ip = (self.headers.get("CF-Connecting-IP") or "").strip()
+        if cf_ip and xri and is_cloudflare_edge_ip(xri):
+            norm_cf, _ = egress_intel.normalize_public_ip(cf_ip)
+            if norm_cf:
+                return norm_cf
         if xri:
             return xri
         xff = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
@@ -1011,6 +1057,40 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             self._send_json(intel_payload)
             return
 
+        # 1c) 轻量批量候选 IP 归属与运营商核验接口 (消除原生双栈 IPv6 与 5G CGNAT STUN/分流误报)
+        if path == "/api/who/ip-meta":
+            qs = urllib.parse.parse_qs(parsed.query)
+            raw_ips = ",".join(qs.get("ips") or [])
+            seen_ips: list[str] = []
+            for tok in raw_ips.split(","):
+                norm_ip, _ = egress_intel.normalize_public_ip(tok.strip())
+                if norm_ip and norm_ip not in seen_ips:
+                    seen_ips.append(norm_ip)
+                if len(seen_ips) >= 8:
+                    break
+            futs = {ip_item: _GEO_POOL.submit(lookup_ip_geo, ip_item) for ip_item in seen_ips}
+            if futs:
+                concurrent.futures.wait(list(futs.values()), timeout=2.2)
+            items: dict[str, dict] = {}
+            for ip_item, fut in futs.items():
+                if fut.done():
+                    try:
+                        g = fut.result()
+                        if isinstance(g, dict) and g.get("ok"):
+                            items[ip_item] = {
+                                "cc": g.get("countryCode") or "",
+                                "asn": g.get("asn") or "",
+                                "org": g.get("org") or g.get("isp") or "",
+                                "isp": g.get("isp") or "",
+                                "asFull": g.get("asFull") or "",
+                                "mobile": bool(g.get("mobile")),
+                                "hosting": bool(g.get("hosting") or g.get("hostingInferred")),
+                            }
+                    except Exception:
+                        continue
+            self._send_json({"ok": True, "items": items}, cache_control="private, max-age=180")
+            return
+
         # 2) 无状态 HTTP ETag 缓存追踪演示探针 (零服务端存储)
         if path == "/api/who/etag":
             inm = (self.headers.get("If-None-Match") or "").strip().strip('"').replace("W/", "").strip('"')
@@ -1030,11 +1110,14 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         # 3) 主服务端观测接口
         if path in ("/api/who/me", "/api/inspect"):
             client_ip = self._extract_client_ip()
+            xri_peer = (self.headers.get("X-Real-IP") or "").strip()
             internal_hdrs = {
                 "x-real-ip", "x-forwarded-for", "x-forwarded-proto",
                 "x-tls-protocol", "x-tls-cipher", "x-tls-curves",
                 "x-tls-alpn", "x-tls-reused", "x-http-version", "connection",
             }
+            if xri_peer and is_cloudflare_edge_ip(xri_peer):
+                internal_hdrs.update({"cf-connecting-ip", "cf-ray", "cf-ipcountry", "cf-visitor", "cdn-loop"})
             header_order = [
                 k for k, _ in self.headers.items() if k.lower() not in internal_hdrs
             ]
@@ -1189,6 +1272,11 @@ def run_self_test() -> None:
     assert "macOS" in os_label and os_fam == "apple"
     assert infer_tunnel_from_mss(1460) == "ethernet"
     assert infer_tunnel_from_mss(1380) == "wireguard"
+    assert infer_mobile({"asFull": "AS140486 CHINATELECOM 5GC network", "isp": "China Telecom"}) is True
+    assert infer_mobile({"isp": "Comcast Cable"}) is False
+    assert is_cloudflare_edge_ip("104.16.1.1") is True
+    assert is_cloudflare_edge_ip("2606:4700::1") is True
+    assert is_cloudflare_edge_ip("8.8.8.8") is False
     assert egress_intel.normalize_public_ip("8.8.8.8") == ("8.8.8.8", 4)
     assert egress_intel.normalize_public_ip("127.0.0.1") == (None, None)
 
@@ -1245,6 +1333,27 @@ def run_self_test() -> None:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/intel?ip=127.0.0.1", timeout=3) as r6:
                 intel_priv = json.loads(r6.read().decode("utf-8"))
                 assert r6.status == 200 and intel_priv.get("ok") is False
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/ip-meta?ips=127.0.0.1,10.0.0.1", timeout=3) as r_meta:
+                meta_priv = json.loads(r_meta.read().decode("utf-8"))
+                assert r_meta.status == 200 and meta_priv.get("ok") is True and meta_priv.get("items") == {}
+
+            # 校验 CF-Connecting-IP 仅在可信 Cloudflare 边缘源 IP 时生效，杜绝伪造请求头欺骗
+            req_cf_spoof = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/who/me",
+                headers={"X-Real-IP": "8.8.8.8", "CF-Connecting-IP": "1.1.1.1"},
+            )
+            with urllib.request.urlopen(req_cf_spoof, timeout=5) as r_sp:
+                sp_me = json.loads(r_sp.read().decode("utf-8"))
+                assert sp_me["clientIp"] == "8.8.8.8"
+
+            req_cf_ok = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/who/me",
+                headers={"X-Real-IP": "104.16.2.3", "CF-Connecting-IP": "1.1.1.1"},
+            )
+            with urllib.request.urlopen(req_cf_ok, timeout=5) as r_cf:
+                cf_me = json.loads(r_cf.read().decode("utf-8"))
+                assert cf_me["clientIp"] == "1.1.1.1"
 
             # 3) 验证隐私脱敏分享创建、IP 强过滤、OpenGraph 注入与 SVG 徽章渲染
             dirty_share = {

@@ -694,17 +694,17 @@
               <span class="sc-icon shrink-0 text-zinc-500 dark:text-zinc-400">${SCEN_ICONS[id] || ""}</span>
               <span class="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">${esc(name)}</span>
             </span>
-            <span class="sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">待测</span>
+            <span class="sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">待确认</span>
           </div>
           <div>
             <div class="flex items-baseline justify-between gap-1 mb-1.5">
-              <span class="sc-score font-mono text-xl font-bold tracking-tight tabular-nums leading-none text-zinc-950 dark:text-white">--%</span>
+              <span class="sc-score font-mono text-xl font-bold tracking-tight tabular-nums leading-none text-zinc-400 dark:text-zinc-500">--%</span>
               <span class="text-[10.5px] text-zinc-400 dark:text-zinc-500 truncate max-w-[55%]" title="${esc(sub)}">${esc(sub.split("/")[0].trim())}</span>
             </div>
             <div class="h-1.5 w-full rounded-full bg-zinc-200/80 overflow-hidden dark:bg-zinc-800">
               <div class="sc-bar h-full rounded-full bg-zinc-400 transition-all duration-300" style="width: 12%"></div>
             </div>
-            <p class="sc-reason mt-2 text-[11px] text-zinc-500 dark:text-zinc-400 truncate">等待信誉与指纹核验…</p>
+            <p class="sc-reason mt-2 text-[11px] text-zinc-500 dark:text-zinc-400 truncate">等待全量探针确认后计算…</p>
           </div>
         </div>
       `).join("");
@@ -844,6 +844,10 @@
     const txt = $("#liveStatusText");
     if (txt && !R.finished) {
       txt.textContent = `正在扫描 ${cnt} / ${total} 项…`;
+    }
+    const sSub = $("#scoreSub");
+    if (sSub && !R.finished) {
+      sSub.textContent = `已采集 ${cnt} / ${total} 项 · 全部确认后加载最终评分…`;
     }
   }
 
@@ -3673,7 +3677,9 @@
 
     // 3. syslang: Underlying OS Fonts / Voices / Keyboard vs Exit IP
     const sys = inferSystemLangs({ os: R.dev?.os, sysFonts: R.fonts || [], voices: R.voices || [], kbd: R.kbd });
-    if (!sys || !ipCC) {
+    if (!ipCC && !R.finished) {
+      out.syslang = { level: "info", summary: "等待出口国家与底层字库/离线语音交叉核对…" };
+    } else if (!sys || !ipCC) {
       out.syslang = { level: "ok", summary: `${R.dev?.os || "当前系统"} 未暴露与出口矛盾的独有区域字库或键位` };
     } else if (!sys.cc.length || sys.cc.includes(ipCC)) {
       out.syslang = { level: "ok", summary: `系统底层字库、离线语音包与 ${R.kbd || "标准"} 键位未见跨区异常` };
@@ -3686,7 +3692,7 @@
     // 4. dns: Recursive DNS Resolver & EDNS Client Subnet vs Exit IP
     const ecsMismatch = R.ecsIp && R.ip && netPrefix(R.ecsIp) && netPrefix(R.ip) && netPrefix(R.ecsIp) !== netPrefix(R.ip);
     if (!R.dnsCC) {
-      out.dns = { level: "info", summary: "DNS 递归探针未返回结果或被当前网络策略阻断" };
+      out.dns = { level: "info", summary: R.finished ? "DNS 递归探针未返回结果或被当前网络策略阻断" : "正在发起随机子域名递归 DNS 解析探测…" };
     } else if (R.dnsCC === "CN" && ipCC !== "CN") {
       out.dns = { level: "bad", summary: `致命 DNS 泄漏：网页出口在 ${ipCountry}，但替你解析域名的 DNS 仍在中国大陆 (${R.dnsIp})！` };
     } else if (ipCC && R.dnsCC !== ipCC) {
@@ -3720,7 +3726,7 @@
     const tls = R.srv?.packet?.tlsClientHello || R.srv?.packet?.tls;
     const uaOs = R.dev?.os || "";
     if (!tcp) {
-      out.conn = { level: "info", summary: "当前连接复用了既有会话，点击「重新检测」可触发全新 SYN 握手抓包" };
+      out.conn = { level: "info", summary: !R.srv && !R.finished ? "正在嗅探服务端 TCP SYN 首包与 TLS 握手栈…" : "当前连接复用了既有会话，点击「重新检测」可触发全新 SYN 握手抓包" };
     } else {
       const tcpFam = tcp.osFamily || tcp.osGuess; // windows, apple, linux, unix
       const claimApple = /^(macOS|iOS|iPadOS)$/.test(uaOs);
@@ -3827,7 +3833,9 @@
     const rtcList = Array.isArray(R.rtc) ? R.rtc : [];
     const knownIps = new Set([R.ip, R.stack?.v4, R.stack?.v6].filter(Boolean));
     const leakedRtc = rtcList.filter(x => !knownIps.has(x) && netPrefix(x) !== netPrefix(R.ip));
-    if (R.v6mac) {
+    if (!R.rtcDone && !R.finished) {
+      out.webrtc = { level: "info", summary: "正在执行 STUN UDP 候选穿透与 IPv6 网卡地址核查…" };
+    } else if (R.v6mac) {
       out.webrtc = { level: "bad", summary: `高危硬件泄漏：IPv6 地址中直接编码了物理网卡 MAC 地址 (${R.v6mac})！` };
     } else if (leakedRtc.length) {
       out.webrtc = { level: "bad", summary: `WebRTC UDP 穿透泄漏了与代理出口不同的真实公网 IP：${leakedRtc.join(", ")}` };
@@ -3939,7 +3947,9 @@
     const steal = R.cpuBench?.stealRatio || 1;
     const simd = R.cpuBench?.simdOk;
     const hwc = Array.isArray(R.hwCodecs) ? R.hwCodecs.length : (typeof R.hwCodecs === "number" ? R.hwCodecs : null);
-    if (R.gpuSoft) {
+    if (!R.cpuBench && !R.gpuSoft && !R.finished) {
+      out.hwvirt = { level: "info", summary: "正在采样 WASM SIMD 与 CPU 微基准抢占抖动…" };
+    } else if (R.gpuSoft) {
       out.hwvirt = { level: "bad", summary: "检出 SwiftShader / Basic Render 软件虚拟显卡，缺少真实物理 GPU" };
     } else if (simd === false) {
       out.hwvirt = { level: "warn", summary: "WebAssembly 128-bit SIMD 向量指令不可用，疑似受限沙箱或老旧模拟容器" };
@@ -4046,10 +4056,12 @@
     // 20. fp: Cross-Site Tracking Resistance & Partial Storage Wipe / ETag Resurrection
     const protectedFp = ["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind);
     const lsCleared = !R.traceSurvived || !R.traceSurvived.includes("LocalStorage");
-    const cacheResurrected = lsCleared && (!!R.etag?.seen || (R.traceSurvived || []).length > 0);
+    const cacheResurrected = R.finished && lsCleared && (!!R.etag?.seen || (R.traceSurvived || []).length > 0);
     R.cacheResurrected = cacheResurrected;
 
-    if (cacheResurrected) {
+    if (!R.fpId && !R.finished) {
+      out.fp = { level: "info", summary: "正在校验缓存 ETag、多重本地留痕与跨站硬件码…" };
+    } else if (cacheResurrected) {
       out.fp = {
         level: "bad",
         summary: R.etag?.seen
@@ -4297,7 +4309,9 @@
 
       const seg = $(`#segBar [data-seg="${id}"]`);
       if (seg) {
-        seg.className = `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`;
+        seg.className = R.finished
+          ? `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`
+          : `flex-1 h-full rounded-full transition-colors ${active ? "bg-zinc-200 dark:bg-zinc-800" : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`;
       }
 
       if (!row) continue;
@@ -4359,14 +4373,31 @@
       }
     }
 
+    $("#sceneBadge").textContent = currentScene === "privacy" ? "防追踪视角" : "伪装自检";
+
+    // Gate composite score, grade, ring gauge & priority list until all probes confirm (R.finished === true)
+    if (!R.finished) {
+      const sSub = $("#scoreSub");
+      if (sSub) {
+        sSub.textContent = `已采集 ${completedSet.size} / ${SNIFFERS.length} 项 · 全部确认后加载最终评分…`;
+      }
+      const tabCkPending = $("#tabChecksBadge");
+      if (tabCkPending) {
+        tabCkPending.textContent = "核验中";
+        tabCkPending.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
+      }
+      if (R.extIntel && R.extIntel.ok) renderScenarios();
+      return;
+    }
+
     // Fail-closed uncertainty penalty
-    if (R.finished && unverifiedCnt > 0) {
+    if (unverifiedCnt > 0) {
       penalty += unverifiedCnt * 5.5 + (!R.ipCC ? 14 : 0);
     }
 
     const score = Math.max(5, Math.min(100, Math.round(100 - penalty)));
     let grade = score >= 92 && badCnt === 0 ? "A+" : score >= 85 && badCnt === 0 ? "A" : score >= 75 ? "B" : score >= 60 ? "C" : score >= 42 ? "D" : "F";
-    if (R.finished && unverifiedCnt > 0) {
+    if (unverifiedCnt > 0) {
       if (!R.ipCC || unverifiedCnt >= 5) {
         if (grade === "A+" || grade === "A" || grade === "B") grade = "C";
       } else if (unverifiedCnt >= 2) {
@@ -4382,7 +4413,11 @@
     R.totalIssues = totalIssues;
     R.unverifiedCnt = unverifiedCnt;
 
-    $("#scoreNum").textContent = String(score);
+    const sNumEl = $("#scoreNum");
+    if (sNumEl) {
+      sNumEl.textContent = String(score);
+      sNumEl.className = "text-[32px] font-bold tracking-[-0.04em] font-mono tabular-nums leading-none text-zinc-950 dark:text-white";
+    }
 
     // Update SVG Circular Gauge Ring
     const ringArc = $("#scoreRingArc");
@@ -4408,7 +4443,7 @@
       );
     }
 
-    $("#scoreSub").textContent = totalIssues === 0 && R.finished && unverifiedCnt > 0
+    $("#scoreSub").textContent = totalIssues === 0 && unverifiedCnt > 0
       ? `${unverifiedCnt} 项网络探针超时，已按不确定性降级`
       : totalIssues === 0
       ? "协议栈、出口信誉与硬件指纹全项自洽"
@@ -4419,25 +4454,22 @@
     $("#issueCount").textContent = String(totalIssues);
     $("#issueCount").className = "text-2xl font-bold font-mono tabular-nums leading-none " + (
       badCnt > 0 ? "text-rose-600 dark:text-rose-400"
-        : (warnCnt > 0 || (R.finished && unverifiedCnt > 0)) ? "text-amber-600 dark:text-amber-400"
+        : (warnCnt > 0 || unverifiedCnt > 0) ? "text-amber-600 dark:text-amber-400"
         : "text-emerald-600 dark:text-emerald-400"
     );
     $("#cntBad").textContent = String(badCnt);
     $("#cntWarn").textContent = String(warnCnt);
     $("#cntOk").textContent = String(okCnt);
-    $("#sceneBadge").textContent = currentScene === "privacy" ? "防追踪视角" : "伪装自检";
 
     const tabCk = $("#tabChecksBadge");
     if (tabCk) {
-      tabCk.textContent = totalIssues > 0 ? `${totalIssues} 异常` : R.finished ? "全过" : "24";
+      tabCk.textContent = totalIssues > 0 ? `${totalIssues} 异常` : "全过";
       tabCk.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
         badCnt > 0
           ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
           : warnCnt > 0
           ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
-          : R.finished
-          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
-          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
+          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
       );
     }
 
@@ -4456,9 +4488,25 @@
         pBox.hidden = true;
         if (clearBox) {
           clearBox.hidden = false;
-          const ct = $("#allClearTitle"), cs = $("#allClearSub");
-          if (ct) ct.textContent = R.finished ? (unverifiedCnt > 0 ? `${okCnt} 项通过 · ${unverifiedCnt} 项待重测` : "全部核心核验零高危冲突") : "正在并发比对跨层特征…";
-          if (cs) cs.textContent = R.finished ? "底层握手、出口信誉与浏览器环境一致" : "发现穿帮项时将自动置顶展示";
+          const warnMode = unverifiedCnt > 0;
+          clearBox.className = "rounded-xl px-3.5 py-3 flex items-center gap-2.5 " + (
+            warnMode ? "bg-amber-50/80 dark:bg-amber-500/10" : "bg-emerald-50/75 dark:bg-emerald-500/10"
+          );
+          const ci = $("#allClearIcon"), ct = $("#allClearTitle"), cs = $("#allClearSub");
+          if (ci) {
+            ci.textContent = warnMode ? "!" : "✓";
+            ci.className = "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white " + (
+              warnMode ? "bg-amber-500" : "bg-emerald-600"
+            );
+          }
+          if (ct) {
+            ct.textContent = warnMode ? `${okCnt} 项通过 · ${unverifiedCnt} 项待重测` : "全部核心核验零高危冲突";
+            ct.className = "text-xs font-semibold " + (warnMode ? "text-amber-950 dark:text-amber-200" : "text-emerald-950 dark:text-emerald-200");
+          }
+          if (cs) {
+            cs.textContent = warnMode ? "可点击下方超时项右侧「重测」补齐验证" : "底层握手、出口信誉与浏览器环境一致";
+            cs.className = "text-[11px] truncate " + (warnMode ? "text-amber-800/80 dark:text-amber-300/80" : "text-emerald-800/80 dark:text-emerald-300/80");
+          }
         }
       } else {
         pBox.hidden = false;
@@ -4619,7 +4667,8 @@
   }
 
   function renderScenarios() {
-    if (!R.srv && !R.intel && !R.extIntel && !R.ipCC && !R.finished) return;
+    const isExt = !!(R.extIntel && R.extIntel.ok);
+    if (!R.finished && !isExt) return;
     const sc = computeScenarios();
     R.scenarios = sc;
     let passCnt = 0;
@@ -4810,40 +4859,48 @@
       }
     }
 
-    // 2. Concise 1-Line Verdict Pill (#wowAlert)
+    // 2. Concise 1-Line Verdict Pill (#wowAlert) — wait for R.finished before showing final verdict
     const wowEl = $("#wowAlert"), wowIcon = $("#wowIcon"), wowTitle = $("#wowTitle");
     if (wowEl && wowTitle && wowIcon) {
-      let alertTone = "ok", head = "底层协议栈、出口信誉与浏览器环境全项自洽";
-      if (checks.reality?.level === "bad") { alertTone = "bad"; head = "反向 :443 穿透抓获 Reality 偷证书伪装"; }
-      else if (checks.conn?.level === "bad") { alertTone = "bad"; head = `TCP 协议栈穿帮：自报 ${R.dev?.os || "端侧"}，实测 ${tcpShort || "Linux"} 代发连接`; }
-      else if (checks.synspoof?.level === "bad") { alertTone = "bad"; head = "跨包 TSval 时钟拆穿无状态 SYN 改包"; }
-      else if (checks.split?.level === "bad") { alertTone = "bad"; head = "规则分流漏底：海外走代理，国内直连暴露宽带"; }
-      else if (checks.webrtc?.level === "bad") { alertTone = "bad"; head = "WebRTC / IPv6 穿透暴露真实底层网络"; }
-      else if (checks.lease?.level === "bad") { alertTone = "bad"; head = "PeeringDB 流量画像拆穿伪家宽机房"; }
-      else if (checks.reputation?.level === "bad") { alertTone = "bad"; head = "出口命中实时黑名单或同 C 段高危污染"; }
-      else if (checks.fpb?.level === "bad") { alertTone = "bad"; head = "硬件与内核版本矛盾，暴露指纹浏览器伪装"; }
-      else if (R.cacheResurrected) { alertTone = "bad"; head = "本地存储虽清空，HTTP ETag 缓存仍认出回访"; }
-      else if (checks.tz?.level === "bad") { alertTone = "bad"; head = "出口位于海外，但系统时钟仍停留在原时区"; }
-      else if (checks.rtt?.level === "bad") { alertTone = "bad"; head = "物理测距超光缆上限，暴露多跳代理中转"; }
-      else if (checks.dc?.level === "bad") { alertTone = "bad"; head = "当前出口属于云服务器/IDC 数据中心机房段"; }
-      else if (checks.tamper?.level === "bad" || checks.tamper?.level === "warn") { alertTone = checks.tamper.level; head = "检测到浏览器原型钩子或请求头不一致"; }
-      else if (R.finished && (R.unverifiedCnt || 0) > 0) { alertTone = "warn"; head = `${R.unverifiedCnt} 项网络情报探针超时，可单项重测`; }
+      if (!R.finished) {
+        wowEl.className = "inline-flex items-center gap-2 rounded-full border border-zinc-200/80 bg-zinc-50 px-3 py-1 text-xs dark:bg-white/[0.04] dark:border-white/[0.08] max-w-full";
+        wowIcon.className = "inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold bg-zinc-300 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100 animate-pulse";
+        wowIcon.textContent = "…";
+        wowTitle.textContent = "正在交叉核验底层协议栈、分流与出口信誉…";
+        wowTitle.className = "font-semibold truncate text-zinc-900 dark:text-zinc-100";
+      } else {
+        let alertTone = "ok", head = "底层协议栈、出口信誉与浏览器环境全项自洽";
+        if (checks.reality?.level === "bad") { alertTone = "bad"; head = "反向 :443 穿透抓获 Reality 偷证书伪装"; }
+        else if (checks.conn?.level === "bad") { alertTone = "bad"; head = `TCP 协议栈穿帮：自报 ${R.dev?.os || "端侧"}，实测 ${tcpShort || "Linux"} 代发连接`; }
+        else if (checks.synspoof?.level === "bad") { alertTone = "bad"; head = "跨包 TSval 时钟拆穿无状态 SYN 改包"; }
+        else if (checks.split?.level === "bad") { alertTone = "bad"; head = "规则分流漏底：海外走代理，国内直连暴露宽带"; }
+        else if (checks.webrtc?.level === "bad") { alertTone = "bad"; head = "WebRTC / IPv6 穿透暴露真实底层网络"; }
+        else if (checks.lease?.level === "bad") { alertTone = "bad"; head = "PeeringDB 流量画像拆穿伪家宽机房"; }
+        else if (checks.reputation?.level === "bad") { alertTone = "bad"; head = "出口命中实时黑名单或同 C 段高危污染"; }
+        else if (checks.fpb?.level === "bad") { alertTone = "bad"; head = "硬件与内核版本矛盾，暴露指纹浏览器伪装"; }
+        else if (R.cacheResurrected) { alertTone = "bad"; head = "本地存储虽清空，HTTP ETag 缓存仍认出回访"; }
+        else if (checks.tz?.level === "bad") { alertTone = "bad"; head = "出口位于海外，但系统时钟仍停留在原时区"; }
+        else if (checks.rtt?.level === "bad") { alertTone = "bad"; head = "物理测距超光缆上限，暴露多跳代理中转"; }
+        else if (checks.dc?.level === "bad") { alertTone = "bad"; head = "当前出口属于云服务器/IDC 数据中心机房段"; }
+        else if (checks.tamper?.level === "bad" || checks.tamper?.level === "warn") { alertTone = checks.tamper.level; head = "检测到浏览器原型钩子或请求头不一致"; }
+        else if ((R.unverifiedCnt || 0) > 0) { alertTone = "warn"; head = `${R.unverifiedCnt} 项网络情报探针超时，可单项重测`; }
 
-      wowEl.className = "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs max-w-full " + (
-        alertTone === "bad" ? "border-rose-200 bg-rose-50/90 dark:bg-rose-500/12 dark:border-rose-500/25"
-          : alertTone === "warn" ? "border-amber-200 bg-amber-50/90 dark:bg-amber-500/12 dark:border-amber-500/25"
-          : "border-emerald-200 bg-emerald-50/80 dark:bg-emerald-500/10 dark:border-emerald-500/20"
-      );
-      wowIcon.className = "inline-flex size-4 shrink-0 items-center justify-center rounded-full font-bold text-[10px] " + (
-        alertTone === "bad" ? "bg-rose-600 text-white" : alertTone === "warn" ? "bg-amber-500 text-white" : "bg-emerald-600 text-white"
-      );
-      wowIcon.textContent = alertTone === "ok" ? "✓" : "!";
-      wowTitle.textContent = head;
-      wowTitle.className = "font-semibold truncate " + (
-        alertTone === "bad" ? "text-rose-900 dark:text-rose-200"
-          : alertTone === "warn" ? "text-amber-950 dark:text-amber-200"
-          : "text-emerald-900 dark:text-emerald-200"
-      );
+        wowEl.className = "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs max-w-full " + (
+          alertTone === "bad" ? "border-rose-200 bg-rose-50/90 dark:bg-rose-500/12 dark:border-rose-500/25"
+            : alertTone === "warn" ? "border-amber-200 bg-amber-50/90 dark:bg-amber-500/12 dark:border-amber-500/25"
+            : "border-emerald-200 bg-emerald-50/80 dark:bg-emerald-500/10 dark:border-emerald-500/20"
+        );
+        wowIcon.className = "inline-flex size-4 shrink-0 items-center justify-center rounded-full font-bold text-[10px] " + (
+          alertTone === "bad" ? "bg-rose-600 text-white" : alertTone === "warn" ? "bg-amber-500 text-white" : "bg-emerald-600 text-white"
+        );
+        wowIcon.textContent = alertTone === "ok" ? "✓" : "!";
+        wowTitle.textContent = head;
+        wowTitle.className = "font-semibold truncate " + (
+          alertTone === "bad" ? "text-rose-900 dark:text-rose-200"
+            : alertTone === "warn" ? "text-amber-950 dark:text-amber-200"
+            : "text-emerald-900 dark:text-emerald-200"
+        );
+      }
     }
 
     // 3. Render 6-Tile Scannable Hardware, Protocol & Reputation Matrix (#identityTiles)
@@ -4860,19 +4917,25 @@
       .trim();
 
     if (tilesBox) {
-      const tzTone = checks.tz?.level === "bad" || checks.lang?.level === "bad" ? "bad" : (checks.tz?.level === "warn" || checks.lang?.level === "warn" ? "warn" : "ok");
-      const repTone = checks.reputation?.level === "bad" || checks.dc?.level === "bad" ? "bad" : (checks.reputation?.level === "warn" || checks.lease?.level === "warn" ? "warn" : "ok");
-      const protoTone = checks.conn?.level === "bad" || checks.synspoof?.level === "bad" ? "bad" : (checks.conn?.level === "warn" || checks.synspoof?.level === "warn" ? "warn" : "ok");
-      const hwTone = R.gpuSoft || checks.hwvirt?.level === "bad" ? "bad" : (checks.hwvirt?.level === "warn" || checks.subpixel?.level === "warn" ? "warn" : "ok");
+      const tzReady = !!R.ipCC || R.finished;
+      const repReady = !!R.intel || R.finished;
+      const protoReady = !!R.srv || R.finished;
+      const hwReady = !!R.cpuBench || !!R.gpuSoft || R.finished;
+      const fpReady = !!R.hwId || R.finished;
+
+      const tzTone = !tzReady ? "pending" : (checks.tz?.level === "bad" || checks.lang?.level === "bad" ? "bad" : (checks.tz?.level === "warn" || checks.lang?.level === "warn" ? "warn" : "ok"));
+      const repTone = !repReady ? "pending" : (checks.reputation?.level === "bad" || checks.dc?.level === "bad" ? "bad" : (checks.reputation?.level === "warn" || checks.lease?.level === "warn" ? "warn" : "ok"));
+      const protoTone = !protoReady ? "pending" : (checks.conn?.level === "bad" || checks.synspoof?.level === "bad" ? "bad" : (checks.conn?.level === "warn" || checks.synspoof?.level === "warn" ? "warn" : "ok"));
+      const hwTone = !hwReady ? "pending" : (R.gpuSoft || checks.hwvirt?.level === "bad" ? "bad" : (checks.hwvirt?.level === "warn" || checks.subpixel?.level === "warn" ? "warn" : "ok"));
       const brwTone = checks.tamper?.level === "bad" || checks.fpb?.level === "bad" || checks.bot?.level === "bad" ? "bad" : (checks.tamper?.level === "warn" ? "warn" : "ok");
       const fpProtected = ["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind);
-      const fpTone = R.cacheResurrected ? "bad" : (fpProtected ? "ok" : "warn");
+      const fpTone = !fpReady ? "pending" : (R.cacheResurrected ? "bad" : (fpProtected ? "ok" : "warn"));
 
       const tiles = [
         {
           icon: TILE_ICONS.clock,
           label: "时区与语言",
-          status: tzTone === "bad" ? "穿帮" : tzTone === "warn" ? "偏差" : "对齐",
+          status: tzTone === "pending" ? "核验中" : tzTone === "bad" ? "穿帮" : tzTone === "warn" ? "偏差" : "对齐",
           tone: tzTone,
           val: `${shortTzCity(R.tz)} · ${R.langs?.[0] || "–"}`,
           sub: `DNS ${R.dnsCC ? flagEmoji(R.dnsCC) + " " + R.dnsCC : "探测中"} · ${R.h12 ? "12h" : "24h"} 制`,
@@ -4881,25 +4944,25 @@
         {
           icon: TILE_ICONS.shield,
           label: "BGP 与黑名单",
-          status: repTone === "bad" ? (R.netKind === "dc" ? "机房段" : "污染") : repTone === "warn" ? "瑕疵" : "洁净",
+          status: repTone === "pending" ? "查询中" : repTone === "bad" ? (R.netKind === "dc" ? "机房段" : "污染") : repTone === "warn" ? "瑕疵" : "洁净",
           tone: repTone,
-          val: pur?.score != null ? `纯净度 ${pur.score} / 100` : (R.netKind === "dc" ? "IDC 机房线路" : "宽带 ISP"),
-          sub: `${blCnt} 黑名单 · ${dirty} 脏邻居 · ${isNative === false ? "广播IP" : "原生段"}`,
+          val: !repReady ? "拉取 8 源情报…" : (pur?.score != null ? `纯净度 ${pur.score} / 100` : (R.netKind === "dc" ? "IDC 机房线路" : "宽带 ISP")),
+          sub: !repReady ? "核对 DNSBL 与同段脏邻居…" : `${blCnt} 黑名单 · ${dirty} 脏邻居 · ${isNative === false ? "广播IP" : "原生段"}`,
           probes: "rep_score,rep_votes,rep_dnsbl,rep_neigh"
         },
         {
           icon: TILE_ICONS.layers,
           label: "传输层协议栈",
-          status: protoTone === "bad" ? "代发穿帮" : protoTone === "warn" ? "隧道特征" : "吻合",
+          status: protoTone === "pending" ? "抓包中" : protoTone === "bad" ? "代发穿帮" : protoTone === "warn" ? "隧道特征" : "吻合",
           tone: protoTone,
-          val: `${tcpShort ? tcpShort + " SYN" : (R.hasH3 ? "QUIC H3" : "HTTP/2")} · TTL ${tcp?.initialTtl ?? "–"}`,
-          sub: `MTU ${tcp?.mtu ?? "–"} · ${R.srvPq ? "抗量子 PQ" : "TLS 1.3"}`,
+          val: !protoReady ? "嗅探 TCP SYN…" : `${tcpShort ? tcpShort + " SYN" : (R.hasH3 ? "QUIC H3" : "HTTP/2")} · TTL ${tcp?.initialTtl ?? "–"}`,
+          sub: !protoReady ? "测量 TTL · MTU · TLS 栈…" : `MTU ${tcp?.mtu ?? "–"} · ${R.srvPq ? "抗量子 PQ" : "TLS 1.3"}`,
           probes: "tcp_os,ja4t,ja4,ipquirk"
         },
         {
           icon: TILE_ICONS.chip,
           label: "芯片与物理屏",
-          status: hwTone === "bad" ? "虚拟化" : hwTone === "warn" ? "轻微异常" : "真机硬件",
+          status: hwTone === "pending" ? "采样中" : hwTone === "bad" ? "虚拟化" : hwTone === "warn" ? "轻微异常" : "真机硬件",
           tone: hwTone,
           val: cleanGpuShort.length > 18 ? cleanGpuShort.slice(0, 17) + "…" : cleanGpuShort,
           sub: `${navigator.hardwareConcurrency || "?"} 核 · ${R.physScreen || "–"} · ${R.hz || 60}Hz`,
@@ -4917,10 +4980,10 @@
         {
           icon: TILE_ICONS.fp,
           label: "物理设备锁定",
-          status: R.cacheResurrected ? "缓存暴露" : fpProtected ? "已加噪" : "固定指纹",
+          status: fpTone === "pending" ? "计算中" : R.cacheResurrected ? "缓存暴露" : fpProtected ? "已加噪" : "固定指纹",
           tone: fpTone,
           val: `硬件 #${R.hwId ? R.hwId.slice(0, 8) : "--"}`,
-          sub: fpProtected ? `${R.shieldLabel} 动态保护` : "清 Cookie 跨浏览器仍同码",
+          sub: !fpReady ? "校验缓存 ETag 与硬件哈希…" : (fpProtected ? `${R.shieldLabel} 动态保护` : "清 Cookie 跨浏览器仍同码"),
           probes: "hwid,fpid,etag,traces"
         }
       ];
@@ -4930,12 +4993,16 @@
           ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
           : t.tone === "warn"
           ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
-          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300";
+          : t.tone === "ok"
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+          : "bg-zinc-200/80 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
         const pillCls = t.tone === "bad"
           ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
           : t.tone === "warn"
           ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
-          : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+          : t.tone === "ok"
+          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
         return `
           <button type="button" data-from="${esc(t.probes)}" class="text-left rounded-xl ring-1 ring-zinc-950/[0.06] bg-zinc-50/80 hover:bg-zinc-100/80 p-3 transition flex flex-col justify-between gap-1.5 dark:bg-white/[0.025] dark:ring-white/[0.07] dark:hover:bg-white/[0.05]">
             <div class="flex items-center justify-between gap-1.5 w-full">
@@ -4973,7 +5040,7 @@
 
     // 5. Compact Persona Pills
     const tags = [];
-    if (checks.tz?.level === "bad" || checks.split?.level !== "ok" || checks.conn?.level === "bad" || checks.reality?.level === "bad" || R.netKind === "dc") {
+    if (checks.tz?.level === "bad" || checks.split?.level === "bad" || checks.split?.level === "warn" || checks.conn?.level === "bad" || checks.reality?.level === "bad" || R.netKind === "dc") {
       tags.push(["跨境代理特征", "bad"]);
     }
     if (checks.reality?.level === "bad") tags.push(["Reality 偷证书", "bad"]);
@@ -4981,7 +5048,7 @@
     if (R.intel?.asnProfile?.inferred?.conflict) tags.push(["伪家宽冲突", "bad"]);
     if (R.intel?.consensus?.isNative === false) tags.push(["跨国广播 IP", "warn"]);
     if ((R.intel?.cidr?.neighbours?.dirtyCount || 0) > 0) tags.push([`脏邻居 ${R.intel.cidr.neighbours.dirtyCount}`, "warn"]);
-    if (R.exits?.ex_cn?.cc === "CN" && R.ipCC !== "CN") tags.push(["分流漏底", "bad"]);
+    if (R.exits?.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN") tags.push(["分流漏底", "bad"]);
     if (/^(macOS|iOS|iPadOS)/.test(R.dev?.os || "")) tags.push(["Apple 生态", "info"]);
     if (isHighRig) tags.push(["高算力终端", "info"]);
     if (R.multiScreen) tags.push(["多屏办公", "info"]);
@@ -4993,7 +5060,9 @@
       tags.push(["Web3 钱包", "warn"]);
     }
     if (R.adblock) tags.push(["广告拦截", "ok"]);
-    tags.push(["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind) ? ["防指纹护盾", "ok"] : ["裸奔指纹", "neutral"]);
+    if (R.finished) {
+      tags.push(["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind) ? ["防指纹护盾", "ok"] : ["裸奔指纹", "neutral"]);
+    }
 
     const tagCls = {
       bad: "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
@@ -5044,13 +5113,22 @@
     ];
 
     const failCnt = cards.filter(([, ok]) => ok === false).length;
+    const pendCnt = cards.filter(([, ok]) => ok == null).length;
     const vBadge = $("#targetVerdictBadge");
     if (vBadge) {
-      vBadge.textContent = failCnt === 0 ? `伪装成 ${tName}：6 项全数达标` : `伪装成 ${tName}：差 ${failCnt} 项未对齐`;
-      vBadge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium " + (
-        failCnt === 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-          : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
-      );
+      if (!R.finished && pendCnt > 0 && failCnt === 0) {
+        vBadge.textContent = `伪装成 ${tName}：核验中 (${6 - pendCnt}/6)…`;
+        vBadge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      } else if (failCnt > 0) {
+        vBadge.textContent = `伪装成 ${tName}：差 ${failCnt} 项未对齐`;
+        vBadge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300";
+      } else if (pendCnt > 0) {
+        vBadge.textContent = `伪装成 ${tName}：${6 - pendCnt} 项达标 · ${pendCnt} 项待确认`;
+        vBadge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300";
+      } else {
+        vBadge.textContent = `伪装成 ${tName}：6 项全数达标`;
+        vBadge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+      }
     }
 
     const grid = $("#targetCardsGrid");
@@ -5395,7 +5473,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.1.0",
+        version: "7.1.1",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,
@@ -5423,10 +5501,111 @@
   }
 
   /* ---------- Master Orchestrator ---------- */
+  function resetPendingScoreUI() {
+    const sNum = $("#scoreNum");
+    if (sNum) {
+      sNum.textContent = "--";
+      sNum.className = "text-[32px] font-bold tracking-[-0.04em] font-mono tabular-nums leading-none text-zinc-400 dark:text-zinc-500";
+    }
+    const gBadge = $("#gradeBadge");
+    if (gBadge) {
+      gBadge.textContent = "待确认";
+      gBadge.className = "mt-1 inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+    }
+    const ringArc = $("#scoreRingArc");
+    if (ringArc) {
+      ringArc.style.strokeDashoffset = "260";
+      ringArc.setAttribute("class", "score-ring-arc stroke-zinc-300 dark:stroke-zinc-700 animate-pulse");
+    }
+    const issCnt = $("#issueCount");
+    if (issCnt) {
+      issCnt.textContent = "--";
+      issCnt.className = "text-2xl font-bold font-mono tabular-nums leading-none text-zinc-400 dark:text-zinc-500";
+    }
+    if ($("#cntBad")) $("#cntBad").textContent = "-";
+    if ($("#cntWarn")) $("#cntWarn").textContent = "-";
+    if ($("#cntOk")) $("#cntOk").textContent = "-";
+    if ($("#cmpBadge")) $("#cmpBadge").hidden = true;
+    $$("#segBar [data-seg]").forEach(seg => {
+      seg.className = "flex-1 h-full rounded-full transition-colors bg-zinc-200 dark:bg-zinc-800";
+    });
+    const pBox = $("#priorityBox"), clearBox = $("#allClearBox");
+    if (pBox) pBox.hidden = true;
+    if (clearBox) {
+      clearBox.hidden = false;
+      clearBox.className = "rounded-xl px-3.5 py-3 flex items-center gap-2.5 bg-zinc-100/80 dark:bg-white/[0.04]";
+      const ci = $("#allClearIcon"), ct = $("#allClearTitle"), cs = $("#allClearSub");
+      if (ci) {
+        ci.textContent = "…";
+        ci.className = "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200 animate-pulse";
+      }
+      if (ct) {
+        ct.textContent = "正在等待全部探针返回…";
+        ct.className = "text-xs font-semibold text-zinc-800 dark:text-zinc-200";
+      }
+      if (cs) {
+        cs.textContent = "全部确认后一次性加载最终评分与穿帮清单";
+        cs.className = "text-[11px] text-zinc-500 dark:text-zinc-400 truncate";
+      }
+    }
+
+    // Reset 6 Business Scenario meters to pending state
+    for (const [id] of SCENARIOS_META) {
+      const card = $(`#scenarioGrid [data-scen="${id}"]`);
+      if (!card) continue;
+      const iconEl = $(".sc-icon", card);
+      if (iconEl) iconEl.className = "sc-icon shrink-0 text-zinc-500 dark:text-zinc-400";
+      const badge = $(".sc-badge", card);
+      if (badge) {
+        badge.textContent = "待确认";
+        badge.className = "sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+      }
+      const sEl = $(".sc-score", card);
+      if (sEl) {
+        sEl.textContent = "--%";
+        sEl.className = "sc-score font-mono text-xl font-bold tracking-tight tabular-nums leading-none text-zinc-400 dark:text-zinc-500";
+      }
+      const bar = $(".sc-bar", card);
+      if (bar) {
+        bar.style.width = "12%";
+        bar.className = "sc-bar h-full rounded-full bg-zinc-400 transition-all duration-300";
+      }
+      const rEl = $(".sc-reason", card);
+      if (rEl) rEl.textContent = "等待全量探针确认后计算…";
+    }
+    const scSum = $("#scenarioSummaryBadge");
+    if (scSum) {
+      scSum.textContent = "待确认";
+      scSum.className = "inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+    }
+
+    // Reset topology link badges & portrait elapsed
+    const elap = $("#portraitElapsed");
+    if (elap) elap.textContent = "扫描中…";
+    const l1Badge = $("#topoLink1Badge"), l1Line = $("#topoLine1"), l1Arrow = $("#topoArrow1"), l1Sub = $("#topoLink1Sub");
+    if (l1Badge && l1Line && l1Arrow) {
+      l1Badge.textContent = "探测分流";
+      l1Badge.className = "py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap bg-zinc-200/80 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      l1Line.setAttribute("stroke-dasharray", "4 4");
+      l1Line.setAttribute("class", "topo-flow-anim stroke-zinc-400 dark:stroke-zinc-600");
+      l1Arrow.setAttribute("class", "stroke-zinc-400 dark:stroke-zinc-600");
+      if (l1Sub) l1Sub.textContent = "路由比对";
+    }
+    const l2Badge = $("#topoLink2Badge"), l2Line = $("#topoLine2"), l2Arrow = $("#topoArrow2");
+    if (l2Badge && l2Line && l2Arrow) {
+      l2Badge.textContent = "握手抓包";
+      l2Badge.className = "py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap bg-zinc-200/80 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      l2Line.setAttribute("stroke-dasharray", "4 4");
+      l2Line.setAttribute("class", "topo-flow-anim stroke-zinc-400 dark:stroke-zinc-600");
+      l2Arrow.setAttribute("class", "stroke-zinc-400 dark:stroke-zinc-600");
+    }
+  }
+
   async function runAll() {
     const seq = ++runSeq;
     R = { t0: performance.now(), values: {}, finished: false };
     completedSet = new Set();
+    resetPendingScoreUI();
 
     const rerunBtn = $("#btnRerun"), rerunTxt = $("#btnRerunText");
     if (rerunBtn) rerunBtn.disabled = true;

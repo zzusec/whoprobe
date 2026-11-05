@@ -1,5 +1,14 @@
 # Changelog
 
+## [v7.2.2] - 2026-11-05
+
+### Fixed
+- **主连接出口回写竞态修复 (`probeServer` / `probeQuicAndExits`)**：当外部边缘探针先于主站 `/api/who/me` 返回并临时回填 `ex_self` 时，主站响应到达后强制以权威服务端出口覆盖 `R.exits.ex_self`，避免分流规则模式下「本站」出口国家显示错位。
+- **反向规则分流（网页直连 + UDP/部分域名走代理）可读性增强 (`webrtc` / `split`)**：当主页面直连而 STUN 或部分海外域名命中代理时，冲突徽章直观展示 `网页 CN ≠ STUN US` 与 `直连 CN ≠ 代理 US`，明确区分「海外代理漏真实 IP」与「分流规则未覆盖当前域名」。
+- **iOS / iPadOS 原生协议栈名称对齐 (`renderPortrait`)**：在拓扑链路与传输层磁贴中根据端侧 Apple 子平台准确显示 `iOS 栈吻合` / `iPadOS 栈吻合`，不再统一显示为 `macOS`。
+
+---
+
 ## [v7.2.1] - 2026-11-05
 
 ### Fixed

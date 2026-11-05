@@ -1316,7 +1316,11 @@
           : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
       );
     }
-    setRouteRow("ex_self", `${flagEmoji(cc)} ${ip}`, [countryName(cc), g.city, org].filter(Boolean).join(" · "), isDc ? "warn" : "ok");
+    const selfLbl = [countryName(cc), g.city, org].filter(Boolean).join(" · ");
+    if (!R.exits) R.exits = {};
+    R.exits.ex_self = { ip, cc, label: selfLbl };
+    setProbe("ex_self", `${cc ? flagEmoji(cc) + " " : ""}${ip}${selfLbl ? " · " + selfLbl : ""}`);
+    setRouteRow("ex_self", `${cc ? flagEmoji(cc) + " " : ""}${ip}`, selfLbl, isDc ? "warn" : "ok");
 
     // 若 probeLatency 先于慢链路 probeServer 返回，在此补齐服务端 TCP 握手耗时对比
     const lateSrvRtt = tcp ? (tcp.minHandshakeRttMs ?? tcp.handshakeRttMs ?? null) : null;
@@ -1747,11 +1751,13 @@
   }
 
   async function probeQuicAndExits() {
-    R.exits = {};
-    if (R.ip) {
-      R.exits.ex_self = { ip: R.ip, cc: R.ipCC, label: [countryName(R.ipCC), R.srv?.geo?.city, R.org].filter(Boolean).join(" · ") };
-      setProbe("ex_self", `${flagEmoji(R.ipCC)} ${R.ip} · ${R.exits.ex_self.label}`);
-    } else {
+    const prevSelf = R.exits?.ex_self || null;
+    R.exits = prevSelf ? { ex_self: prevSelf } : {};
+    if (R.srv && R.ip) {
+      const selfLbl = [countryName(R.ipCC), R.srv?.geo?.city, R.org].filter(Boolean).join(" · ");
+      R.exits.ex_self = { ip: R.ip, cc: R.ipCC, label: selfLbl };
+      setProbe("ex_self", `${R.ipCC ? flagEmoji(R.ipCC) + " " : ""}${R.ip}${selfLbl ? " · " + selfLbl : ""}`);
+    } else if (!prevSelf) {
       setNA("ex_self", "等待主连接返回");
     }
 
@@ -4083,7 +4089,14 @@
     } else if (R.v6mac) {
       out.webrtc = { level: "bad", summary: `高危硬件泄漏：IPv6 地址中直接编码了物理网卡 MAC 地址 (${R.v6mac})！` };
     } else if (leakedRtc.length) {
-      out.webrtc = { level: "bad", summary: `WebRTC UDP 穿透泄漏了与代理出口不同的真实公网 IP：${leakedRtc.join(", ")}` };
+      const leakCC = R.rtcMeta?.[leakedRtc[0]]?.cc || "";
+      const reverseSplit = R.ipCC === "CN" && leakCC && leakCC !== "CN";
+      out.webrtc = {
+        level: "bad",
+        summary: reverseSplit
+          ? `分流导致 TCP/UDP 出口分裂：当前页面走大陆直连 (CN)，但 WebRTC STUN 走了海外代理 (${leakCC} · ${leakedRtc.join(", ")})`
+          : `WebRTC UDP 穿透泄漏了与代理出口不同的真实公网 IP：${leakedRtc.join(", ")}`
+      };
     } else {
       const sameNet = rtcList.length && rtcList.every(x => x === R.ip || netPrefix(x) === netPrefix(R.ip));
       out.webrtc = {
@@ -4430,12 +4443,20 @@
         return R.dnsCC && R.ipCC && R.dnsCC !== R.ipCC
           ? { left: `DNS ${flagEmoji(R.dnsCC)}${R.dnsCC}`, op: "≠", right: `出口 ${flagEmoji(R.ipCC)}${R.ipCC}` }
           : { single: "ECS 子网外泄" };
-      case "split":
-        return (R.exits?.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN")
-          ? { left: `海外 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: "直连 🇨🇳CN" }
-          : { single: "多出口网段分流" };
+      case "split": {
+        if (R.exits?.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN") {
+          return { left: `海外 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: "直连 🇨🇳CN" };
+        }
+        const foreignEx = R.ipCC === "CN"
+          ? Object.values(R.exits || {}).find(v => v?.cc && v.cc !== "CN")
+          : null;
+        if (foreignEx) {
+          return { left: "直连 🇨🇳CN", op: "≠", right: `代理 ${flagEmoji(foreignEx.cc)}${foreignEx.cc}` };
+        }
+        return { single: "多出口网段分流" };
+      }
       case "conn":
-        return (tcp && tcpHuman && tcpHuman.toLowerCase() !== uaOs.toLowerCase() && !(uaOs === "iOS" && tcpHuman === "macOS"))
+        return (tcp && tcpHuman && tcpHuman.toLowerCase() !== uaOs.toLowerCase() && !(/^(iOS|iPadOS)$/.test(uaOs) && tcpHuman === "macOS"))
           ? { left: uaOs, op: "≠", right: `${tcpHuman} SYN` }
           : tcp?.mtu && tcp.mtu < 1480
           ? { single: `MTU ${tcp.mtu} 隧道` }
@@ -4453,8 +4474,15 @@
         return R.srvTcpRtt != null
           ? { left: `HTTP ${R.httpRtt}ms`, op: "≫", right: `握手 ${R.srvTcpRtt}ms` }
           : { single: `RTT ${R.httpRtt ?? "--"}ms 偏高` };
-      case "webrtc":
-        return { single: R.v6mac ? "IPv6 暴露 MAC" : "STUN 漏真实 IP" };
+      case "webrtc": {
+        if (R.v6mac) return { single: "IPv6 暴露 MAC" };
+        const lk = getLeakedWebrtcIps();
+        const lkCC = lk.length ? (R.rtcMeta?.[lk[0]]?.cc || "") : "";
+        if (lkCC && R.ipCC && lkCC !== R.ipCC) {
+          return { left: `网页 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: `STUN ${flagEmoji(lkCC)}${lkCC}` };
+        }
+        return { single: "STUN 漏真实 IP" };
+      }
       case "dc":
         return { single: `${R.netKind === "dc" ? "IDC 机房段" : "共享代理"} ${R.asn || ""}`.trim() };
       case "lease":
@@ -5078,7 +5106,8 @@
     // Topology Link 2: Egress -> Probe Edge (TCP SYN / Reality / RTT)
     const l2Badge = $("#topoLink2Badge"), l2Line = $("#topoLine2"), l2Arrow = $("#topoArrow2");
     const tcp = R.srv?.packet?.tcp;
-    const tcpShort = tcp ? (({ windows: "Win", apple: "macOS", linux: "Linux" })[tcp.osFamily || tcp.osGuess] || tcp.osGuess || "TCP") : null;
+    const appleTcpName = /^(iOS|iPadOS)$/.test(R.dev?.os || "") ? R.dev.os : "macOS";
+    const tcpShort = tcp ? (({ windows: "Win", apple: appleTcpName, linux: "Linux" })[tcp.osFamily || tcp.osGuess] || tcp.osGuess || "TCP") : null;
     if (l2Badge && l2Line && l2Arrow) {
       if (checks.reality?.level === "bad") {
         l2Badge.textContent = ":443 偷证书";
@@ -5128,7 +5157,14 @@
         else if (checks.conn?.level === "bad") { alertTone = "bad"; head = `TCP 协议栈穿帮：自报 ${R.dev?.os || "端侧"}，实测 ${tcpShort || "Linux"} 代发连接`; }
         else if (checks.synspoof?.level === "bad") { alertTone = "bad"; head = "跨包 TSval 时钟拆穿无状态 SYN 改包"; }
         else if (checks.split?.level === "bad") { alertTone = "bad"; head = "规则分流漏底：海外走代理，国内直连暴露宽带"; }
-        else if (checks.webrtc?.level === "bad") { alertTone = "bad"; head = "WebRTC / IPv6 穿透暴露真实底层网络"; }
+        else if (checks.webrtc?.level === "bad") {
+          const lk = getLeakedWebrtcIps();
+          const lkCC = lk.length ? (R.rtcMeta?.[lk[0]]?.cc || "") : "";
+          alertTone = "bad";
+          head = (R.ipCC === "CN" && lkCC && lkCC !== "CN")
+            ? "分流规则不一致：当前网页走直连，但 UDP/部分域名走了代理"
+            : "WebRTC / IPv6 穿透暴露真实底层网络";
+        }
         else if (checks.lease?.level === "bad") { alertTone = "bad"; head = "PeeringDB 流量画像拆穿伪家宽机房"; }
         else if (checks.reputation?.level === "bad") { alertTone = "bad"; head = "出口命中实时黑名单或同 C 段高危污染"; }
         else if (checks.fpb?.level === "bad") { alertTone = "bad"; head = "硬件与内核版本矛盾，暴露指纹浏览器伪装"; }

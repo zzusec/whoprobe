@@ -26,7 +26,7 @@ jobs:
 
       - name: Verify Python syntax & run built-in self-test suite
         run: |
-          python3 -m py_compile probe.py egress_intel.py
+          python3 -m py_compile probe.py egress_intel.py share_store.py
           python3 probe.py --self-test
 
       - name: Verify frontend JavaScript syntax & probe catalog integrity

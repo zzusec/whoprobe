@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
   <title>WhoProbe · 网站眼里的你 — L3–L7 全栈指纹、BGP 出口情报与伪装风控诊断</title>
   <meta name="description" content="零权限弹窗读取 148 项网络协议栈、TCP TSval 时钟、:443 Reality 偷证书反向验真、8 源欺诈/BGP 租赁情报、同 /24 脏邻居、硬件光栅化与 52 项原型谎言，精准评估 6 大业务准入与防关联破绽。">
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.1.1">
-  <link rel="stylesheet" href="./assets/style.css?v=7.1.1">
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.2.0">
+  <link rel="stylesheet" href="./assets/style.css?v=7.2.0">
   <script>
     (function () {
       try {
@@ -58,6 +58,11 @@
 
         <!-- Primary Action & Quiet Utility Group -->
         <div class="flex items-center gap-1.5 sm:gap-2 sm:order-3">
+          <button id="btnShare" type="button" hidden class="py-1.5 px-2.5 sm:px-3 inline-flex items-center gap-1.5 text-xs font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 transition shadow-2xs">
+            <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+            <span id="btnShareText">生成分享链接</span>
+          </button>
+
           <button id="btnRerun" type="button" class="py-1.5 px-2.5 sm:px-3 inline-flex items-center gap-1.5 text-xs font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-50 disabled:pointer-events-none transition dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">
             <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
             <span id="btnRerunText">重新检测</span>
@@ -126,6 +131,23 @@
     </div>
   </div>
 
+  <!-- Shared Anonymized Report View Banner -->
+  <div id="sharedViewBanner" hidden class="max-w-[1240px] mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+    <div class="surface-sheet rounded-xl px-4 py-3 text-xs flex flex-wrap items-center justify-between gap-3 bg-emerald-50/70 border-emerald-200/80 dark:bg-emerald-500/[0.08] dark:border-emerald-500/20">
+      <div class="flex flex-wrap items-center gap-2.5 min-w-0">
+        <span class="inline-flex items-center gap-1 py-0.5 px-2 rounded-md text-[11px] font-semibold bg-emerald-600 text-white">
+          <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+          <span>公开脱敏分享报告</span>
+        </span>
+        <span id="sharedMetaText" class="text-zinc-800 font-medium dark:text-zinc-200 truncate">真实出口 IP、分流 IP、精确城市与追踪哈希均已彻底抹除</span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button id="btnCopySharedLink" type="button" class="py-1.5 px-2.5 rounded-lg ring-1 ring-zinc-950/[0.1] bg-white text-zinc-800 font-medium hover:bg-zinc-100 transition dark:bg-zinc-900 dark:ring-white/[0.12] dark:text-zinc-200">复制链接与卡片</button>
+        <a id="btnRunMyOwn" href="./" class="py-1.5 px-3 rounded-lg bg-zinc-900 text-white font-semibold hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">测测我的当前环境 →</a>
+      </div>
+    </div>
+  </div>
+
   <!-- Main Visual Diagnostic Workbench -->
   <main id="appMain" class="max-w-[1240px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-5 space-y-4">
 
@@ -138,6 +160,10 @@
           <div class="flex items-center justify-between gap-2">
             <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">抗风控健康度</h2>
             <div class="flex items-center gap-1.5">
+              <button id="btnShareInline" type="button" hidden class="inline-flex items-center gap-1 py-0.5 px-2 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25">
+                <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                <span>分享结果</span>
+              </button>
               <span id="cmpBadge" hidden class="text-[11px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"></span>
               <span id="sceneBadge" class="inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">伪装自检</span>
             </div>
@@ -448,15 +474,59 @@
 
     <!-- Quiet Footer -->
     <footer class="pt-1 pb-5 text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap items-center justify-between gap-2">
-      <span>WhoProbe v7.1.1 · 被动 L3/L4 BPF 嗅探 · :443 伪装验真 · 多源 BGP 信誉 · 148 项全栈检测</span>
+      <span>WhoProbe v7.2.0 · 被动 L3/L4 BPF 嗅探 · :443 伪装验真 · 多源 BGP 信誉 · 148 项全栈检测</span>
       <span>当前会话实时计算 · 零持久化日志</span>
     </footer>
   </main>
+
+  <!-- Speedtest-Style Privacy-Safe Share Modal -->
+  <div id="shareModal" hidden role="dialog" aria-modal="true" aria-labelledby="shareModalTitle" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs">
+    <div class="surface-sheet w-full max-w-[600px] rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <h3 id="shareModalTitle" class="text-base font-semibold text-zinc-950 dark:text-white truncate">脱敏分享链接与成绩卡片</h3>
+          <span class="shrink-0 inline-flex items-center gap-1 py-0.5 px-2 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">✓ 真实 IP 已抹除</span>
+        </div>
+        <button id="btnCloseShareModal" type="button" aria-label="关闭分享窗口" class="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-white transition">
+          <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Live SVG Result Card Preview -->
+      <div class="rounded-xl overflow-hidden bg-[#0B0E14] ring-1 ring-zinc-950/[0.1] dark:ring-white/[0.1]">
+        <img id="sharePreviewImg" alt="WhoProbe 脱敏体检分享卡片" class="w-full h-auto block aspect-[2/1]">
+      </div>
+
+      <!-- Direct Share URL -->
+      <div class="space-y-2.5 text-xs">
+        <div>
+          <label for="shareUrlInput" class="block font-medium text-zinc-700 dark:text-zinc-300 mb-1">分享链接（支持群聊 / Telegram / X 卡片预览）</label>
+          <div class="flex items-center gap-2">
+            <input id="shareUrlInput" type="text" readonly class="flex-1 min-w-0 py-2 px-3 rounded-lg font-mono text-xs bg-zinc-100/90 ring-1 ring-zinc-950/[0.08] text-zinc-900 focus:outline-none dark:bg-zinc-900 dark:ring-white/[0.1] dark:text-zinc-100">
+            <button id="btnCopyShareUrl" type="button" class="shrink-0 py-2 px-3.5 rounded-lg bg-zinc-900 text-white font-semibold hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">复制链接</button>
+          </div>
+        </div>
+
+        <div>
+          <label for="shareMdInput" class="block font-medium text-zinc-700 dark:text-zinc-300 mb-1">论坛 / GitHub Markdown 徽章（嵌图可点击）</label>
+          <div class="flex items-center gap-2">
+            <input id="shareMdInput" type="text" readonly class="flex-1 min-w-0 py-2 px-3 rounded-lg font-mono text-xs bg-zinc-100/90 ring-1 ring-zinc-950/[0.08] text-zinc-700 focus:outline-none dark:bg-zinc-900 dark:ring-white/[0.1] dark:text-zinc-300">
+            <button id="btnCopyShareMd" type="button" class="shrink-0 py-2 px-3 rounded-lg ring-1 ring-zinc-950/[0.1] bg-white text-zinc-800 font-medium hover:bg-zinc-100 transition dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">复制代码</button>
+            <a id="btnDownloadShareSvg" href="#" download="whoprobe-result.svg" class="shrink-0 py-2 px-3 rounded-lg ring-1 ring-zinc-950/[0.1] bg-white text-zinc-800 font-medium hover:bg-zinc-100 transition dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">存 SVG</a>
+          </div>
+        </div>
+      </div>
+
+      <p class="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+        隐私说明：客户端与服务端已双重过滤，真实出口 IP、国内分流宽带 IP、DNS 解析器 IP、精确省市坐标与硬件指纹哈希均不会上传或出现在分享快照中。
+      </p>
+    </div>
+  </div>
 
   <!-- Floating Tooltip & Toast Notification -->
   <div id="globalTip" role="tooltip" hidden class="fixed z-50 max-w-xs sm:max-w-sm rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-100 shadow-xl pointer-events-none whitespace-pre-line dark:border-white/[0.12] dark:bg-zinc-900"></div>
   <div id="toastBar" hidden class="fixed bottom-5 right-5 z-50 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-950 dark:border-white"></div>
 
-  <script src="./assets/app.js?v=7.1.1"></script>
+  <script src="./assets/app.js?v=7.2.0"></script>
 </body>
 </html>

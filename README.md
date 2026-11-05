@@ -1,19 +1,19 @@
-# WhoProbe v7.1 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
+# WhoProbe v7.2 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B%20(Zero%20Deps)-3776AB.svg)](./probe.py)
 [![Probes](https://img.shields.io/badge/Probes-148%20L3--L7-10b981.svg)](#8-大观测层与-148-项真实探针)
 [![Anti-Detect Checks](https://img.shields.io/badge/Cross--Layer%20Checks-24-ef4444.svg)](#24-项跨层伪装与信誉交叉核验)
 
-> **WhoProbe v7.1** 是一款**零第三方 Python 依赖**的全栈（L3 网络包头 → L4 传输与内核时钟 → 主动 `:443` 反向证书验真 → 多源 BGP/RIR/DNSBL 出口信誉 → HTTP 协议层 → 浏览器图形/硬件/防篡改运行时）指纹与代理伪装自检平台。
+> **WhoProbe v7.2** 是一款**零第三方 Python 依赖**的全栈（L3 网络包头 → L4 传输与内核时钟 → 主动 `:443` 反向证书验真 → 多源 BGP/RIR/DNSBL 出口信誉 → HTTP 协议层 → 浏览器图形/硬件/防篡改运行时）指纹与代理伪装自检平台，内置 **Speedtest 风格零 IP 隐私脱敏分享短链 (`/r/<id>`) 与动态 SVG 结果徽章 (`/r/<id>.svg`)**。
 >
-> **English Summary**: Zero-dependency Python + vanilla JS L3–L7 browser, protocol-stack & multi-source egress reputation inspector. Combines passive Linux `AF_PACKET` BPF sniffing (`TCP SYN` TTL/Window/MSS/MTU/`JA4T`/DF/IPID + `TSval` kernel `Hz` stateless SYN-spoof detection + `TLS ClientHello` `JA4`/`JA3`/GREASE/PQ-KEM/ECH), active `:443` VLESS-Reality stolen-certificate back-probing, 8-source weighted log-odds IP intelligence, BGP/RDAP/PeeringDB fake-ISP & lease detection, 12 DoH DNSBLs + 15 CIDR netsets + `/24` dirty-neighbour scoring, 6 business scenario suitability meters, and 148 client/server probes.
+> **English Summary**: Zero-dependency Python + vanilla JS L3–L7 browser, protocol-stack & multi-source egress reputation inspector. Combines passive Linux `AF_PACKET` BPF sniffing (`TCP SYN` TTL/Window/MSS/MTU/`JA4T`/DF/IPID + `TSval` kernel `Hz` stateless SYN-spoof detection + `TLS ClientHello` `JA4`/`JA3`/GREASE/PQ-KEM/ECH), active `:443` VLESS-Reality stolen-certificate back-probing, 8-source weighted log-odds IP intelligence, BGP/RDAP/PeeringDB fake-ISP & lease detection, 12 DoH DNSBLs + 15 CIDR netsets + `/24` dirty-neighbour scoring, 6 business scenario suitability meters, 148 client/server probes, and Speedtest-style zero-IP shareable snapshot links (`/r/<id>` & `/r/<id>.svg`).
 
 ---
 
 ## 核心透视能力（为什么常规检测站看不穿你的破绽？）
 
-常规「查看我的 IP」或纯前端指纹站只能看到单侧表层数据，而 **WhoProbe v7.1** 同时站在**服务端网卡底层、全球欺诈情报网与浏览器沙箱内部**做多维交叉审判：
+常规「查看我的 IP」或纯前端指纹站只能看到单侧表层数据，而 **WhoProbe v7.2** 同时站在**服务端网卡底层、全球欺诈情报网与浏览器沙箱内部**做多维交叉审判：
 
 1. **只读旁路抓包 + 跨包内核时钟防改包（L3/L4）**：通过只读 `AF_PACKET` + 内核 BPF 旁路嗅探 443 握手包（无需替换现有 Nginx），提取首个 `TCP SYN` 的初始 TTL、窗口、MSS/MTU、`JA4T` 及 `TLS ClientHello` (`JA4` / `JA3` / `X25519MLKEM768` / `ECH` / `ALPS`)；并跨包追踪 IPv4 `DF`、`IPID` 序列与 `TCP Timestamp (TSval)` 内核节拍频率 (`Hz`)，直接拆穿仅篡改首个 SYN 包的 `osfuscate` 无状态改包脚本。
 2. **主动 `:443` 反向穿透与 VLESS-Reality 偷证书识别**：服务端异步回连出口 IP 的 `:443` 端口校验 TLS 证书——若非 Microsoft / Apple / Yahoo / Amazon / Cloudflare 官方 ASN 却返回上述大厂官网证书，直接实锤 **VLESS-Reality 借用证书伪装节点**。
@@ -21,6 +21,7 @@
 4. **三维物理测距 + 微脉冲粘包侧信道**：同时对比「服务端 TCP 握手 RTT」、「浏览器 HTTP 热连接 RTT」与「WebRTC STUN UDP 候选 RTT」，并用 6 组 `8ms` 微脉冲捕捉 Mux (`smux`/`yamux`) 多路复用粘包合并特征。
 5. **跨系统字体光栅化、原生控件几何与虚拟化抢占抖动**：检测 Canvas 文字 RGB 次像素彩边率（Apple CoreText 灰阶 vs DirectWrite/FreeType LCD 彩边）、原生表单控件亚像素包围盒、滚动条占位宽度、WebCodecs 视频硬解芯片、WASM 128-bit SIMD 以及 60 组紧致时间片尾延迟比 (`p98/p50` Hypervisor VM-Exit 抢占抖动)，并叠加 52 项 JS 原型谎言、Worker/iframe 跨线程核验与 36 款 Chrome 扩展扫描。
 6. **六大业务场景准入模拟 + 逐项「怎么改」修复指南**：实时计算 **AI 大模型、流媒体解锁、社媒注册养号、Turnstile/reCAPTCHA 免盾、金融支付反欺诈、SMTP 邮件投递** 六大场景通过率，每一处破绽均提供原理拆解、修复步骤与单条目即时「重测」。
+7. **Speedtest 风格零 IP 隐私分享短链 (`/r/<id>`) 与动态矢量徽章 (`/r/<id>.svg`)**：检测完成后一键生成公开分享短链与 `760×380` 矢量徽章，客户端白名单 + 服务端 `ipaddress` 标准库双重剥离全部真实 IP、国内宽带城市、MAC 与固定设备指纹哈希，零隐私泄露即可直接发到社交平台或嵌入 Markdown。
 
 ---
 

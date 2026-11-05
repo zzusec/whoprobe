@@ -19,3 +19,5 @@ npm-debug.log*
 *.log
 .env
 .env.*
+data/
+*.sqlite3*

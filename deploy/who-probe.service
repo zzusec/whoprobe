@@ -16,7 +16,8 @@ ExecStart=/usr/bin/python3 /opt/whoprobe/probe.py --host 127.0.0.1 --port 18899 
 Restart=always
 RestartSec=2
 
-# Minimal privilege hardening (read-only AF_PACKET socket only, zero disk writes required)
+# Minimal privilege hardening (read-only AF_PACKET socket + isolated SQLite state directory for anonymized share links)
+StateDirectory=who-probe
 AmbientCapabilities=CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=true

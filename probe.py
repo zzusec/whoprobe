@@ -23,6 +23,7 @@ import secrets
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -37,8 +38,12 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import egress_intel  # noqa: E402
+import share_store  # noqa: E402
 
 ENABLE_ACTIVE_443 = True
+SHARE_STORE: share_store.ShareStore | None = None
+_SHARE_STORE_LOCK = threading.Lock()
+_SHARE_RATE_SALT = secrets.token_hex(16)
 
 # RFC 8701 TLS GREASE 值集合
 GREASE_VALUES = {
@@ -84,9 +89,18 @@ class TTLCache:
 GEO_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
 PTR_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
 PACKET_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
+SHARE_RATE_CACHE = TTLCache(maxsize=4096, ttl_sec=60.0)
 _GEO_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="geo")
 _SERVER_COORDS: list[float] | None = None
 _SERVER_COORDS_LOCK = threading.Lock()
+
+
+def get_share_store(data_dir: str | Path | None = None) -> share_store.ShareStore:
+    global SHARE_STORE
+    with _SHARE_STORE_LOCK:
+        if SHARE_STORE is None:
+            SHARE_STORE = share_store.ShareStore(data_dir=data_dir)
+        return SHARE_STORE
 
 
 def is_private_or_loopback(ip: str) -> bool:
@@ -883,6 +897,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         self,
         payload: dict,
         cache_control: str = "no-store",
+        status: int = HTTPStatus.OK,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
         raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -890,8 +905,16 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             raw,
             "application/json; charset=utf-8",
             cache_control=cache_control,
+            status=status,
             extra_headers=extra_headers,
         )
+
+    def _origin_and_base(self, mounted_under_who: bool) -> tuple[str, str]:
+        proto = (self.headers.get("X-Forwarded-Proto") or "http").split(",")[0].strip() or "http"
+        host = (self.headers.get("Host") or "localhost").strip()
+        base_href = "/who/" if mounted_under_who else "/"
+        origin_prefix = f"{proto}://{host}{'/who' if mounted_under_who else ''}"
+        return origin_prefix, base_href
 
     def _extract_client_ip(self) -> str:
         xri = (self.headers.get("X-Real-IP") or "").strip()
@@ -905,6 +928,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        mounted_under_who = path == "/who" or path.startswith("/who/")
 
         # 支持挂载在 /who 子路径后缀下，彻底隔离同域名其他业务
         if path == "/who":
@@ -915,6 +939,50 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/who/"):
             path = path[4:]  # "/who/" -> "/", "/who/assets/..." -> "/assets/..."
+
+        origin_prefix, base_href = self._origin_and_base(mounted_under_who)
+
+        # 0) 隐私脱敏分享数据查询与矢量分享卡片 (/api/who/share/<id>, /r/<id>.svg, /r/<id>)
+        if path.startswith("/api/who/share/"):
+            sid = path.removeprefix("/api/who/share/").strip("/")
+            rec = get_share_store().get(sid)
+            if not rec:
+                self._send_json({"ok": False, "error": "share_not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json({"ok": True, **rec}, cache_control="public, max-age=300")
+            return
+
+        if path.startswith("/r/") and len(path) > 3:
+            tail = path.removeprefix("/r/").strip("/")
+            if tail.endswith(".svg"):
+                sid = tail[:-4]
+                rec = get_share_store().get(sid)
+                if not rec:
+                    self._send_json({"ok": False, "error": "share_not_found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                svg_bytes = share_store.render_share_svg(rec["id"], rec["createdAt"], rec["report"])
+                self._send_bytes(svg_bytes, "image/svg+xml; charset=utf-8", cache_control="public, max-age=86400")
+                return
+
+            sid = tail
+            index_file = STATIC_DIR / "index.html"
+            if index_file.is_file():
+                rec = get_share_store().get(sid)
+                raw_html = index_file.read_text(encoding="utf-8")
+                body = share_store.inject_html_for_route(
+                    raw_html,
+                    base_href=base_href,
+                    origin_prefix=origin_prefix,
+                    share_record=rec,
+                    missing_share_id=None if rec else sid,
+                )
+                self._send_bytes(
+                    body,
+                    "text/html; charset=utf-8",
+                    cache_control="no-cache",
+                    status=HTTPStatus.OK if rec else HTTPStatus.NOT_FOUND,
+                )
+                return
 
         # 1) 测速、微脉冲抖动测绘与时钟校准探针
         if path in ("/api/who/ping", "/api/ping"):
@@ -1019,8 +1087,13 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                     "Sec-CH-UA-Model, Sec-CH-UA-Platform-Version, Sec-CH-UA-Mobile, "
                     "Sec-CH-UA-Form-Factors, Sec-CH-UA-WoW64"
                 )
+                body = share_store.inject_html_for_route(
+                    index_file.read_text(encoding="utf-8"),
+                    base_href=base_href,
+                    origin_prefix=origin_prefix,
+                )
                 self._send_bytes(
-                    index_file.read_bytes(),
+                    body,
                     "text/html; charset=utf-8",
                     cache_control="no-store, no-cache, must-revalidate",
                     extra_headers={"Accept-CH": accept_ch, "Pragma": "no-cache"},
@@ -1056,6 +1129,53 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b'{"ok":false,"error":"not_found"}')
 
+    def do_POST(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        mounted_under_who = path.startswith("/who/")
+        if mounted_under_who:
+            path = path[4:]
+
+        if path != "/api/who/share":
+            self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 32768:
+            self._send_json({"ok": False, "error": "payload_too_large_or_empty"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        # 匿名内存限速（仅存加盐哈希计数，绝不落盘真实客户端 IP）
+        client_ip = self._extract_client_ip()
+        rate_key = hashlib.sha256(f"{client_ip}:{_SHARE_RATE_SALT}".encode("utf-8")).hexdigest()[:24]
+        used = int(SHARE_RATE_CACHE.get(rate_key) or 0)
+        if used >= 20:
+            self._send_json({"ok": False, "error": "rate_limited"}, status=HTTPStatus.TOO_MANY_REQUESTS)
+            return
+        SHARE_RATE_CACHE.set(rate_key, used + 1, ttl_sec=60.0)
+
+        raw_bytes = self.rfile.read(length)
+        try:
+            raw_obj = json.loads(raw_bytes.decode("utf-8", errors="strict"))
+            sid, created_at, _ = get_share_store().create(raw_obj)
+        except Exception:
+            self._send_json({"ok": False, "error": "invalid_share_payload"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        origin_prefix, base_href = self._origin_and_base(mounted_under_who)
+        self._send_json({
+            "ok": True,
+            "id": sid,
+            "createdAt": created_at,
+            "path": f"{base_href}r/{sid}",
+            "badgePath": f"{base_href}r/{sid}.svg",
+            "url": f"{origin_prefix}/r/{sid}",
+            "badgeUrl": f"{origin_prefix}/r/{sid}.svg",
+        })
+
 
 def run_self_test() -> None:
     # 1) 校验 TCP SYN & TLS ClientHello 解析器纯函数
@@ -1072,68 +1192,114 @@ def run_self_test() -> None:
     assert egress_intel.normalize_public_ip("8.8.8.8") == ("8.8.8.8", 4)
     assert egress_intel.normalize_public_ip("127.0.0.1") == (None, None)
 
-    # 2) 启动临时 HTTP 服务验证所有路由
-    server = ThreadingHTTPServer(("127.0.0.1", 0), WhoProbeHandler)
-    port = server.server_address[1]
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3) as r1:
-            html = r1.read().decode("utf-8")
-            assert r1.status == 200 and len(html) > 500
-            assert "Sec-CH-UA-Arch" in (r1.headers.get("Accept-CH") or "")
+    # 2) 启动临时 HTTP 服务验证所有路由（含隐私脱敏分享系统）
+    with tempfile.TemporaryDirectory(prefix="whoprobe_test_") as tmp_dir:
+        global SHARE_STORE
+        SHARE_STORE = share_store.ShareStore(data_dir=tmp_dir)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), WhoProbeHandler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3) as r1:
+                html_doc = r1.read().decode("utf-8")
+                assert r1.status == 200 and len(html_doc) > 500
+                assert '<base href="/">' in html_doc
+                assert "Sec-CH-UA-Arch" in (r1.headers.get("Accept-CH") or "")
 
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/who/", timeout=3) as rw:
-            assert rw.status == 200 and len(rw.read().decode("utf-8")) > 500
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/who/", timeout=3) as rw:
+                who_html = rw.read().decode("utf-8")
+                assert rw.status == 200 and '<base href="/who/">' in who_html
 
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/who/api/who/ping", timeout=3) as rwp:
-            assert rwp.status == 200 and json.loads(rwp.read().decode("utf-8")).get("ok") is True
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/who/api/who/ping", timeout=3) as rwp:
+                assert rwp.status == 200 and json.loads(rwp.read().decode("utf-8")).get("ok") is True
 
-        req_head = urllib.request.Request(f"http://127.0.0.1:{port}/who/", method="HEAD")
-        with urllib.request.urlopen(req_head, timeout=3) as rh:
-            assert rh.status == 200 and rh.read() == b""
+            req_head = urllib.request.Request(f"http://127.0.0.1:{port}/who/", method="HEAD")
+            with urllib.request.urlopen(req_head, timeout=3) as rh:
+                assert rh.status == 200 and rh.read() == b""
 
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/assets/app.js", timeout=3) as r_js:
-            assert r_js.status == 200 and len(r_js.read()) > 1000
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/assets/app.js", timeout=3) as r_js:
+                assert r_js.status == 200 and len(r_js.read()) > 1000
 
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/ping", timeout=3) as r2:
-            ping = json.loads(r2.read().decode("utf-8"))
-            assert r2.status == 200 and ping.get("ok") is True
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/ping", timeout=3) as r2:
+                ping = json.loads(r2.read().decode("utf-8"))
+                assert r2.status == 200 and ping.get("ok") is True
 
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/etag", timeout=3) as r3:
-            et1 = json.loads(r3.read().decode("utf-8"))
-            etag_hdr = r3.headers.get("ETag")
-            assert et1["seenBefore"] is False and etag_hdr
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/etag", timeout=3) as r3:
+                et1 = json.loads(r3.read().decode("utf-8"))
+                etag_hdr = r3.headers.get("ETag")
+                assert et1["seenBefore"] is False and etag_hdr
 
-        req_et2 = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/who/etag",
-            headers={"If-None-Match": etag_hdr},
-        )
-        with urllib.request.urlopen(req_et2, timeout=3) as r4:
-            et2 = json.loads(r4.read().decode("utf-8"))
-            assert et2["seenBefore"] is True and et2["etagId"] == et1["etagId"]
+            req_et2 = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/who/etag",
+                headers={"If-None-Match": etag_hdr},
+            )
+            with urllib.request.urlopen(req_et2, timeout=3) as r4:
+                et2 = json.loads(r4.read().decode("utf-8"))
+                assert et2["seenBefore"] is True and et2["etagId"] == et1["etagId"]
 
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/me", timeout=6) as r5:
-            me = json.loads(r5.read().decode("utf-8"))
-            assert r5.status == 200 and me.get("ok") is True and "headerOrder" in me
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/me", timeout=6) as r5:
+                me = json.loads(r5.read().decode("utf-8"))
+                assert r5.status == 200 and me.get("ok") is True and "headerOrder" in me
 
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/intel?ip=127.0.0.1", timeout=3) as r6:
-            intel_priv = json.loads(r6.read().decode("utf-8"))
-            assert r6.status == 200 and intel_priv.get("ok") is False
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/intel?ip=127.0.0.1", timeout=3) as r6:
+                intel_priv = json.loads(r6.read().decode("utf-8"))
+                assert r6.status == 200 and intel_priv.get("ok") is False
 
-        print(f"SELF-TEST OK on 127.0.0.1:{port} | ja4t={ja4t} | etag={et1['etagId']}")
-    finally:
-        server.shutdown()
-        server.server_close()
+            # 3) 验证隐私脱敏分享创建、IP 强过滤、OpenGraph 注入与 SVG 徽章渲染
+            dirty_share = {
+                "scene": "disguise",
+                "score": 68,
+                "grade": "C",
+                "badCnt": 2,
+                "warnCnt": 1,
+                "okCnt": 16,
+                "secretIp": "198.51.100.77",
+                "summary": "发现 203.0.113.42 分流泄漏与 2001:db8::99 双栈暴露",
+                "verdict": {"tone": "bad", "text": "实测 203.0.113.42 节点与 aa:bb:cc:11:22:33 坐标 35.6895, 139.6917"},
+                "topo": {"exitRegion": "🇺🇸 美国 · 203.0.113.42", "exitType": "机房 IDC", "purityText": "纯净度 82 / 100"},
+                "scenarios": [{"id": "ai", "name": "AI 大模型", "score": 76, "reason": "机房出口 203.0.113.42"}],
+                "checks": [{"id": "split", "level": "bad", "diff": {"left": "US", "op": "≠", "right": "203.0.113.42"}, "summary": "泄漏 203.0.113.42"}],
+            }
+            req_sh = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/who/share",
+                data=json.dumps(dirty_share).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req_sh, timeout=3) as r_sh:
+                sh_res = json.loads(r_sh.read().decode("utf-8"))
+                assert sh_res.get("ok") is True and len(sh_res["id"]) >= 8
+                sid = sh_res["id"]
+
+            for check_url in (
+                f"http://127.0.0.1:{port}/api/who/share/{sid}",
+                f"http://127.0.0.1:{port}/r/{sid}",
+                f"http://127.0.0.1:{port}/r/{sid}.svg",
+            ):
+                with urllib.request.urlopen(check_url, timeout=3) as r_chk:
+                    txt = r_chk.read().decode("utf-8")
+                    for leaked in ("198.51.100.77", "203.0.113.42", "2001:db8::99", "aa:bb:cc:11:22:33", "35.6895"):
+                        assert leaked not in txt, f"PII leak {leaked} found in {check_url}!"
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/r/{sid}", timeout=3) as r_page:
+                p_html = r_page.read().decode("utf-8")
+                assert "__WHOPROBE_SHARED__" in p_html and f"/r/{sid}.svg" in p_html
+
+            print(f"SELF-TEST OK on 127.0.0.1:{port} | ja4t={ja4t} | etag={et1['etagId']} | share={sid}")
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 def main() -> None:
     global SNIFFER, ENABLE_ACTIVE_443
-    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v6.0)")
+    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.2)")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8899, help="监听端口 (默认 8899)")
     parser.add_argument("--sniff-iface", default="", help="可选 Linux 网卡名(如 ens5)，开启旁路 TCP SYN/JA4 抓包")
     parser.add_argument("--sniff-port", type=int, default=443, help="旁路抓包目标端口 (默认 443)")
+    parser.add_argument("--data-dir", default="", help="可选分享快照 SQLite 目录 (默认使用 STATE_DIRECTORY 或 ./data)")
     parser.add_argument("--no-active-probe", action="store_true", help="禁用针对来访公网 IP:443 的反向 TLS/Reality 证书验真")
     parser.add_argument("--self-test", action="store_true", help="运行自动化自检后退出")
     args = parser.parse_args()
@@ -1141,6 +1307,11 @@ def main() -> None:
     if args.self_test:
         run_self_test()
         return
+
+    if args.data_dir:
+        get_share_store(args.data_dir)
+    else:
+        get_share_store()
 
     ENABLE_ACTIVE_443 = not args.no_active_probe
     start_server_geo_prewarmer()

@@ -4933,6 +4933,7 @@
 
       const tiles = [
         {
+          iconKey: "clock",
           icon: TILE_ICONS.clock,
           label: "时区与语言",
           status: tzTone === "pending" ? "核验中" : tzTone === "bad" ? "穿帮" : tzTone === "warn" ? "偏差" : "对齐",
@@ -4942,6 +4943,7 @@
           probes: "tz,langs,dns,ecs"
         },
         {
+          iconKey: "shield",
           icon: TILE_ICONS.shield,
           label: "BGP 与黑名单",
           status: repTone === "pending" ? "查询中" : repTone === "bad" ? (R.netKind === "dc" ? "机房段" : "污染") : repTone === "warn" ? "瑕疵" : "洁净",
@@ -4951,6 +4953,7 @@
           probes: "rep_score,rep_votes,rep_dnsbl,rep_neigh"
         },
         {
+          iconKey: "layers",
           icon: TILE_ICONS.layers,
           label: "传输层协议栈",
           status: protoTone === "pending" ? "抓包中" : protoTone === "bad" ? "代发穿帮" : protoTone === "warn" ? "隧道特征" : "吻合",
@@ -4960,6 +4963,7 @@
           probes: "tcp_os,ja4t,ja4,ipquirk"
         },
         {
+          iconKey: "chip",
           icon: TILE_ICONS.chip,
           label: "芯片与物理屏",
           status: hwTone === "pending" ? "采样中" : hwTone === "bad" ? "虚拟化" : hwTone === "warn" ? "轻微异常" : "真机硬件",
@@ -4969,6 +4973,7 @@
           probes: "gpu,screen,hz,cpubench"
         },
         {
+          iconKey: "scan",
           icon: TILE_ICONS.scan,
           label: "沙箱与防篡改",
           status: brwTone === "bad" ? "检出伪装" : brwTone === "warn" ? "可疑钩子" : "零篡改",
@@ -4978,6 +4983,7 @@
           probes: "lies,worker,iframe,h_chua"
         },
         {
+          iconKey: "fp",
           icon: TILE_ICONS.fp,
           label: "物理设备锁定",
           status: fpTone === "pending" ? "计算中" : R.cacheResurrected ? "缓存暴露" : fpProtected ? "已加噪" : "固定指纹",
@@ -4987,6 +4993,7 @@
           probes: "hwid,fpid,etag,traces"
         }
       ];
+      R.lastTiles = tiles;
 
       tilesBox.innerHTML = tiles.map(t => {
         const iconBoxCls = t.tone === "bad"
@@ -5447,17 +5454,35 @@
 
     // Copy Markdown/Text Report & Copy JSON
     $("#btnCopyTxt")?.addEventListener("click", () => {
+      if (R.isSharedView) {
+        const shareUrl = location.href;
+        const lines = [
+          `【WhoProbe v7.2 · 公开脱敏体检快照 #${R.shareId || "-"}】`,
+          `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
+          `脱敏链接: ${shareUrl}`,
+          ``,
+          `[异常与风险项]`
+        ];
+        for (const [id, title] of CORE_CHECKS) {
+          const c = R.checks?.[id];
+          if (c && (c.level === "bad" || c.level === "warn")) {
+            lines.push(`- [${c.level === "bad" ? "高危" : "可疑"}] ${title}: ${c.summary}`);
+          }
+        }
+        copyText(lines.join("\n"), "已复制脱敏体检摘要");
+        return;
+      }
       const masked = document.body.classList.contains("is-masked");
       const pur = R.intel?.purity;
       const lines = [
-        `【WhoProbe v7.1 · 148项全栈指纹与出口信誉体检报告】`,
+        `【WhoProbe v7.2 · 148项全栈指纹与出口信誉体检报告】`,
         `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
         `出口纯净度: ${pur ? `${pur.score}/100 (${pur.grade} 级)` : "--"} · 脏邻居: ${R.intel?.cidr?.neighbours?.dirtyCount ?? 0} 个`,
         `推断设备: ${R.osLabel || "-"} · ${R.browserLabel || "-"} · 屏幕 ${R.physScreen || "-"} @ ${R.hz || 60}Hz`,
         `显卡渲染: ${R.gpuDiscrete ? R.gpuDiscrete + " + " + R.gpuClean : (R.gpuClean || "-")}`,
         `网络出口: ${masked ? "[已隐藏]" : (R.ip || "-")} (${countryName(R.ipCC)} · ${masked ? "[运营商已隐藏]" : (R.org || "-")})`,
         `三维测距: 浏览器 HTTP ${R.httpRtt ?? "-"}ms / 服务端 TCP 握手 ${R.srvTcpRtt ?? "-"}ms / STUN UDP ${R.stunRttMs ?? "-"}ms`,
-        `跨站指纹: ${R.fpId || "-"} · 物理硬件码: ${R.hwId || "-"}`,
+        `跨站指纹: ${masked ? "[已隐藏]" : (R.fpId || "-")} · 物理硬件码: ${masked ? "[已隐藏]" : (R.hwId || "-")}`,
         ``,
         `[异常与风险项]`
       ];
@@ -5473,7 +5498,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.1.1",
+        version: "7.2.0",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,
@@ -5496,12 +5521,644 @@
 
     $("#btnCopyUrl")?.addEventListener("click", () => copyText(location.href, "已复制页面链接"));
 
-    // Rerun all 148 probes
-    $("#btnRerun")?.addEventListener("click", () => runAll());
+    // Privacy-Safe Share Link & Card Modal
+    $("#btnShare")?.addEventListener("click", () => openOrCreateShareModal());
+    $("#btnShareInline")?.addEventListener("click", () => openOrCreateShareModal());
+    $("#btnCopySharedLink")?.addEventListener("click", () => openOrCreateShareModal());
+    $("#btnCloseShareModal")?.addEventListener("click", () => {
+      const m = $("#shareModal");
+      if (m) m.hidden = true;
+    });
+    $("#shareModal")?.addEventListener("click", e => {
+      if (e.target === $("#shareModal")) $("#shareModal").hidden = true;
+    });
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && $("#shareModal") && !$("#shareModal").hidden) {
+        $("#shareModal").hidden = true;
+      }
+    });
+    $("#btnCopyShareUrl")?.addEventListener("click", () => {
+      const val = $("#shareUrlInput")?.value || "";
+      if (val) copyText(val, "已复制脱敏分享链接");
+    });
+    $("#btnCopyShareMd")?.addEventListener("click", () => {
+      const val = $("#shareMdInput")?.value || "";
+      if (val) copyText(val, "已复制 Markdown 签名徽章代码");
+    });
+
+    // Rerun all 148 probes (or navigate to live self-test if viewing a shared snapshot)
+    $("#btnRerun")?.addEventListener("click", () => {
+      if (R.isSharedView) {
+        location.href = "./";
+        return;
+      }
+      runAll();
+    });
+  }
+
+  /* ---------- Speedtest-Style Privacy-Safe Share Builder & Snapshot Hydrator ---------- */
+  function scrubClientShareText(raw) {
+    if (raw == null) return "";
+    let s = String(raw);
+    // Redact exact runtime IPs, cities, carrier strings & tracking IDs first
+    const exactSecrets = [
+      R.ip,
+      R.dnsIp,
+      R.ecsIp,
+      R.v6mac,
+      R.fpId,
+      R.hwId,
+      R.etag?.id,
+      R.exits?.ex_cn?.ip,
+      R.exits?.ex_intl?.ip,
+      R.exits?.ex_gpt?.ip,
+      R.exits?.ex_claude?.ip,
+      R.exits?.ex_cf?.ip,
+      ...(Array.isArray(R.rtc) ? R.rtc : []),
+      ...(Array.isArray(R.lan) ? R.lan : [])
+    ].filter(x => x && String(x).length >= 4);
+
+    for (const sec of exactSecrets) {
+      s = s.split(String(sec)).join("[已隐藏]");
+    }
+    if (R.exits?.ex_cn?.label) {
+      s = s.split(R.exits.ex_cn.label).join("中国大陆宽带");
+    }
+    const exactCities = [R.srv?.geo?.city, R.ipCity, R.intel?.consensus?.city].filter(x => x && String(x).length >= 2);
+    for (const c of exactCities) {
+      s = s.split(String(c)).join(countryName(R.ipCC) || "出口地区");
+    }
+
+    s = s
+      .replace(/\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b/g, "[MAC已隐藏]")
+      .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?:\/\d{1,2})?\b/g, "[IP已隐藏]")
+      .replace(/(?<![:\w])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?:\/\d{1,3})?(?![:\w])/g, m => (m.includes("::") || m.split(":").length >= 5 ? "[IPv6已隐藏]" : m));
+    return s.trim();
+  }
+
+  function scrubDiffObj(d) {
+    if (!d) return {};
+    if (d.left && d.right) {
+      return { left: scrubClientShareText(d.left), op: d.op || "≠", right: scrubClientShareText(d.right) };
+    }
+    return d.single ? { single: scrubClientShareText(d.single) } : {};
+  }
+
+  function buildSanitizedSharePayload() {
+    const checks = R.checks || evaluateAllChecks();
+    let badCnt = 0, warnCnt = 0, okCnt = 0;
+    for (const [id] of CORE_CHECKS) {
+      if (!isCheckCounted(id)) continue;
+      const lv = checks[id]?.level;
+      if (lv === "bad") badCnt++;
+      else if (lv === "warn") warnCnt++;
+      else if (lv === "ok") okCnt++;
+    }
+
+    const sys = inferSystemLangs({ os: R.dev?.os, sysFonts: R.fonts || [], voices: R.voices || [], kbd: R.kbd });
+    const origin = inferOrigin({ langs: R.langs || [], tz: R.tz, ipcc: R.ipCC, sys, ios: /^(iOS|iPadOS)$/.test(R.dev?.os || "") });
+    const cnLeak = R.exits?.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN";
+    const originCountryOnly = cnLeak ? "🇨🇳 中国" : (origin?.cc ? `${flagEmoji(origin.cc)} ${countryName(origin.cc)}` : "本地终端");
+
+    const netTypeShort = R.netKind === "dc" ? "机房 IDC" : R.netKind === "mobile" ? "移动蜂窝" : R.netKind === "relay" ? "隐私中继" : "宽带 ISP";
+    const exitRegionClean = `${R.ipCC ? flagEmoji(R.ipCC) + " " + countryName(R.ipCC) : "未知地区"}${R.asn ? " · " + R.asn : ""}`;
+    const pur = R.intel?.purity;
+    const purityText = pur?.score != null ? `信誉 ${pur.score} · ${pur.grade}` : "信誉 --";
+    const purityTone = pur?.score == null ? "neutral" : pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad";
+
+    const splitLv = checks.split?.level || "info";
+    const link1Tone = splitLv === "bad" ? "bad" : splitLv === "warn" ? "warn" : R.exitsDone ? "ok" : "neutral";
+    const connBad = checks.reality?.level === "bad" || checks.conn?.level === "bad" || checks.rtt?.level === "bad" || checks.synspoof?.level === "bad";
+    const connWarn = !connBad && (checks.conn?.level === "warn" || checks.rtt?.level === "warn");
+    const link2Tone = connBad ? "bad" : connWarn ? "warn" : R.srv ? "ok" : "neutral";
+
+    const wowTitleTxt = scrubClientShareText($("#wowTitle")?.textContent || "");
+    const wowTone = $("#wowAlert")?.className.includes("rose") ? "bad" : $("#wowAlert")?.className.includes("amber") ? "warn" : "ok";
+
+    // Read structured 6 tiles & redact hardware hash on tile 6
+    const tiles = (R.lastTiles || []).slice(0, 6).map((t, idx) => ({
+      icon: t.iconKey || "shield",
+      label: t.label || "",
+      status: t.status || "",
+      tone: t.tone === "bad" || t.tone === "warn" || t.tone === "ok" ? t.tone : "neutral",
+      val: idx === 5 ? "硬件 #**** (已脱敏)" : scrubClientShareText(t.val || ""),
+      sub: scrubClientShareText(t.sub || "")
+    }));
+
+    const tags = $$("#personaTags > span").map(el => {
+      const c = el.className || "";
+      const t = c.includes("rose") ? "bad" : c.includes("amber") ? "warn" : c.includes("emerald") ? "ok" : "info";
+      return [scrubClientShareText(el.textContent || ""), t];
+    });
+
+    const rankedIssues = CORE_CHECKS
+      .map(([id, title]) => ({ id, title: SHORT_CHECK_TITLE[id] || title, lv: checks[id]?.level }))
+      .filter(x => isCheckCounted(x.id) && (x.lv === "bad" || x.lv === "warn"))
+      .sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1) || (CHECK_WEIGHTS[b.id] || 0) - (CHECK_WEIGHTS[a.id] || 0))
+      .slice(0, 4)
+      .map(item => ({
+        id: item.id,
+        title: item.title,
+        lv: item.lv,
+        diff: scrubDiffObj(getVisualConflict(item.id, checks[item.id]))
+      }));
+
+    const scObj = R.scenarios || computeScenarios();
+    const scenarios = SCENARIOS_META.map(([id, name]) => ({
+      id,
+      name,
+      score: scObj[id]?.score ?? 50,
+      reason: scrubClientShareText(scObj[id]?.reason || "")
+    }));
+
+    const allChecks = [...CORE_CHECKS, ...PROTO_CHECKS].map(([id], idx) => {
+      const res = checks[id] || { level: "info", summary: "–" };
+      const isCore = idx < CORE_CHECKS.length;
+      return {
+        id,
+        level: res.level || "info",
+        counted: !isCore || isCheckCounted(id),
+        diff: isCore ? scrubDiffObj(getVisualConflict(id, res)) : {},
+        summary: scrubClientShareText(res.summary || "")
+      };
+    });
+
+    return {
+      scene: currentScene,
+      score: R.score ?? 50,
+      grade: R.grade || "C",
+      totalIssues: R.totalIssues ?? (badCnt + warnCnt),
+      badCnt,
+      warnCnt,
+      okCnt,
+      unverifiedCnt: R.unverifiedCnt || 0,
+      summary: scrubClientShareText($("#scoreSub")?.textContent || ""),
+      verdict: { tone: wowTone, text: wowTitleTxt },
+      topo: {
+        originLabel: originCountryOnly,
+        clientTag: scrubClientShareText($("#topoClientTag")?.textContent || "终端"),
+        clientTone: cnLeak || checks.tz?.level === "bad" ? "bad" : "neutral",
+        deviceSub: scrubClientShareText($("#snapDevice")?.textContent || ""),
+        link1Badge: scrubClientShareText($("#topoLink1Badge")?.textContent || "路由核验"),
+        link1Sub: scrubClientShareText($("#topoLink1Sub")?.textContent || ""),
+        link1Tone,
+        exitType: netTypeShort,
+        exitTone: R.netKind === "dc" ? "bad" : "ok",
+        purityText,
+        purityTone,
+        exitRegion: scrubClientShareText(exitRegionClean),
+        link2Badge: scrubClientShareText($("#topoLink2Badge")?.textContent || "TLS 1.3"),
+        link2Rtt: scrubClientShareText($("#kpiRttVal")?.textContent || ""),
+        link2Tone,
+        trackState: R.cacheResurrected ? "缓存 ETag 认出回访（ID 已脱敏）" : "新访客或隔离良好（ID 已脱敏）"
+      },
+      tiles,
+      tags,
+      priority: rankedIssues,
+      scenarios,
+      checks: allChecks
+    };
+  }
+
+  function populateAndShowShareModal(shareRes, autoCopy = false) {
+    const modal = $("#shareModal");
+    if (!modal || !shareRes) return;
+    const fullUrl = new URL(shareRes.path || `./r/${shareRes.id}`, document.baseURI || location.href).href;
+    const badgeUrl = new URL(shareRes.badgePath || `./r/${shareRes.id}.svg`, document.baseURI || location.href).href;
+    const mdCode = `[![WhoProbe](${badgeUrl})](${fullUrl})`;
+
+    const uInp = $("#shareUrlInput"), mInp = $("#shareMdInput"), img = $("#sharePreviewImg"), dl = $("#btnDownloadShareSvg");
+    if (uInp) uInp.value = fullUrl;
+    if (mInp) mInp.value = mdCode;
+    if (img) img.src = badgeUrl;
+    if (dl) {
+      dl.href = badgeUrl;
+      dl.download = `whoprobe-${shareRes.id}.svg`;
+    }
+    modal.hidden = false;
+    if (autoCopy) {
+      copyText(fullUrl, "已生成脱敏分享链接并复制到剪贴板");
+    }
+  }
+
+  async function openOrCreateShareModal() {
+    if (!R.finished) {
+      showToast("请等待 148 项探针确认完成后再生成分享链接");
+      return;
+    }
+    if (R.shareResult) {
+      populateAndShowShareModal(R.shareResult, false);
+      return;
+    }
+    const btn = $("#btnShare"), btnTxt = $("#btnShareText");
+    if (btn) btn.disabled = true;
+    if (btnTxt) btnTxt.textContent = "生成中…";
+
+    try {
+      const payload = buildSanitizedSharePayload();
+      const resp = await fetch("./api/who/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "omit",
+        signal: AbortSignal.timeout(8000)
+      });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data || !data.ok) {
+        showToast("分享链接生成失败，请稍后重试");
+        return;
+      }
+      R.shareResult = data;
+      populateAndShowShareModal(data, true);
+    } catch (e) {
+      showToast("网络波动，生成分享链接失败");
+    } finally {
+      if (btn) btn.disabled = false;
+      if (btnTxt) btnTxt.textContent = "生成分享链接";
+    }
+  }
+
+  function renderSharedSnapshot(sharedWrap) {
+    const sid = sharedWrap.id;
+    const createdAt = sharedWrap.createdAt;
+    const rep = sharedWrap.report || {};
+
+    currentScene = rep.scene === "privacy" ? "privacy" : "disguise";
+    R = {
+      finished: true,
+      isSharedView: true,
+      shareId: sid,
+      shareCreatedAt: createdAt,
+      score: rep.score,
+      grade: rep.grade,
+      totalIssues: rep.totalIssues,
+      unverifiedCnt: rep.unverifiedCnt || 0,
+      shareResult: {
+        id: sid,
+        path: `./r/${sid}`,
+        badgePath: `./r/${sid}.svg`
+      },
+      checks: {}
+    };
+
+    // Header & Banner adjustments for Shared Snapshot View
+    if ($("#ipQueryForm")) $("#ipQueryForm").hidden = true;
+    if ($("#sceneSwitch")) $("#sceneSwitch").hidden = true;
+    if ($("#btnMask")) $("#btnMask").hidden = true;
+    if ($("#btnCopyJson")) $("#btnCopyJson").hidden = true;
+    const shBtn = $("#btnShare"), shTxt = $("#btnShareText"), shInl = $("#btnShareInline");
+    if (shBtn) shBtn.hidden = false;
+    if (shTxt) shTxt.textContent = "分享此卡片";
+    if (shInl) shInl.hidden = false;
+    const rrTxt = $("#btnRerunText");
+    if (rrTxt) rrTxt.textContent = "测测我的环境";
+
+    const dtStr = createdAt ? new Date(createdAt * 1000).toLocaleString("zh-CN", { hour12: false }) : "";
+    const banner = $("#sharedViewBanner"), metaTxt = $("#sharedMetaText");
+    if (banner) banner.hidden = false;
+    if (metaTxt) metaTxt.textContent = `快照 #${sid}${dtStr ? " · 生成于 " + dtStr : ""} · 真实出口 IP、分流 IP、精确城市与追踪哈希已彻底抹除`;
+
+    if ($("#topProgBar")) $("#topProgBar").style.width = "100%";
+    if ($("#liveDot")) $("#liveDot").className = "size-1.5 shrink-0 rounded-full bg-emerald-500";
+    if ($("#liveStatusText")) $("#liveStatusText").textContent = `公开脱敏快照 #${sid}`;
+    if ($("#portraitElapsed")) $("#portraitElapsed").textContent = `脱敏快照 #${sid}`;
+
+    // 1. Hydrate Score Gauge & Spectrum
+    const score = rep.score ?? 50;
+    const grade = rep.grade || "C";
+    const badCnt = rep.badCnt ?? 0;
+    const warnCnt = rep.warnCnt ?? 0;
+    const okCnt = rep.okCnt ?? 0;
+    const totalIssues = rep.totalIssues ?? (badCnt + warnCnt);
+
+    const sNum = $("#scoreNum");
+    if (sNum) {
+      sNum.textContent = String(score);
+      sNum.className = "text-[32px] font-bold tracking-[-0.04em] font-mono tabular-nums leading-none text-zinc-950 dark:text-white";
+    }
+    const ringArc = $("#scoreRingArc");
+    if (ringArc) {
+      const circ = 301.59;
+      ringArc.style.strokeDashoffset = (circ * (1 - Math.max(4, score) / 100)).toFixed(1);
+      const strokeCls = /^A/.test(grade) ? "stroke-emerald-500" : (grade === "B" || grade === "C") ? "stroke-amber-500" : "stroke-rose-500";
+      ringArc.setAttribute("class", `score-ring-arc ${strokeCls}`);
+    }
+    const gBadge = $("#gradeBadge");
+    if (gBadge) {
+      gBadge.textContent = `${grade} 级`;
+      gBadge.className = "mt-1 inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold " + (
+        /^A/.test(grade) ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          : (grade === "B" || grade === "C") ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+      );
+    }
+    if ($("#scoreSub")) $("#scoreSub").textContent = rep.summary || "全栈风控与指纹体检脱敏快照";
+    if ($("#sceneBadge")) $("#sceneBadge").textContent = currentScene === "privacy" ? "防追踪视角" : "伪装自检";
+    if ($("#issueCount")) {
+      $("#issueCount").textContent = String(totalIssues);
+      $("#issueCount").className = "text-2xl font-bold font-mono tabular-nums leading-none " + (
+        badCnt > 0 ? "text-rose-600 dark:text-rose-400" : warnCnt > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+      );
+    }
+    if ($("#cntBad")) $("#cntBad").textContent = String(badCnt);
+    if ($("#cntWarn")) $("#cntWarn").textContent = String(warnCnt);
+    if ($("#cntOk")) $("#cntOk").textContent = String(okCnt);
+
+    // Priority Conflict List
+    const prio = Array.isArray(rep.priority) ? rep.priority : [];
+    const pBox = $("#priorityBox"), pList = $("#priorityList"), clearBox = $("#allClearBox");
+    if (pBox && pList) {
+      if (!prio.length) {
+        pBox.hidden = true;
+        if (clearBox) {
+          clearBox.hidden = false;
+          clearBox.className = "rounded-xl px-3.5 py-3 flex items-center gap-2.5 bg-emerald-50/75 dark:bg-emerald-500/10";
+          if ($("#allClearIcon")) {
+            $("#allClearIcon").textContent = "✓";
+            $("#allClearIcon").className = "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold bg-emerald-600 text-white";
+          }
+          if ($("#allClearTitle")) {
+            $("#allClearTitle").textContent = "全部核心核验零高危冲突";
+            $("#allClearTitle").className = "text-xs font-semibold text-emerald-950 dark:text-emerald-200";
+          }
+          if ($("#allClearSub")) {
+            $("#allClearSub").textContent = "底层握手、出口信誉与浏览器环境一致";
+            $("#allClearSub").className = "text-[11px] text-emerald-800/80 dark:text-emerald-300/80 truncate";
+          }
+        }
+      } else {
+        pBox.hidden = false;
+        if (clearBox) clearBox.hidden = true;
+        if ($("#priorityMoreHint")) {
+          $("#priorityMoreHint").textContent = totalIssues > prio.length ? `其余 ${totalIssues - prio.length} 项见下方` : "";
+        }
+        pList.innerHTML = prio.map(item => {
+          const dotCls = item.lv === "bad" ? "bg-rose-600 text-white" : "bg-amber-500 text-white";
+          const pillCls = item.lv === "bad" ? "bg-rose-50 text-rose-800 dark:bg-rose-500/15 dark:text-rose-200" : "bg-amber-50 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200";
+          return `
+            <li>
+              <button type="button" data-jumpck="${esc(item.id)}" class="w-full rounded-xl px-3 py-2 flex items-center justify-between gap-2 ring-1 ring-zinc-950/[0.06] bg-zinc-50/90 hover:bg-zinc-100/90 transition dark:bg-white/[0.03] dark:ring-white/[0.07] dark:hover:bg-white/[0.06]">
+                <span class="inline-flex items-center gap-2 min-w-0">
+                  <span class="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[9.5px] font-bold ${dotCls}">${item.lv === "bad" ? "✕" : "!"}</span>
+                  <span class="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">${esc(item.title)}</span>
+                </span>
+                <span class="inline-flex items-center gap-1.5 shrink-0 max-w-[58%]">
+                  <span class="py-0.5 px-1.5 rounded font-mono text-[10.5px] font-medium truncate inline-flex items-center gap-1 ${pillCls}">${renderDiffHtml(item.diff, item.lv)}</span>
+                  <span class="text-[11px] font-medium text-blue-600 dark:text-blue-400">→</span>
+                </span>
+              </button>
+            </li>
+          `;
+        }).join("");
+      }
+    }
+
+    // 2. Hydrate Topology, Verdict & 6 Tiles
+    const tp = rep.topo || {};
+    if ($("#snapOrigin")) $("#snapOrigin").textContent = tp.originLabel || "端侧终端";
+    if ($("#snapDevice")) $("#snapDevice").textContent = tp.deviceSub || "";
+    if ($("#topoClientTag")) {
+      $("#topoClientTag").textContent = tp.clientTag || "终端";
+      $("#topoClientTag").className = "py-0.5 px-1.5 rounded text-[10px] font-semibold whitespace-nowrap shrink-0 " + (
+        tp.clientTone === "bad" ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+      );
+    }
+    const applyTopoConnector = (bId, lId, aId, badgeTxt, tone) => {
+      const b = $(bId), l = $(lId), a = $(aId);
+      if (!b || !l || !a) return;
+      b.textContent = badgeTxt;
+      if (tone === "bad") {
+        b.className = "py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300";
+        l.setAttribute("class", "topo-flow-anim stroke-rose-500");
+        a.setAttribute("class", "stroke-rose-500");
+      } else if (tone === "warn") {
+        b.className = "py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300";
+        l.setAttribute("class", "topo-flow-anim stroke-amber-500");
+        a.setAttribute("class", "stroke-amber-500");
+      } else if (tone === "ok") {
+        b.className = "py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300";
+        l.removeAttribute("stroke-dasharray");
+        l.setAttribute("class", "stroke-emerald-500");
+        a.setAttribute("class", "stroke-emerald-500");
+      }
+    };
+    applyTopoConnector("#topoLink1Badge", "#topoLine1", "#topoArrow1", tp.link1Badge || "路由核验", tp.link1Tone);
+    if ($("#topoLink1Sub")) $("#topoLink1Sub").textContent = tp.link1Sub || "";
+    applyTopoConnector("#topoLink2Badge", "#topoLine2", "#topoArrow2", tp.link2Badge || "TLS 1.3", tp.link2Tone);
+    if ($("#kpiRttVal")) $("#kpiRttVal").textContent = tp.link2Rtt || "";
+
+    if ($("#ispTypeBadge")) {
+      $("#ispTypeBadge").textContent = tp.exitType || "网络出口";
+      $("#ispTypeBadge").className = "inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 " + (
+        tp.exitTone === "bad" ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+      );
+    }
+    if ($("#purityPill")) {
+      $("#purityPill").textContent = tp.purityText || "信誉 --";
+      $("#purityPill").className = "inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-mono font-semibold whitespace-nowrap shrink-0 " + (
+        tp.purityTone === "ok" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          : tp.purityTone === "warn" ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          : tp.purityTone === "bad" ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+      );
+    }
+    if ($("#kpiExitIp")) $("#kpiExitIp").textContent = "*.*.*.* (IP 已隐藏)";
+    if ($("#kpiExitGeo")) $("#kpiExitGeo").textContent = tp.exitRegion || "出口地区已脱敏";
+    if ($("#kpiFpId")) $("#kpiFpId").textContent = "**** · **** (已脱敏)";
+    if ($("#kpiVisitState")) $("#kpiVisitState").textContent = tp.trackState || "跨站追踪哈希已隐藏";
+
+    const vd = rep.verdict || {};
+    const wowEl = $("#wowAlert"), wowIcon = $("#wowIcon"), wowTitle = $("#wowTitle");
+    if (wowEl && wowIcon && wowTitle) {
+      const vt = vd.tone || "ok";
+      wowEl.className = "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs max-w-full " + (
+        vt === "bad" ? "border-rose-200 bg-rose-50/90 dark:bg-rose-500/12 dark:border-rose-500/25"
+          : vt === "warn" ? "border-amber-200 bg-amber-50/90 dark:bg-amber-500/12 dark:border-amber-500/25"
+          : "border-emerald-200 bg-emerald-50/80 dark:bg-emerald-500/10 dark:border-emerald-500/20"
+      );
+      wowIcon.className = "inline-flex size-4 shrink-0 items-center justify-center rounded-full font-bold text-[10px] " + (
+        vt === "bad" ? "bg-rose-600 text-white" : vt === "warn" ? "bg-amber-500 text-white" : "bg-emerald-600 text-white"
+      );
+      wowIcon.textContent = vt === "ok" ? "✓" : "!";
+      wowTitle.textContent = vd.text || rep.summary || "脱敏体检快照";
+      wowTitle.className = "font-semibold truncate " + (
+        vt === "bad" ? "text-rose-900 dark:text-rose-200" : vt === "warn" ? "text-amber-950 dark:text-amber-200" : "text-emerald-900 dark:text-emerald-200"
+      );
+    }
+
+    const tilesBox = $("#identityTiles");
+    if (tilesBox && Array.isArray(rep.tiles)) {
+      tilesBox.innerHTML = rep.tiles.map(t => {
+        const iconBoxCls = t.tone === "bad" ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
+          : t.tone === "warn" ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+          : t.tone === "ok" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+          : "bg-zinc-200/80 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+        const pillCls = t.tone === "bad" ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+          : t.tone === "warn" ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          : t.tone === "ok" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+        return `
+          <div class="rounded-xl ring-1 ring-zinc-950/[0.06] bg-zinc-50/80 p-3 flex flex-col justify-between gap-1.5 dark:bg-white/[0.025] dark:ring-white/[0.07]">
+            <div class="flex items-center justify-between gap-1.5 w-full">
+              <span class="inline-flex items-center gap-1.5 min-w-0">
+                <span class="inline-flex size-5 shrink-0 items-center justify-center rounded-md ${iconBoxCls}">${TILE_ICONS[t.icon] || TILE_ICONS.shield}</span>
+                <span class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 truncate">${esc(t.label)}</span>
+              </span>
+              <span class="py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 ${pillCls}">${esc(t.status)}</span>
+            </div>
+            <div class="w-full min-w-0">
+              <div class="text-[13px] font-bold font-mono text-zinc-950 dark:text-white truncate">${esc(t.val)}</div>
+              <div class="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 truncate">${esc(t.sub)}</div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    const tagCls = {
+      bad: "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300",
+      warn: "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
+      ok: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+      info: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+      neutral: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800/80 dark:text-zinc-400"
+    };
+    if ($("#personaTags") && Array.isArray(rep.tags)) {
+      $("#personaTags").innerHTML = rep.tags.map(([lbl, t]) =>
+        `<span class="py-0.5 px-2 rounded-full text-[11px] font-medium ${tagCls[t] || tagCls.neutral}">${esc(lbl)}</span>`
+      ).join("");
+    }
+    if ($("#storyProse")) {
+      $("#storyProse").innerHTML = `<p class="text-xs text-zinc-500 dark:text-zinc-400">当前为公开脱敏分享报告，为保护分享者隐私，含真实 IP、城市与固定指纹哈希的自然语言细节已自动隐藏。</p>`;
+    }
+
+    // 3. Hydrate 6 Business Scenario Bars
+    let passScen = 0;
+    for (const sc of (rep.scenarios || [])) {
+      const card = $(`#scenarioGrid [data-scen="${sc.id}"]`);
+      if (!card) continue;
+      const ok = sc.score >= 80, warn = sc.score >= 55 && sc.score < 80;
+      if (ok) passScen++;
+      if ($(".sc-icon", card)) $(".sc-icon", card).className = "sc-icon shrink-0 " + (ok ? "text-emerald-600 dark:text-emerald-400" : warn ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400");
+      if ($(".sc-badge", card)) {
+        $(".sc-badge", card).textContent = ok ? "畅通" : warn ? "受限" : "高危";
+        $(".sc-badge", card).className = "sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 " + (
+          ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+            : warn ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+            : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+        );
+      }
+      if ($(".sc-score", card)) {
+        $(".sc-score", card).textContent = `${sc.score}%`;
+        $(".sc-score", card).className = "sc-score font-mono text-xl font-bold tracking-tight tabular-nums leading-none " + (
+          ok ? "text-emerald-700 dark:text-emerald-400" : warn ? "text-amber-700 dark:text-amber-400" : "text-rose-600 dark:text-rose-400"
+        );
+      }
+      if ($(".sc-bar", card)) {
+        $(".sc-bar", card).style.width = `${sc.score}%`;
+        $(".sc-bar", card).className = "sc-bar h-full rounded-full transition-all duration-300 " + (ok ? "bg-emerald-500" : warn ? "bg-amber-500" : "bg-rose-500");
+      }
+      if ($(".sc-reason", card)) {
+        $(".sc-reason", card).textContent = sc.reason || "";
+        $(".sc-reason", card).title = sc.reason || "";
+      }
+    }
+    if ($("#scenarioSummaryBadge")) {
+      $("#scenarioSummaryBadge").textContent = `${passScen} / ${SCENARIOS_META.length} 场景畅通`;
+      $("#scenarioSummaryBadge").className = "inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-semibold " + (
+        passScen >= 5 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          : passScen >= 3 ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+      );
+    }
+
+    // 4. Hydrate 24 Sanitized Check Cards & Spectrum Bar
+    const styleMap = {
+      ok: { badgeCls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400", badgeTxt: "✓", segCls: "bg-emerald-500", borderLeft: "border-l-emerald-500 dark:border-l-emerald-500/80", diffCls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/12 dark:text-emerald-300", orderBase: 60 },
+      warn: { badgeCls: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-400", badgeTxt: "!", segCls: "bg-amber-500", borderLeft: "border-l-amber-500 dark:border-l-amber-400", diffCls: "bg-amber-50 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200", orderBase: 20 },
+      bad: { badgeCls: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400", badgeTxt: "✕", segCls: "bg-rose-500", borderLeft: "border-l-rose-500 dark:border-l-rose-500", diffCls: "bg-rose-50 text-rose-800 dark:bg-rose-500/15 dark:text-rose-200", orderBase: 0 },
+      info: { badgeCls: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400", badgeTxt: "i", segCls: "bg-zinc-300 dark:bg-zinc-700", borderLeft: "border-l-zinc-300 dark:border-l-zinc-700", diffCls: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400", orderBase: 40 }
+    };
+    const ckLookup = Object.fromEntries((rep.checks || []).map(c => [c.id, c]));
+    const allDefs = [...CORE_CHECKS, ...PROTO_CHECKS];
+    for (let idx = 0; idx < allDefs.length; idx++) {
+      const [id] = allDefs[idx];
+      const item = ckLookup[id] || { level: "info", counted: true, diff: {}, summary: "–" };
+      R.checks[id] = item;
+      const st = styleMap[item.level] || styleMap.info;
+      const isCore = idx < CORE_CHECKS.length;
+      const active = item.counted !== false;
+
+      const seg = $(`#segBar [data-seg="${id}"]`);
+      if (seg) seg.className = `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`;
+
+      const row = CHECK_EL[id];
+      if (!row) continue;
+      if (isCore) {
+        row.style.order = String((active ? st.orderBase : 80) + idx);
+        row.className = `ck-card rounded-xl border border-zinc-200/80 border-l-[3px] ${st.borderLeft} bg-white px-4 py-3 transition dark:bg-[#151820] dark:border-white/[0.07] ${!active ? "opacity-50" : ""}`;
+      }
+      if ($(".ck-badge", row)) {
+        $(".ck-badge", row).className = isCore
+          ? `ck-badge mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold ${st.badgeCls}`
+          : `ck-badge inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${st.badgeCls}`;
+        $(".ck-badge", row).textContent = st.badgeTxt;
+      }
+      if ($(".ck-diff", row) && isCore) {
+        $(".ck-diff", row).className = `ck-diff inline-flex items-center gap-1 py-0.5 px-1.5 rounded font-mono text-[10.5px] font-medium ${st.diffCls}`;
+        $(".ck-diff", row).innerHTML = !active ? "<span>不计分</span>" : renderDiffHtml(item.diff, item.level);
+      }
+      if ($(".ck-val", row)) {
+        $(".ck-val", row).textContent = item.summary || "–";
+        $(".ck-val", row).className = isCore
+          ? "ck-val mt-1 text-xs leading-relaxed " + (item.level === "bad" ? "text-rose-800 dark:text-rose-200/90 line-clamp-2" : item.level === "warn" ? "text-amber-900 dark:text-amber-200/90 line-clamp-2" : "text-zinc-500 dark:text-zinc-400 truncate")
+          : "ck-val text-[11.5px] text-zinc-500 dark:text-zinc-400 line-clamp-2 leading-snug";
+      }
+      const isIssue = item.level === "bad" || item.level === "warn";
+      if ($(".ck-howto", row) && isCore) $(".ck-howto", row).textContent = isIssue ? "改法 ▾" : "原理";
+      if ($(".ck-retest", row)) $(".ck-retest", row).hidden = true;
+      if ($(".ck-drawer", row)) {
+        const steps = getFixSteps(id);
+        $(".ck-drawer", row).innerHTML = steps.map((s, si) => `
+          <div class="flex items-start gap-2">
+            <span class="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full font-mono text-[10px] font-semibold bg-zinc-200/80 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">${si + 1}</span>
+            <span class="flex-1">${esc(s)}</span>
+          </div>
+        `).join("");
+      }
+    }
+
+    if ($("#tabChecksBadge")) {
+      $("#tabChecksBadge").textContent = totalIssues > 0 ? `${totalIssues} 异常` : "全过";
+      $("#tabChecksBadge").className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
+        badCnt > 0 ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
+          : warnCnt > 0 ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+      );
+    }
+    if ($("#tabRoutesBadge")) $("#tabRoutesBadge").textContent = "已脱敏";
+    if ($("#probeCountBadge")) $("#probeCountBadge").textContent = "已隐藏";
+
+    // Privacy shield notice inside raw route/probe panels in Shared View
+    const privCardHtml = `
+      <div class="p-8 text-center space-y-3">
+        <div class="mx-auto inline-flex size-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+          <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+        </div>
+        <h3 class="text-sm font-semibold text-zinc-950 dark:text-white">原始 IP 与底层硬件探针明细已隐私隔离</h3>
+        <p class="max-w-md mx-auto text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">为确保分享链接绝不泄露分享者的真实公网 IP、国内分流宽带与唯一硬件哈希，公开快照仅保留脱敏后的 24 项风控体检结论与场景评分。</p>
+        <div class="pt-1">
+          <a href="./" class="inline-flex items-center gap-1.5 py-2 px-4 rounded-lg text-xs font-semibold bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">实时检测我的当前环境 →</a>
+        </div>
+      </div>
+    `;
+    if ($("#panelRoutes")) $("#panelRoutes").innerHTML = privCardHtml;
+    if ($("#explorerSection")) $("#explorerSection").innerHTML = privCardHtml;
   }
 
   /* ---------- Master Orchestrator ---------- */
   function resetPendingScoreUI() {
+    if ($("#btnShare")) $("#btnShare").hidden = true;
+    if ($("#btnShareInline")) $("#btnShareInline").hidden = true;
     const sNum = $("#scoreNum");
     if (sNum) {
       sNum.textContent = "--";
@@ -5719,11 +6376,37 @@
     if (elap) elap.textContent = `${elapsedSec}s · 148 项探针`;
     if (rerunBtn) rerunBtn.disabled = false;
     if (rerunTxt) rerunTxt.textContent = "重新检测";
+    if ($("#btnShare")) $("#btnShare").hidden = false;
+    if ($("#btnShareInline")) $("#btnShareInline").hidden = false;
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
+  document.addEventListener("DOMContentLoaded", async () => {
     buildInitialDOM();
     bindEvents();
+
+    const injectedShare = window.__WHOPROBE_SHARED__;
+    if (injectedShare) {
+      if (injectedShare.ok && injectedShare.report) {
+        renderSharedSnapshot(injectedShare);
+        return;
+      }
+      if (injectedShare.notFound) {
+        try { history.replaceState(null, "", "./"); } catch (e) {}
+        showToast("该分享链接不存在或已过期，正在为您执行本机检测…");
+      }
+    } else {
+      const mShare = /\/r\/([A-Za-z0-9]{6,16})\/?$/.exec(location.pathname);
+      if (mShare) {
+        const fetched = await getJSON(`./api/who/share/${encodeURIComponent(mShare[1])}`, 5000, "omit").catch(() => null);
+        if (fetched && fetched.ok && fetched.report) {
+          renderSharedSnapshot(fetched);
+          return;
+        }
+        try { history.replaceState(null, "", "./"); } catch (e) {}
+        showToast("该分享链接不存在或已过期，正在为您执行本机检测…");
+      }
+    }
+
     runAll();
   });
 })();

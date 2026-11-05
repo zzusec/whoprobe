@@ -11,6 +11,7 @@ WORKDIR /app
 
 COPY probe.py ./probe.py
 COPY egress_intel.py ./egress_intel.py
+COPY share_store.py ./share_store.py
 COPY static ./static
 
 # Run built-in verification during build

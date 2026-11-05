@@ -1627,23 +1627,19 @@
       setNA("ex_self", "等待主连接返回");
     }
 
-    // Mainland China exit probe (dual fallback: ipip.net + speedtest.cn)
+    // Mainland China exit probe (parallel race/fallback: ipip.net + speedtest.cn so blocked proxies don't wait 14s serially)
     const pCn = (async () => {
       let ip = "", loc = "";
-      const j1 = await getJSON("https://myip.ipip.net/json", 4800).catch(() => null);
+      const [j1, j2] = await Promise.all([
+        getJSON("https://myip.ipip.net/json", 3800).catch(() => null),
+        getJSON("https://forge.speedtest.cn/api/location/info", 3800).catch(() => null)
+      ]);
       if (j1?.data?.ip) {
         ip = j1.data.ip;
         loc = (j1.data.location || []).filter(Boolean).join(" · ");
-      } else {
-        const j2 = await getJSON("https://forge.speedtest.cn/api/location/info", 4800).catch(() => null);
-        if (j2?.ip) {
-          ip = j2.ip;
-          loc = [j2.country, j2.province, j2.city, j2.isp].filter(Boolean).join(" · ");
-        } else {
-          const t3 = await getText("https://myip.ipip.net", 4500).catch(() => "");
-          const m = t3.match(/(\d+\.\d+\.\d+\.\d+)/);
-          if (m) { ip = m[1]; loc = t3.replace(/\s+/g, " ").trim().slice(0, 50); }
-        }
+      } else if (j2?.ip) {
+        ip = j2.ip;
+        loc = [j2.country, j2.province, j2.city, j2.isp].filter(Boolean).join(" · ");
       }
       if (!ip) {
         setNA("ex_cn", "连接超时或被当前代理阻断");
@@ -1658,24 +1654,25 @@
       setRouteRow("ex_cn", `${cc ? flagEmoji(cc) + " " : ""}${ip}`, loc, leak ? "bad" : "ok");
     })();
 
-    // International GeoIP exit (api.ip.sb + fallback ipwho.is)
+    // International GeoIP exit (parallel api.ip.sb + ipwho.is so Mainland 5G without VPN doesn't wait 13s serially)
     const pIntl = (async () => {
-      let j = await getJSON("https://api.ip.sb/geoip", 6500).catch(() => null);
-      if (!j || !j.ip) {
-        const j2 = await getJSON("https://ipwho.is/", 6500).catch(() => null);
-        if (j2 && j2.ip) {
-          j = {
-            ip: j2.ip,
-            country_code: j2.country_code,
-            region: j2.region,
-            city: j2.city,
-            timezone: j2.timezone?.id || (typeof j2.timezone === "string" ? j2.timezone : ""),
-            latitude: j2.latitude,
-            longitude: j2.longitude,
-            asn: j2.connection?.asn,
-            organization: j2.connection?.isp || j2.connection?.org
-          };
-        }
+      const [j1, j2] = await Promise.all([
+        getJSON("https://api.ip.sb/geoip", 4200).catch(() => null),
+        getJSON("https://ipwho.is/", 4200).catch(() => null)
+      ]);
+      let j = j1?.ip ? j1 : null;
+      if (!j && j2?.ip) {
+        j = {
+          ip: j2.ip,
+          country_code: j2.country_code,
+          region: j2.region,
+          city: j2.city,
+          timezone: j2.timezone?.id || (typeof j2.timezone === "string" ? j2.timezone : ""),
+          latitude: j2.latitude,
+          longitude: j2.longitude,
+          asn: j2.connection?.asn,
+          organization: j2.connection?.isp || j2.connection?.org
+        };
       }
       if (!j?.ip) {
         setNA("ex_intl", "国际探针不可达");
@@ -1703,7 +1700,7 @@
 
     // ChatGPT, Claude, Cloudflare edge traces
     const runTraceProbe = async (key, url, name) => {
-      const raw = await getText(url, 6500).catch(() => "");
+      const raw = await getText(url, 4200).catch(() => "");
       const kv = parseCfTrace(raw);
       if (!kv.ip) {
         setNA(key, `${name} 边缘不可达或被拦截`);
@@ -1728,8 +1725,8 @@
     // Dual-stack IPv4 vs IPv6 independent probe
     const pStack = (async () => {
       const [r4, r6] = await Promise.all([
-        getJSON("https://ipv4.icanhazip.com", 4500).catch(() => getText("https://ipv4.icanhazip.com", 4500).then(s => ({ ip: s.trim() }), () => null)),
-        getText("https://ipv6.icanhazip.com", 4500).then(s => ({ ip: s.trim() }), () => null)
+        getText("https://ipv4.icanhazip.com", 3800).then(s => ({ ip: s.trim() }), () => null),
+        getText("https://ipv6.icanhazip.com", 3800).then(s => ({ ip: s.trim() }), () => null)
       ]);
       const v4 = r4?.ip || "";
       const v6 = r6?.ip && r6.ip.includes(":") ? r6.ip : "";
@@ -1806,8 +1803,8 @@
     const randHex1 = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("");
     const randHex2 = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("");
     const [j1, j2] = await Promise.all([
-      getJSON(`https://${randHex1}.edns.ip-api.com/json`, 6500).catch(() => null),
-      getJSON(`https://${randHex2}.edns.ip-api.com/json`, 6500).catch(() => null)
+      getJSON(`https://${randHex1}.edns.ip-api.com/json`, 4200).catch(() => null),
+      getJSON(`https://${randHex2}.edns.ip-api.com/json`, 4200).catch(() => null)
     ]);
     const j = j1?.dns ? j1 : j2;
     if (!j || !j.dns) {

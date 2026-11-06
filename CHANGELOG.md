@@ -1,5 +1,14 @@
 # Changelog
 
+## [v7.3.1] - 2026-11-06
+
+### Changed
+- **顶栏新增按访问域名动态映射的「我的 IP」姐妹站切换标签 (`static/index.html` + `static/app.js`)**：
+  - 与 `ip.<主域名>` 顶栏双站切换栏对称，在顶部品牌栏新增 `[ WhoProbe | 我的 IP ]` 导航标签（`siblingIpHref(location.hostname)`）。
+  - 根据当前访问入口 `who.<主域名>` 自动推导跳转到同主域下的 `https://ip.<主域名>/`（附带 `referrerpolicy="no-referrer"`，开源仓库中零私有域名硬编码），同时恢复下方诊断区清爽的 3 标签结构。
+
+---
+
 ## [v7.3.0] - 2026-11-06
 
 ### Added

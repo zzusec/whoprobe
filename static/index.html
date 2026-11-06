@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
   <title>WhoProbe · 网站眼里的你 — L3–L7 全栈指纹、BGP 出口情报与伪装风控诊断</title>
   <meta name="description" content="零权限弹窗读取 148 项网络协议栈、TCP TSval 时钟、:443 Reality 偷证书反向验真、8 源欺诈/BGP 租赁情报、同 /24 脏邻居、硬件光栅化与 52 项原型谎言，精准评估 6 大业务准入与防关联破绽。">
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.3.0">
-  <link rel="stylesheet" href="./assets/style.css?v=7.3.0">
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.3.1">
+  <link rel="stylesheet" href="./assets/style.css?v=7.3.1">
   <script>
     (function () {
       try {
@@ -33,9 +33,9 @@
   <header class="top-chrome sm:sticky sm:top-0 z-40 w-full bg-[#F5F6F8]/90 backdrop-blur-xl border-b border-zinc-950/[0.06] dark:bg-[#0B0C0E]/90 dark:border-white/[0.06]">
     <div class="max-w-[1240px] mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-2.5 min-h-[54px]">
-        <!-- Brand & Live Telemetry Status -->
+        <!-- Brand, Sister-Site Navigation & Live Telemetry Status -->
         <div class="flex items-center gap-2.5 min-w-0">
-          <div class="flex size-7 sm:size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">
+          <a href="./" aria-label="WhoProbe" class="flex size-7 sm:size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">
             <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/>
               <path d="M14 13.12c0 2.38 0 6.38-1 8.88"/>
@@ -47,8 +47,12 @@
               <path d="M8.65 22c.21-.66.45-1.32.57-2"/>
               <path d="M9 6.8a6 6 0 0 1 9 5.2v2"/>
             </svg>
-          </div>
-          <span class="text-[15px] font-semibold tracking-tight text-zinc-950 dark:text-white">WhoProbe</span>
+          </a>
+          <span id="brandPlainTitle" class="text-[15px] font-semibold tracking-tight text-zinc-950 dark:text-white">WhoProbe</span>
+          <nav id="siblingNav" hidden aria-label="功能导航" class="inline-flex items-center rounded-lg bg-zinc-200/70 p-0.5 dark:bg-[#161920]">
+            <a href="./" aria-current="page" class="py-1 px-2.5 inline-flex items-center text-xs font-semibold rounded-md bg-white text-zinc-950 shadow-2xs transition dark:bg-zinc-800 dark:text-white">WhoProbe</a>
+            <a id="myIpTab" href="#" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="py-1 px-2.5 inline-flex items-center text-xs font-medium rounded-md text-zinc-600 hover:text-zinc-950 transition dark:text-zinc-400 dark:hover:text-zinc-100">我的 IP</a>
+          </nav>
           <span class="hidden lg:inline-block h-3.5 w-px bg-zinc-300 dark:bg-zinc-800" aria-hidden="true"></span>
           <span id="liveStatusPill" class="hidden lg:inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400 truncate">
             <span id="liveDot" class="size-1.5 shrink-0 rounded-full animate-pulse bg-blue-600"></span>
@@ -280,7 +284,7 @@
               </div>
 
               <!-- Node 2: Egress IP, ASN & Purity -->
-              <div id="topoExitCard" title="点击查看「我的 IP」完整档案" class="cursor-pointer rounded-xl bg-white p-3 ring-1 ring-zinc-950/[0.08] shadow-2xs hover:bg-zinc-50/80 transition dark:bg-[#151820] dark:ring-white/[0.1] dark:hover:bg-white/[0.05] min-w-0">
+              <div class="rounded-xl bg-white p-3 ring-1 ring-zinc-950/[0.08] shadow-2xs dark:bg-[#151820] dark:ring-white/[0.1] min-w-0">
                 <div class="flex items-center justify-between gap-1.5">
                   <span id="ispTypeBadge" class="inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">识别中</span>
                   <span id="purityPill" class="inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-mono font-semibold whitespace-nowrap shrink-0 bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">信誉 --</span>
@@ -361,17 +365,13 @@
       </div>
     </section>
 
-    <!-- Zone 3: 4-Tab Deep Diagnostic Workspace -->
+    <!-- Zone 3: 3-Tab Deep Diagnostic Workspace -->
     <section aria-label="深度诊断工作区" class="space-y-3.5">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <nav id="workspaceTabs" class="flex items-center gap-1 overflow-x-auto p-1 rounded-xl bg-zinc-200/65 dark:bg-[#15181F] w-full sm:w-auto" role="tablist" aria-label="诊断视图切换">
           <button type="button" role="tab" data-wstab="checks" aria-selected="true" class="ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs font-semibold transition bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white">
             <span>逐项风控体检</span>
             <span id="tabChecksBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-100 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">24</span>
-          </button>
-          <button type="button" role="tab" data-wstab="myip" aria-selected="false" class="ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs font-medium transition text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
-            <span>我的 IP</span>
-            <span id="tabMyIpBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">待读取</span>
           </button>
           <button type="button" role="tab" data-wstab="routes" aria-selected="false" class="ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs font-medium transition text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
             <span>8 路分流与地区模拟</span>
@@ -404,78 +404,6 @@
           <div class="pt-3 border-t border-zinc-950/[0.06] dark:border-white/[0.07]">
             <h3 class="mb-2.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">传输层加密与隧道状态（4 项 · 不计入扣分）</h3>
             <div id="protoChecksList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Panel 1b: My IP & Full Multi-Source Egress Profile ("我的 IP") -->
-      <div id="panelMyIp" data-wspanel="myip" hidden class="ws-panel surface-sheet rounded-2xl overflow-hidden divide-y divide-zinc-950/[0.06] dark:divide-white/[0.07]">
-        <!-- Sub-section A: Primary IP Hero + 8 Core Attributes -->
-        <div>
-          <div class="px-5 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 id="myIpTitle" class="text-base font-semibold text-zinc-950 dark:text-white">我的公网 IP 档案</h2>
-              <p id="myIpSub" class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">服务端直连观测 · RDAP 注册局核验 · 8 源欺诈与 BGP 路由画像</p>
-            </div>
-            <div id="myIpBadges" class="flex flex-wrap items-center gap-1.5">
-              <span class="inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">读取中…</span>
-            </div>
-          </div>
-
-          <div class="p-4 sm:p-5 space-y-4">
-            <div class="rounded-xl ring-1 ring-zinc-950/[0.06] bg-zinc-50/80 p-4 flex flex-wrap items-center justify-between gap-3 dark:bg-white/[0.025] dark:ring-white/[0.07]">
-              <div class="min-w-0 space-y-1">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span id="myIpProtoTag" class="inline-flex items-center py-0.5 px-2 rounded-md font-mono text-[11px] font-semibold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">IP</span>
-                  <span id="myIpPrimaryVal" class="maskable text-xl font-bold font-mono tabular-nums text-zinc-950 dark:text-white truncate">正在读取出口 IP…</span>
-                </div>
-                <p id="myIpPrimaryDesc" class="maskable text-xs text-zinc-600 dark:text-zinc-400 truncate">正在汇总归属地、ASN 自治系统与运营商信息…</p>
-              </div>
-              <div class="flex flex-wrap items-center gap-2 shrink-0">
-                <button id="btnCopyMyIp" type="button" class="py-1.5 px-3 rounded-lg text-xs font-semibold bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">复制 IP</button>
-                <button id="btnCopyMyIpFull" type="button" class="py-1.5 px-3 rounded-lg text-xs font-medium ring-1 ring-zinc-950/[0.1] bg-white text-zinc-800 hover:bg-zinc-100 transition dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200 dark:hover:bg-zinc-700">复制归属摘要</button>
-                <button id="btnMyIpBackSelf" type="button" hidden class="py-1.5 px-3 rounded-lg text-xs font-medium ring-1 ring-zinc-950/[0.1] bg-zinc-100 text-zinc-800 hover:bg-zinc-200 transition dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">返回本机 IP</button>
-              </div>
-            </div>
-
-            <div id="myIpAttrGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5"></div>
-          </div>
-        </div>
-
-        <!-- Sub-section B: Dual-Stack IPv4/IPv6, WebRTC STUN & Recursive DNS Channels -->
-        <div id="myIpStackSection">
-          <div class="px-5 py-3.5 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 class="text-sm font-semibold text-zinc-950 dark:text-white">本机双栈、WebRTC 与 DNS 解析通道</h3>
-              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">点击任意通道卡片可复制对应 IP 地址</p>
-            </div>
-            <span id="myIpStackBadge" class="inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">探测中…</span>
-          </div>
-          <div id="myIpStackGrid" class="grid grid-cols-1 md:grid-cols-2 gap-px bg-zinc-950/[0.06] dark:bg-white/[0.06] text-xs"></div>
-        </div>
-
-        <!-- Sub-section C: Purity Ledger & 8-Source Reputation Comparison -->
-        <div>
-          <div class="px-5 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 class="text-sm sm:text-base font-semibold text-zinc-950 dark:text-white">纯净度加扣分账单与多源情报对比</h3>
-              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">交叉比对 8 大 IP 情报库、12 家实时 DNSBL 黑名单与同 /24 邻里污染</p>
-            </div>
-            <div id="myIpVotesBar" class="flex flex-wrap items-center gap-1.5 text-xs"></div>
-          </div>
-
-          <div class="p-4 sm:p-5 space-y-4">
-            <div id="myIpLedgerBox" class="rounded-xl ring-1 ring-zinc-950/[0.06] bg-zinc-50/75 p-3.5 text-xs space-y-2.5 dark:bg-white/[0.025] dark:ring-white/[0.07]">
-              <p class="text-zinc-500 dark:text-zinc-400">正在拉取多源欺诈投票、DNSBL 黑名单与 BGP 租赁账单…</p>
-            </div>
-
-            <div>
-              <div class="mb-2.5 flex items-center justify-between gap-2">
-                <span class="text-xs font-semibold text-zinc-600 dark:text-zinc-400">各家情报源独立判定明细</span>
-                <span id="myIpSourcesMeta" class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400">等待返回…</span>
-              </div>
-              <div id="myIpSourcesGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5"></div>
-            </div>
           </div>
         </div>
       </div>
@@ -550,7 +478,7 @@
 
     <!-- Quiet Footer -->
     <footer class="pt-1 pb-5 text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap items-center justify-between gap-2">
-      <span>WhoProbe v7.3.0 · 被动 L3/L4 BPF 嗅探 · :443 伪装验真 · 多源 BGP 信誉 · 148 项全栈检测</span>
+      <span>WhoProbe v7.3.1 · 被动 L3/L4 BPF 嗅探 · :443 伪装验真 · 多源 BGP 信誉 · 148 项全栈检测</span>
       <div class="flex flex-wrap items-center gap-2">
         <span>当前会话实时计算 · 零持久化日志</span>
         <span>·</span>
@@ -610,6 +538,6 @@
   <div id="globalTip" role="tooltip" hidden class="fixed z-50 max-w-xs sm:max-w-sm rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-100 shadow-xl pointer-events-none whitespace-pre-line dark:border-white/[0.12] dark:bg-zinc-900"></div>
   <div id="toastBar" hidden class="fixed bottom-5 right-5 z-50 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-950 dark:border-white"></div>
 
-  <script src="./assets/app.js?v=7.3.0"></script>
+  <script src="./assets/app.js?v=7.3.1"></script>
 </body>
 </html>

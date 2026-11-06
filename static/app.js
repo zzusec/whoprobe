@@ -1,4 +1,4 @@
-/* WhoProbe v7.2.4 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.2.5 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -576,6 +576,18 @@
     return "";
   }
 
+  function isTcpOsMismatch(tcp, uaOs) {
+    if (!tcp) return false;
+    const tcpFam = tcp.osFamily || tcp.osGuess;
+    const claimApple = /^(macOS|iOS|iPadOS)$/.test(uaOs || "");
+    const claimWin = uaOs === "Windows";
+    return (
+      (tcpFam === "windows" && !claimWin) ||
+      (tcpFam === "apple" && !claimApple) ||
+      (tcpFam === "linux" && (claimApple || claimWin))
+    );
+  }
+
   function isCellularNativeLink(uaOs, osMismatch) {
     if (osMismatch || R.netKind === "dc" || R.netKind === "relay") return false;
     if (R.netKind === "mobile") return true;
@@ -586,6 +598,34 @@
       return true;
     }
     return false;
+  }
+
+  function isMuxTunnelSuspect(mux) {
+    if (!mux) return false;
+    const rawCoalesced = mux.coalescedPairs >= 3 || (mux.srvSpanMs < mux.clientSpanMs * 0.35 && mux.clientSpanMs >= 30);
+    if (!rawCoalesced) return false;
+
+    const tcp = R.srv?.packet?.tcp || null;
+    const uaOs = R.dev?.os || "";
+    const osMis = isTcpOsMismatch(tcp, uaOs);
+    const nonProxyNet =
+      R.netKind !== "dc" &&
+      R.netKind !== "relay" &&
+      (R.intel?.votes?.hosting?.E || 0) < 0.45 &&
+      (R.intel?.votes?.proxy?.E || 0) < 0.35 &&
+      (R.intel?.votes?.vpn?.E || 0) < 0.35;
+
+    // 服务端旁路握手 RTT 与浏览器 HTTP RTT 吻合且端侧原生协议栈一致：物理证明中间无代理隧道，微脉冲合并属无线空口或 HTTP/2 按序重组
+    if (tcp && !osMis && nonProxyNet && R.srvTcpRtt != null && R.httpRtt != null && (R.httpRtt - R.srvTcpRtt) < 35) {
+      return false;
+    }
+
+    // 4G/5G 蜂窝空口 (3GPP NR 上行时隙授权 + RLC/HARQ 重传) 在连接复用时天然存在 2~4 对微脉冲同帧到达
+    if (isCellularNativeLink(uaOs, osMis) && nonProxyNet) {
+      return mux.coalescedPairs >= 5 && mux.srvSpanMs < mux.clientSpanMs * 0.18;
+    }
+
+    return true;
   }
 
   function candidateCC(rawCandIp) {
@@ -1716,7 +1756,7 @@
     }
     R.httpRtt = samples.length ? Math.round(Math.min(...samples)) : null;
 
-    // Micro-burst coalescing & jitter probe (6 pulses spaced ~8ms apart)
+    // Micro-burst coalescing & jitter probe (6 pulses spaced ~14ms apart)
     try {
       const burstPromises = [];
       const sendTs = [];
@@ -1731,7 +1771,7 @@
               return j && j.serverPerfUs != null ? { b, sent: sendTs[b], recv, rtt: recv - sendTs[b], srvUs: j.serverPerfUs } : null;
             }, () => null)
         );
-        if (b < 5) await new Promise(r => setTimeout(r, 8));
+        if (b < 5) await new Promise(r => setTimeout(r, 14));
       }
       const bRes = (await Promise.all(burstPromises)).filter(Boolean).sort((a, b) => a.b - b.b);
       if (bRes.length >= 4) {
@@ -1742,16 +1782,18 @@
         const stdRtt = Math.sqrt(rtts.reduce((s, x) => s + (x - meanRtt) ** 2, 0) / rtts.length);
         let coalescedPairs = 0;
         for (let k = 1; k < bRes.length; k++) {
-          if (Math.abs(bRes[k].srvUs - bRes[k - 1].srvUs) < 900 && (bRes[k].sent - bRes[k - 1].sent) >= 5) {
+          if (Math.abs(bRes[k].srvUs - bRes[k - 1].srvUs) < 850 && (bRes[k].sent - bRes[k - 1].sent) >= 8) {
             coalescedPairs++;
           }
         }
-        R.muxBurst = { stdRtt: +stdRtt.toFixed(1), coalescedPairs, clientSpanMs: Math.round(clientSpanMs), srvSpanMs: +srvSpanMs.toFixed(1) };
-        const isMux = coalescedPairs >= 3 || (srvSpanMs < clientSpanMs * 0.35 && clientSpanMs >= 25);
-        setProbe("muxjitter", `RTT 抖动 σ=${stdRtt.toFixed(1)}ms · 发射跨度 ${Math.round(clientSpanMs)}ms → 服务端到达跨度 ${srvSpanMs.toFixed(1)}ms${isMux ? " (检出多路复用粘包合并特征)" : ""}`, {
-          tone: isMux || stdRtt > 45 ? "warn" : "ok",
-          why: `6 脉冲粘包对(<0.9ms间隔): ${coalescedPairs} 对 · 单次脉冲 RTT: ${rtts.map(x => Math.round(x) + "ms").join(", ")}`
-        });
+        R.muxBurst = {
+          stdRtt: +stdRtt.toFixed(1),
+          coalescedPairs,
+          clientSpanMs: Math.round(clientSpanMs),
+          srvSpanMs: +srvSpanMs.toFixed(1),
+          sampleRtts: rtts.map(x => Math.round(x))
+        };
+        refreshMuxJitterProbe();
       } else {
         setNA("muxjitter", "微脉冲采样不足");
       }
@@ -2073,6 +2115,22 @@
       why: `观测递归节点: ${resolvers.join(", ")}\n判定等级: ${dnsClass}`
     });
     setRouteRow("dns", `${flagEmoji(cc)} ${countryName(cc)}`, `${d.ip || ""} · ${clsLabel}`, leak ? "warn" : "ok");
+  }
+
+  function refreshMuxJitterProbe() {
+    const m = R.muxBurst;
+    if (!m) return;
+    const rawCoalesced = m.coalescedPairs >= 3 || (m.srvSpanMs < m.clientSpanMs * 0.35 && m.clientSpanMs >= 30);
+    const isMux = isMuxTunnelSuspect(m);
+    const note = isMux
+      ? " (检出多路复用粘包合并特征)"
+      : rawCoalesced
+      ? " (无线空口时隙聚合，三维测距已排除代理隧道)"
+      : "";
+    setProbe("muxjitter", `RTT 抖动 σ=${m.stdRtt.toFixed(1)}ms · 发射跨度 ${m.clientSpanMs}ms → 服务端到达跨度 ${m.srvSpanMs.toFixed(1)}ms${note}`, {
+      tone: isMux ? "warn" : "ok",
+      why: `6 脉冲同帧到达对(<0.85ms): ${m.coalescedPairs} 对 · 单次脉冲 RTT: ${(m.sampleRtts || []).map(x => x + "ms").join(", ")}`
+    });
   }
 
   function updateUdpRttProbe() {
@@ -4091,8 +4149,8 @@
       out.synspoof = { level: "bad", summary: `抓获无状态 SYN 改包：首包与后续数据包 TSval 时钟节拍 (${tcp.tsHz ?? "突变"}Hz) 或 IPID 序列前后断裂！` };
     } else if (linuxClaimDfZero) {
       out.synspoof = { level: "warn", summary: `IP 包头矛盾：自报 ${uaOs} 系统（默认强制 DF=1），但网卡实测首包 DF=0 允许分片` };
-    } else if (mux && (mux.coalescedPairs >= 3 || (mux.srvSpanMs < mux.clientSpanMs * 0.35 && mux.clientSpanMs >= 25))) {
-      out.synspoof = { level: "warn", summary: `检出隧道粘包合并：6 组 8ms 微脉冲到达服务端时出现 ${mux.coalescedPairs} 对粘包合并，疑似经过 Mux 多路复用代理` };
+    } else if (isMuxTunnelSuspect(mux)) {
+      out.synspoof = { level: "warn", summary: `检出隧道粘包合并：6 组微脉冲到达服务端时出现 ${mux.coalescedPairs} 对粘包合并，疑似经过 Mux 多路复用代理` };
     } else {
       const hzInfo = tcp?.tsHz != null ? `TS 时钟≈${tcp.tsHz}Hz` : "跨包序列连续";
       out.synspoof = { level: "ok", summary: `${hzInfo}，未见无状态 SYN 伪造改包或多路复用粘包畸变` };
@@ -4541,7 +4599,7 @@
           ? { single: `MTU ${tcp.mtu} 隧道` }
           : { single: "TLS 握手异常" };
       case "synspoof":
-        return { single: tcp?.synSpoofSuspect ? "TSval 时钟突变" : (R.muxBurst?.coalescedPairs >= 3 ? "Mux 粘包合并" : "DF 包头矛盾") };
+        return { single: tcp?.synSpoofSuspect ? "TSval 时钟突变" : (isMuxTunnelSuspect(R.muxBurst) ? "Mux 粘包合并" : "DF 包头矛盾") };
       case "reality":
         return R.intel?.tls443?.realitySuspect
           ? { left: R.asn || "非官方ASN", op: "≠", right: `${R.intel.tls443.realityBrand || "大厂"}证书` }
@@ -6726,8 +6784,9 @@
 
     if (seq !== runSeq) return;
 
-    // Phase 4: Derived Cross-Source Probes (Candidate IP Meta Reconciliation, IPv6 MAC, Shield Attribution, Composite Hardware/FP IDs)
+    // Phase 4: Derived Cross-Source Probes (Candidate IP Meta Reconciliation, Mux Jitter Cross-Check, IPv6 MAC, Shield Attribution, Composite Hardware/FP IDs)
     await reconcileCandidateIpMeta();
+    refreshMuxJitterProbe();
     probeV6Mac();
     probeShield();
     await probeCompositeIds();

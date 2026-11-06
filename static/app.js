@@ -1031,6 +1031,7 @@
         `<option value="${esc(cc)}">${esc(flagEmoji(cc) + " " + countryName(cc) + " (" + cc + ")")}</option>`
       ).join("");
     }
+    renderMyIpPanel();
   }
 
   function updateProgress() {
@@ -1685,6 +1686,7 @@
     applyIntelToProbes(R.extIntel || R.intel);
     syncExtIpBanner();
     renderScenarios();
+    renderMyIpPanel();
   }
 
   async function inspectCustomIp(rawIp) {
@@ -1702,6 +1704,7 @@
       syncExtIpBanner();
       renderScenarios();
       renderChecksAndScore(false);
+      renderMyIpPanel();
       showToast("已切回本机当前出口情报");
       return;
     }
@@ -1727,6 +1730,7 @@
     syncExtIpBanner();
     renderScenarios();
     renderChecksAndScore(false);
+    renderMyIpPanel();
     showToast(`已完成 ${externalQueryIp} 的多源信誉与 :443 证书穿透分析`);
   }
 
@@ -2115,6 +2119,7 @@
       why: `观测递归节点: ${resolvers.join(", ")}\n判定等级: ${dnsClass}`
     });
     setRouteRow("dns", `${flagEmoji(cc)} ${countryName(cc)}`, `${d.ip || ""} · ${clsLabel}`, leak ? "warn" : "ok");
+    renderMyIpPanel();
   }
 
   function refreshMuxJitterProbe() {
@@ -2230,6 +2235,7 @@
     setProbe("lan", realLan.length ? `暴露真实局域网 IP: ${realLan.join(", ")}` : lanList.length ? `已由 mDNS 隐藏 (${lanList[0]})` : "未暴露局域网候选", {
       tone: realLan.length ? "warn" : "ok"
     });
+    renderMyIpPanel();
   }
 
   function refreshWebrtcProbeRow() {
@@ -5586,6 +5592,379 @@
     }
   }
 
+  /* ---------- Dedicated "我的 IP" Full Egress Profile Panel ---------- */
+  const NET_TYPE_LABELS = {
+    isp: "住宅宽带 ISP",
+    residential: "住宅宽带 ISP",
+    mobile: "蜂窝移动网络",
+    cellular: "蜂窝移动网络",
+    hosting: "机房 IDC",
+    datacenter: "机房 IDC",
+    business: "商业企业专线",
+    education: "教育科研网",
+    government: "政务机构网",
+    cdn: "CDN / 边缘节点"
+  };
+
+  function renderMyIpPanel() {
+    const panel = $("#panelMyIp");
+    if (!panel || !$("#myIpPrimaryVal")) return;
+
+    const isExt = !!(R.extIntel && R.extIntel.ok);
+    const intel = isExt ? R.extIntel : R.intel;
+    const pur = intel?.purity || null;
+    const c = intel?.consensus || {};
+    const v = intel?.votes || {};
+    const ap = intel?.asnProfile || {};
+    const ls = ap.lease || {};
+    const t4 = intel?.tls443 || null;
+    const sh = intel?.shodan || null;
+    const bl = intel?.dnsbl || null;
+    const ci = intel?.cidr || null;
+    const nb = ci?.neighbours || null;
+
+    const displayIp = cleanIp(isExt ? (intel.targetIp || externalQueryIp) : (R.ip || intel?.targetIp || ""));
+    const isV6 = displayIp.includes(":");
+    const cc = (isExt ? c.country : (c.country || R.ipCC)) || "";
+    const region = (isExt ? c.region : (c.region || R.srv?.geo?.region)) || "";
+    const city = (isExt ? c.city : (c.city || R.srv?.geo?.city || R.ipCity)) || "";
+    const rawAsn = isExt ? c.asn : (R.asn || c.asn);
+    const asnStr = rawAsn ? (/^AS/i.test(String(rawAsn)) ? String(rawAsn).toUpperCase() : `AS${rawAsn}`) : "";
+    const orgStr = (isExt ? (c.org || ap.name) : (R.org || c.org || ap.name)) || "";
+    const maskCls = isExt ? "" : "maskable ";
+
+    // Update Workspace Tab Badge (#tabMyIpBadge)
+    const tabBadge = $("#tabMyIpBadge");
+    if (tabBadge) {
+      if (isExt) {
+        tabBadge.textContent = cc ? `查 ${flagEmoji(cc)} ${cc}` : "外部 IP";
+        tabBadge.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950";
+      } else if (displayIp) {
+        tabBadge.textContent = cc ? `${flagEmoji(cc)} ${cc}` : (isV6 ? "IPv6" : "IPv4");
+        const pScore = pur?.score;
+        tabBadge.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
+          pScore != null
+            ? (pScore >= 82
+              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+              : pScore >= 58
+              ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+              : "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300")
+            : "bg-zinc-100 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
+        );
+      } else {
+        tabBadge.textContent = R.finished ? "超时" : "待读取";
+        tabBadge.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400";
+      }
+    }
+
+    // Header & Hero IP Box
+    const titleEl = $("#myIpTitle"), subEl = $("#myIpSub"), backBtn = $("#btnMyIpBackSelf");
+    if (titleEl) titleEl.textContent = isExt ? `外部查询 IP 档案 (${displayIp})` : "我的公网 IP 档案";
+    if (subEl) {
+      subEl.textContent = isExt
+        ? `当前展示顶栏查询的外部公网 IP 情报${R.ip ? " · 本机真实连接出口仍为 " + R.ip : ""}`
+        : "服务端直连观测 · RDAP 注册局核验 · 8 源欺诈与 BGP 路由画像";
+    }
+    if (backBtn) backBtn.hidden = !isExt;
+
+    const protoTag = $("#myIpProtoTag");
+    if (protoTag) protoTag.textContent = displayIp ? (isV6 ? "IPv6" : "IPv4") : "IP";
+
+    const ipValEl = $("#myIpPrimaryVal");
+    if (ipValEl) {
+      ipValEl.textContent = displayIp || (R.finished ? "未能读取出口 IP" : "正在读取出口 IP…");
+      ipValEl.className = `${maskCls}text-xl font-bold font-mono tabular-nums text-zinc-950 dark:text-white truncate`;
+    }
+
+    const locParts = [cc ? `${flagEmoji(cc)} ${countryName(cc)}` : "", region && region !== city ? region : "", city].filter(Boolean);
+    const descEl = $("#myIpPrimaryDesc");
+    if (descEl) {
+      descEl.textContent = [locParts.join(" · "), asnStr, orgStr].filter(Boolean).join(" · ") || (R.finished ? "归属信息暂不可用" : "正在汇总归属地、ASN 自治系统与运营商信息…");
+      descEl.className = `${maskCls}text-xs text-zinc-600 dark:text-zinc-400 truncate`;
+    }
+
+    // Top Status Badges (Line Type + Native/Broadcast + Purity Score)
+    const badgesEl = $("#myIpBadges");
+    if (badgesEl) {
+      const inferredCls = ap.inferred?.cls || "";
+      const isRelay = isAppleRelay(orgStr, displayIp);
+      const isDc = isExt ? (inferredCls === "hosting" || (v.hosting?.E || 0) >= 0.55) : R.netKind === "dc";
+      const isMob = isExt ? (inferredCls === "mobile") : R.netKind === "mobile";
+      const lineTxt = isRelay ? "iCloud 专用代理" : isDc ? "机房 IDC 线路" : isMob ? "蜂窝移动网络" : (displayIp ? "住宅/宽带 ISP" : "识别中…");
+      const lineCls = isDc
+        ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+        : displayIp
+        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+        : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+
+      const pills = [`<span class="inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-semibold ${lineCls}">${esc(lineTxt)}</span>`];
+      if (c.isNative === true) {
+        pills.push(`<span class="inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">原生 IP</span>`);
+      } else if (c.isNative === false) {
+        pills.push(`<span class="inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">广播 IP</span>`);
+      }
+      if (pur?.score != null) {
+        const pCls = pur.score >= 82
+          ? "bg-emerald-600 text-white"
+          : pur.score >= 58
+          ? "bg-amber-500 text-white"
+          : "bg-rose-600 text-white";
+        pills.push(`<span class="inline-flex items-center py-0.5 px-2.5 rounded-full font-mono text-xs font-semibold ${pCls}">纯净度 ${pur.score}/100 · ${esc(pur.grade || "-")}</span>`);
+      }
+      badgesEl.innerHTML = pills.join("");
+    }
+
+    // 8-Attribute Grid (#myIpAttrGrid)
+    const attrGrid = $("#myIpAttrGrid");
+    if (attrGrid) {
+      const tzVal = (isExt ? c.timezone : (c.timezone || R.ipTz)) || "–";
+      const tzSub = !isExt && R.tz && tzVal !== "–"
+        ? (tzVal === R.tz ? "与本机系统时区完全一致 ✓" : `本机系统时区: ${R.tz}`)
+        : "IP 归属地标准 IANA 时区";
+
+      const coordsVal = !isExt && R.ipLat != null && R.ipLon != null
+        ? `${Number(R.ipLat).toFixed(2)}, ${Number(R.ipLon).toFixed(2)}`
+        : (city ? `${city} 城市级中心` : "–");
+      const rttSub = !isExt && R.srvTcpRtt != null
+        ? `物理握手 ${R.srvTcpRtt} ms${R.httpRtt != null ? ` · HTTP ${R.httpRtt} ms` : ""}`
+        : (isExt ? "外部查询 IP 不测本机延迟" : "测量服务端握手往返中…");
+
+      const ptrHost = c.hostname || (!isExt ? R.srv?.geo?.ptr : "") || "";
+      const nativeTitle = c.isNative === true ? "本土原生段 (Native)" : c.isNative === false ? "跨国广播段 (Broadcast)" : (intel ? "注册国未知" : "核验中…");
+      const nativeSub = c.regCountry
+        ? `RIR 注册于 ${flagEmoji(c.regCountry)} ${c.regCountry} · 现定位 ${cc || "–"}`
+        : "比对 RDAP 注册局与现网广播国";
+
+      const rpkiTxt = ap.rpki === "valid" ? "RPKI 有效 ✓" : ap.rpki === "invalid" ? "RPKI 无效 ✕" : "RPKI 未签发";
+      const leaseTxt = ls.leased ? "检出商业租赁段" : ls.possible ? "疑似租赁子网" : "运营商自持路由";
+      const pdbTxt = ap.peeringdbType ? `PeeringDB: ${ap.peeringdbType}` : (ap.v4Size ? `AS 规模 ${ap.v4Size} IPv4` : "BGP 自治域画像");
+
+      let t4Val = intel ? "未开放 :443 端口" : "探测中…";
+      let t4Sub = "无反向 TLS 伪装特征（典型终端/家宽）";
+      if (t4 && t4.open) {
+        if (t4.realitySuspect) {
+          t4Val = "检出 Reality 偷证书特征！";
+          t4Sub = `证书归属 ${t4.certCN || t4.sni || "大厂域名"} 与当前 ASN 冲突`;
+        } else {
+          t4Val = `开放 :443 (${t4.certCN || t4.alpn || "TLS 服务"})`;
+          t4Sub = sh?.ports?.length ? `Shodan 常驻端口: ${sh.ports.slice(0, 6).join(", ")}` : "开放公网 HTTPS 监听";
+        }
+      } else if (sh?.ports?.length) {
+        t4Sub = `Shodan 历史开放端口: ${sh.ports.slice(0, 6).join(", ")}`;
+      }
+
+      const supportSub = c.sourceCount
+        ? `${c.countrySupport ? Math.round(c.countrySupport * 100) + "% 权重共识 · " : ""}${c.sourceCount} 家情报源交叉定位`
+        : (!isExt && R.srv?.geo?.source ? `数据源: ${R.srv.geo.source}` : "多源地理定位");
+
+      const attrs = [
+        ["国家 / 省州 / 城市", locParts.join(" · ") || "读取中…", supportSub, !isExt],
+        ["ASN 与运营商", [asnStr, orgStr].filter(Boolean).join(" ") || "读取中…", c.prefix ? `宣告路由前缀: ${c.prefix}` : "BGP 归属自治系统", !isExt],
+        ["原生 / 广播属性", nativeTitle, nativeSub, false],
+        ["BGP 路由与租赁", `${rpkiTxt} · ${leaseTxt}`, pdbTxt, false],
+        ["IP 所属时区", tzVal, tzSub, false],
+        ["参考坐标与物理延迟", coordsVal, rttSub, !isExt],
+        ["反向 PTR 主机名", ptrHost || "无反向 PTR 记录", c.ptrType ? `主机名类型暗示: ${c.ptrType}` : "rDNS 反向域名记录", !isExt],
+        [":443 验真与端口暴露", t4Val, t4Sub, false]
+      ];
+
+      attrGrid.innerHTML = attrs.map(([k, val, sub, mask]) => `
+        <div class="rounded-xl ring-1 ring-zinc-950/[0.06] bg-white p-3.5 flex flex-col justify-between gap-1 dark:bg-[#151820] dark:ring-white/[0.07]">
+          <span class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">${esc(k)}</span>
+          <div class="${mask ? "maskable " : ""}text-xs font-semibold font-mono text-zinc-950 dark:text-white truncate" title="${esc(val)}">${esc(val)}</div>
+          <div class="${mask ? "maskable " : ""}text-[11px] text-zinc-500 dark:text-zinc-400 truncate" title="${esc(sub)}">${esc(sub)}</div>
+        </div>
+      `).join("");
+    }
+
+    // Dual-Stack, WebRTC STUN & DNS Channels (#myIpStackGrid)
+    const stackBadge = $("#myIpStackBadge"), stackGrid = $("#myIpStackGrid");
+    const v4Ip = cleanIp(R.stack?.v4 || (!R.ip?.includes(":") ? R.ip : "") || R.exits?.ex_v4?.ip || "");
+    const v6Ip = cleanIp(R.stack?.v6 || (R.ip?.includes(":") ? R.ip : "") || R.exits?.ex_v6?.ip || "");
+    if (stackBadge) {
+      if (v4Ip && v6Ip) {
+        stackBadge.textContent = "IPv4 + IPv6 双栈活跃";
+        stackBadge.className = "inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+      } else if (v4Ip || v6Ip) {
+        stackBadge.textContent = v6Ip ? "纯 IPv6 单栈出口" : "纯 IPv4 单栈出口";
+        stackBadge.className = "inline-flex items-center py-0.5 px-2.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+      } else {
+        stackBadge.textContent = R.finished ? "单栈通道" : "探测中…";
+      }
+    }
+
+    if (stackGrid) {
+      const v4CC = v4Ip ? (candidateCC(v4Ip) || (!isV6 ? R.ipCC : "")) : "";
+      const v6CC = v6Ip ? (candidateCC(v6Ip) || (isV6 ? R.ipCC : "")) : "";
+      const rtcList = Array.isArray(R.rtc) ? R.rtc : [];
+      const leakedRtc = R.ip ? getLeakedWebrtcIps() : [];
+      const realLan = Array.isArray(R.lan) ? R.lan.filter(x => !x.endsWith(".local")) : [];
+
+      const stackRows = [
+        {
+          title: "IPv4 独立出口",
+          sub: "强制纯 IPv4 栈连接观测",
+          val: v4Ip || (R.exitsDone || R.finished ? "无 IPv4 出口" : "探测中…"),
+          meta: v4Ip ? [v4CC ? `${flagEmoji(v4CC)} ${countryName(v4CC)}` : "", R.exits?.ex_v4?.label || (!isV6 ? R.org : "")].filter(Boolean).join(" · ") || "点击复制 IPv4" : "当前网络未启用或已屏蔽 IPv4",
+          copy: v4Ip,
+          tone: "ok"
+        },
+        {
+          title: "IPv6 独立出口",
+          sub: "强制纯 IPv6 栈与网卡 EUI-64 检测",
+          val: v6Ip || (R.exitsDone || R.finished ? "无公网 IPv6 出口" : "探测中…"),
+          meta: R.v6mac ? `警告：暴露物理网卡 MAC (${R.v6mac})` : v6Ip ? `${v6CC ? flagEmoji(v6CC) + " " + countryName(v6CC) + " · " : ""}临时隐私地址安全（未暴露 MAC）` : "代理仅接管 IPv4 或本地无 IPv6 路由",
+          copy: v6Ip,
+          tone: R.v6mac ? "bad" : "ok"
+        },
+        {
+          title: "WebRTC STUN 反射候选",
+          sub: "浏览器底层 UDP 穿透与局域网 mDNS",
+          val: R.rtc === "off" ? "WebRTC 已禁用" : !R.rtcDone ? "探测中…" : rtcList.length ? rtcList.join(" · ") : "未暴露公网 UDP 候选",
+          meta: !R.rtcDone ? "等待 ICE 收集…" : leakedRtc.length ? "与当前网页主出口不一致（存在跨网穿透）！" : realLan.length ? `暴露局域网内网 IP: ${realLan.join(", ")}` : "UDP 候选与主出口自洽 · 局域网已由 mDNS 隐藏",
+          copy: rtcList[0] || "",
+          tone: leakedRtc.length ? "bad" : realLan.length ? "warn" : "ok"
+        },
+        {
+          title: "递归 DNS 解析器出口",
+          sub: "权威随机子域名实测上游 DNS 服务器",
+          val: R.dnsIp || (R.finished ? "DNS 探针超时" : "探测中…"),
+          meta: R.dnsIp ? `${R.dnsCC ? flagEmoji(R.dnsCC) + " " + countryName(R.dnsCC) + " · " : ""}${R.dnsOrg || ""}${R.ecsIp ? " · ECS 透传 " + R.ecsIp : " · 无 ECS 网段泄露"}` : "等待权威域名服务器回传解析源…",
+          copy: R.dnsIp || "",
+          tone: R.checks?.dns?.level === "bad" ? "bad" : R.checks?.dns?.level === "warn" ? "warn" : "ok"
+        }
+      ];
+
+      stackGrid.innerHTML = stackRows.map(r => {
+        const valCls = r.tone === "bad"
+          ? "text-rose-700 dark:text-rose-300"
+          : r.tone === "warn"
+          ? "text-amber-800 dark:text-amber-300"
+          : "text-zinc-900 dark:text-zinc-100";
+        return `
+          <div data-copyip="${esc(r.copy)}" class="bg-white px-5 py-3.5 flex items-center justify-between gap-3 ${r.copy ? "cursor-pointer hover:bg-zinc-50/80 dark:hover:bg-white/[0.025]" : ""} dark:bg-[#121418] transition">
+            <div class="min-w-0">
+              <div class="font-medium text-zinc-900 dark:text-zinc-100">${esc(r.title)}</div>
+              <div class="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400 truncate">${esc(r.sub)}</div>
+            </div>
+            <div class="text-right min-w-0 max-w-[58%]">
+              <div class="maskable font-mono text-xs font-semibold ${valCls} truncate" title="${esc(r.val)}">${esc(r.val)}</div>
+              <div class="maskable mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 truncate" title="${esc(r.meta)}">${esc(r.meta)}</div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    // Purity Votes Bar, Score Ledger & 8-Source Comparison (#myIpVotesBar, #myIpLedgerBox, #myIpSourcesGrid)
+    const votesBar = $("#myIpVotesBar"), ledgerBox = $("#myIpLedgerBox"), srcMeta = $("#myIpSourcesMeta"), srcGrid = $("#myIpSourcesGrid");
+    if (!intel || !intel.ok) {
+      if (votesBar) votesBar.innerHTML = `<span class="py-0.5 px-2.5 rounded-full text-xs bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">${R.finished ? "情报拉取超时" : "查询 8 源中…"}</span>`;
+      if (ledgerBox && R.finished) {
+        ledgerBox.innerHTML = `<p class="text-zinc-500 dark:text-zinc-400">多源欺诈情报接口暂未返回，可点击右上角「重新检测」重试。</p>`;
+      }
+      if (srcMeta) srcMeta.textContent = R.finished ? "未返回" : "拉取中…";
+      if (srcGrid) srcGrid.innerHTML = "";
+      return;
+    }
+
+    if (votesBar) {
+      const mkVote = (lbl, obj) => {
+        const yes = obj?.yes ?? 0, ofCnt = obj?.of ?? 0;
+        const hit = yes > 0;
+        const cls = hit
+          ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+          : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+        return `<span class="py-0.5 px-2 rounded-full font-mono text-[11px] font-medium ${cls}">${esc(lbl)} ${yes}/${ofCnt}</span>`;
+      };
+      const blHit = (bl?.listedCount || 0) > 0;
+      const blPill = `<span class="py-0.5 px-2 rounded-full font-mono text-[11px] font-medium ${blHit ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"}">DNSBL ${bl?.listedCount ?? 0}/${bl?.total ?? 12}</span>`;
+      votesBar.innerHTML = [
+        mkVote("机房", v.hosting),
+        mkVote("代理", v.proxy),
+        mkVote("VPN", v.vpn),
+        mkVote("Tor", v.tor),
+        blPill
+      ].join("");
+    }
+
+    if (ledgerBox && pur) {
+      const bonuses = pur.bonuses || [];
+      const deds = pur.deductions || [];
+      const dirtyCnt = nb?.dirtyCount ?? 0;
+      const bonusHtml = bonuses.length
+        ? bonuses.map(b => `<span class="inline-flex items-center gap-1 py-0.5 px-2 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">+${b.pts} ${esc(b.label)}</span>`).join("")
+        : `<span class="text-[11px] text-zinc-500 dark:text-zinc-400">无额外加分项</span>`;
+      const dedHtml = deds.length
+        ? `<div class="space-y-1.5 pt-1">${deds.map(d => `
+            <div class="flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-white px-3 py-2 ring-1 ring-zinc-950/[0.05] dark:bg-[#151820] dark:ring-white/[0.06]">
+              <div class="flex flex-wrap items-baseline gap-2 min-w-0">
+                <span class="font-semibold text-rose-700 dark:text-rose-300">−${d.pts} · ${esc(d.label)}</span>
+                ${d.detail ? `<span class="text-[11px] text-zinc-500 dark:text-zinc-400">${esc(d.detail)}</span>` : ""}
+              </div>
+            </div>
+          `).join("")}</div>`
+        : `<div class="rounded-lg bg-emerald-50/70 px-3 py-2 text-[11.5px] font-medium text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">✓ 零欺诈扣分记录：未命中机房、公开代理、DNSBL 黑名单或高危滥用网段</div>`;
+
+      ledgerBox.innerHTML = `
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="font-semibold text-zinc-900 dark:text-zinc-100">
+            纯净度基准 <span class="font-mono">92</span> + 加分 <span class="font-mono text-emerald-600 dark:text-emerald-400">+${pur.bonusTotal ?? 0}</span> − 扣分 <span class="font-mono text-rose-600 dark:text-rose-400">${pur.deductTotal ?? 0}</span> = 最终 <span class="font-mono">${pur.score ?? "--"} / 100 (${esc(pur.grade || "-")})</span>
+          </div>
+          <span class="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">同 /24 脏邻居: ${dirtyCnt} 个 · 综合风险值: ${c.riskScore != null ? Math.round(c.riskScore) : 0}/100</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-1.5">${bonusHtml}</div>
+        ${dedHtml}
+      `;
+    }
+
+    const sources = intel.sources || [];
+    if (srcMeta) srcMeta.textContent = `已返回 ${sources.length} 家独立情报源 · 耗时 ${Math.round(intel.elapsedMs || 0)} ms`;
+    if (srcGrid) {
+      srcGrid.innerHTML = sources.map(s => {
+        const fl = s.flags || {};
+        const hitTags = [];
+        if (fl.tor) hitTags.push(["Tor", "bad"]);
+        if (fl.proxy) hitTags.push(["代理", "bad"]);
+        if (fl.vpn) hitTags.push(["VPN", "warn"]);
+        if (fl.hosting || s.type === "hosting") hitTags.push(["机房", "warn"]);
+        if (fl.abuser) hitTags.push(["滥用", "bad"]);
+        if (fl.relay) hitTags.push(["iCloud中继", "info"]);
+        if (fl.crawler) hitTags.push(["爬虫", "warn"]);
+        if (!hitTags.length) hitTags.push(["洁净", "ok"]);
+
+        const tagHtml = hitTags.map(([t, tone]) => {
+          const cls = tone === "bad"
+            ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+            : tone === "warn"
+            ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+            : tone === "info"
+            ? "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+          return `<span class="py-0.5 px-1.5 rounded text-[10px] font-semibold ${cls}">${esc(t)}</span>`;
+        }).join("");
+
+        const tKey = String(s.type || "").toLowerCase();
+        const tLabel = NET_TYPE_LABELS[tKey] || (fl.mobile ? "蜂窝移动网络" : (s.type || "常规路由"));
+        const riskTxt = s.risk != null ? `风险 ${Math.round(s.risk)}` : "";
+
+        return `
+          <div class="rounded-xl ring-1 ring-zinc-950/[0.06] bg-white p-3.5 flex flex-col justify-between gap-2 dark:bg-[#151820] dark:ring-white/[0.07]">
+            <div class="flex items-center justify-between gap-1.5">
+              <span class="text-xs font-semibold text-zinc-950 dark:text-white truncate">${esc(s.name || s.id)}</span>
+              <span class="font-mono text-[11px] text-zinc-600 dark:text-zinc-300 shrink-0">${s.country ? `${flagEmoji(s.country)} ${esc(s.country)}` : "–"}</span>
+            </div>
+            <div class="${maskCls}text-[11px] text-zinc-500 dark:text-zinc-400 truncate" title="${esc(s.org || tLabel)}">${esc(s.org || tLabel)}</div>
+            <div class="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-zinc-950/[0.05] dark:border-white/[0.06]">
+              <div class="flex flex-wrap items-center gap-1">${tagHtml}</div>
+              <span class="font-mono text-[10.5px] text-zinc-500 dark:text-zinc-400">${esc([tLabel, riskTxt].filter(Boolean).join(" · "))}</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
   /* ---------- Search, Category Tabs, Tooltips & Toolbar Actions ---------- */
   function applyExplorerFilter() {
     const q = searchQuery.trim().toLowerCase();
@@ -5655,20 +6034,49 @@
       inspectCustomIp("");
     });
     $("#btnJumpRep")?.addEventListener("click", () => {
-      switchWorkspaceTab("probes");
-      activeGroup = "rep";
-      searchQuery = "";
-      const inp = $("#probeSearch");
+      switchWorkspaceTab("myip");
+      $("#workspaceTabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    // Topology Egress Card & "我的 IP" Panel Actions
+    $("#topoExitCard")?.addEventListener("click", () => {
+      switchWorkspaceTab("myip");
+      $("#workspaceTabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    $("#btnCopyMyIp")?.addEventListener("click", () => {
+      const isExt = !!(R.extIntel && R.extIntel.ok);
+      const ip = cleanIp(isExt ? (R.extIntel.targetIp || externalQueryIp) : (R.ip || R.intel?.targetIp || ""));
+      if (!ip) { showToast("尚未获取到公网 IP"); return; }
+      copyText(ip, `已复制 IP: ${ip}`);
+    });
+    $("#btnCopyMyIpFull")?.addEventListener("click", () => {
+      const isExt = !!(R.extIntel && R.extIntel.ok);
+      const intel = isExt ? R.extIntel : R.intel;
+      const ip = cleanIp(isExt ? (intel?.targetIp || externalQueryIp) : (R.ip || intel?.targetIp || ""));
+      if (!ip) { showToast("尚未获取到公网 IP"); return; }
+      const c = intel?.consensus || {};
+      const cc = (isExt ? c.country : (c.country || R.ipCC)) || "";
+      const city = (isExt ? c.city : (c.city || R.srv?.geo?.city || R.ipCity)) || "";
+      const asn = (isExt ? c.asn : (R.asn || c.asn)) || "";
+      const org = (isExt ? c.org : (R.org || c.org)) || "";
+      const pur = intel?.purity;
+      const summary = [
+        ip,
+        [cc ? countryName(cc) : "", city].filter(Boolean).join(" "),
+        [asn ? (/^AS/i.test(String(asn)) ? asn : `AS${asn}`) : "", org].filter(Boolean).join(" "),
+        pur?.score != null ? `纯净度 ${pur.score}/100 (${pur.grade})` : ""
+      ].filter(Boolean).join(" | ");
+      copyText(summary, "已复制 IP 与归属摘要");
+    });
+    $("#btnMyIpBackSelf")?.addEventListener("click", () => {
+      const inp = $("#ipQueryInput");
       if (inp) inp.value = "";
-      $$("#groupTabs .gtab-btn").forEach(b => {
-        const on = b.dataset.gtab === "rep";
-        b.setAttribute("aria-selected", on ? "true" : "false");
-        b.className = "gtab-btn shrink-0 py-1.5 px-3 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium transition " + (
-          on ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:text-zinc-300"
-        );
-      });
-      applyExplorerFilter();
-      $("#explorerSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      inspectCustomIp("");
+    });
+    $("#myIpStackGrid")?.addEventListener("click", e => {
+      const card = e.target.closest("[data-copyip]");
+      const ip = card?.dataset.copyip || "";
+      if (ip) copyText(ip, `已复制地址: ${ip}`);
     });
 
     // Theme switch
@@ -6565,6 +6973,7 @@
           : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
       );
     }
+    if ($("#tabMyIpBadge")) $("#tabMyIpBadge").textContent = "已脱敏";
     if ($("#tabRoutesBadge")) $("#tabRoutesBadge").textContent = "已脱敏";
     if ($("#probeCountBadge")) $("#probeCountBadge").textContent = "已隐藏";
 
@@ -6581,6 +6990,7 @@
         </div>
       </div>
     `;
+    if ($("#panelMyIp")) $("#panelMyIp").innerHTML = privCardHtml;
     if ($("#panelRoutes")) $("#panelRoutes").innerHTML = privCardHtml;
     if ($("#explorerSection")) $("#explorerSection").innerHTML = privCardHtml;
   }
@@ -6589,6 +6999,10 @@
   function resetPendingScoreUI() {
     if ($("#btnShare")) $("#btnShare").hidden = true;
     if ($("#btnShareInline")) $("#btnShareInline").hidden = true;
+    if ($("#tabMyIpBadge")) {
+      $("#tabMyIpBadge").textContent = "待读取";
+      $("#tabMyIpBadge").className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400";
+    }
     const sNum = $("#scoreNum");
     if (sNum) {
       sNum.textContent = "--";
@@ -6731,6 +7145,7 @@
     renderChecksAndScore(false);
     renderPortrait();
     renderTargetSimulator();
+    renderMyIpPanel();
 
     // Phase 3: 全并行启动服务端抓包、多源出口情报、分流矩阵与异步硬件探针（消除高延迟住宅代理串行等待！）
     // 先发出首包 /api/who/me 以优先捕获干净 TCP SYN，80ms 后立即并发启动全部探针；一旦关键链路返回即渐进刷新 UI
@@ -6739,6 +7154,7 @@
         renderChecksAndScore(false);
         renderPortrait();
         renderTargetSimulator();
+        renderMyIpPanel();
       }
     });
     await new Promise(r => setTimeout(r, 80));
@@ -6749,6 +7165,7 @@
         renderChecksAndScore(false);
         renderPortrait();
         renderTargetSimulator();
+        renderMyIpPanel();
       }
     });
     const pExits = probeQuicAndExits().then(() => {
@@ -6756,6 +7173,7 @@
         renderChecksAndScore(false);
         renderPortrait();
         renderTargetSimulator();
+        renderMyIpPanel();
       }
     });
     // 等待 pSrv 完成或最多 1.2s 后启动延迟与微脉冲探测，既保证 R.srvTcpRtt 就绪，又绝不被慢连接卡死
@@ -6797,6 +7215,7 @@
     renderChecksAndScore(true);
     renderPortrait();
     renderTargetSimulator();
+    renderMyIpPanel();
 
     // Finalize navbar & progress state
     const bar = $("#topProgBar");

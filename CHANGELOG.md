@@ -1,5 +1,12 @@
 # Changelog
 
+## [v7.2.6] - 2026-11-06
+
+### Added
+- **底部开源仓库跳转链接 (`static/index.html`)**：在页脚新增带 GitHub 图标与 `referrerpolicy="no-referrer"` 隐私保护属性的开源仓库超链接（`https://github.com/zzusec/whoprobe`）。
+
+---
+
 ## [v7.2.5] - 2026-11-06
 
 ### Fixed

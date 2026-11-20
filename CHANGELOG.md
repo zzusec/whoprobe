@@ -1,5 +1,13 @@
 # Changelog
 
+## [v7.3.2] - 2026-11-20
+
+### Fixed
+- **补齐全球 454 项 IANA `zone1970.tab` 与 V8/ICU CLDR 时区主别名国家映射 (`static/app.js`)**：
+  - 修复真实 Chromium / V8 浏览器在阿根廷（`Intl.DateTimeFormat` 按 Unicode CLDR 规范返回 `America/Buenos_Aires`）、尼泊尔（`Asia/Katmandu`）及多时区省州城市出口下因 `TZ_CC` 漏项误判「系统时区指向未知地区（`Buenos Aires ≠ Buenos Aires`）」的问题。
+
+---
+
 ## [v7.3.1] - 2026-11-06
 
 ### Changed

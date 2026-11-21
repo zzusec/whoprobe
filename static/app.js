@@ -1,4 +1,4 @@
-/* WhoProbe v7.3.2 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.3.3 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -4158,7 +4158,14 @@
 
     // 7. synspoof: IP DF/IPID Continuity, TCP Timestamp Hz & Mux Coalescing
     const mux = R.muxBurst;
-    const linuxClaimDfZero = tcp && tcp.df === false && /^(Linux|Android|HarmonyOS)$/.test(uaOs);
+    // Only flag DF=0 as an OS header contradiction when the wire TCP SYN itself is NOT already a
+    // genuine Linux stack (`osFamily === "linux"` or `IPID=0`), avoiding false positives when an
+    // upstream ISP / cloud SDN / CGNAT router clears the outer IPv4 DF bit in transit.
+    const linuxClaimDfZero = tcp
+      && tcp.df === false
+      && tcp.osFamily !== "linux"
+      && !(tcp.synIpId === 0 && tcp.helloIpId === 0)
+      && /^(Linux|Android|HarmonyOS)$/.test(uaOs);
     if (!tcp && !mux) {
       out.synspoof = { level: "info", summary: "等待底层 IP/TCP 跨包时钟与微脉冲粘包核验…" };
     } else if (tcp?.synSpoofSuspect) {
@@ -4491,7 +4498,9 @@
     } else if (protectedFp) {
       out.fp = { level: "ok", summary: `已受 ${R.shieldLabel} 保护，跨站静态指纹已被动态打散` };
     } else if (R.etag?.seen || (R.traceSurvived || []).length > 1) {
-      out.fp = { level: "bad", summary: `无防指纹保护且已被缓存 ETag / 多重存储跨会话锁定 (硬件码 ${R.hwId})` };
+      out.fp = currentScene === "privacy"
+        ? { level: "bad", summary: `无防指纹保护且已被缓存 ETag / 多重存储跨会话锁定 (硬件码 ${R.hwId})` }
+        : { level: "info", summary: `同环境持久化会话正常：当前独立窗口保留了会话缓存与固定硬件码 (${R.hwId})，多账号防关联请在不同环境窗口间对比硬件码` };
     } else {
       out.fp = { level: "warn", summary: `画布、音频与硬件指纹完全固定 (${R.fpId})，网站无需 Cookie 即可跨站认出你` };
     }

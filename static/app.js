@@ -2148,6 +2148,10 @@
       const leak = isCn && R.ipCC && R.ipCC !== "CN";
       setProbe("ex_cn", `${cc ? flagEmoji(cc) + " " : ""}${ip} · ${loc}`, { tone: leak ? "bad" : "neutral" });
       setRouteRow("ex_cn", `${cc ? flagEmoji(cc) + " " : ""}${ip}`, loc, leak ? "bad" : "ok");
+      if (!R.isSharedView) {
+        renderChecksAndScore(false);
+        renderPortrait();
+      }
     })();
 
     // International GeoIP exit (parallel api.ip.sb + ipwho.is so Mainland 5G without VPN doesn't wait 13s serially)
@@ -7309,18 +7313,73 @@
     const exitCity = R.srv?.geo?.city || R.ipCity || R.intel?.consensus?.city || "";
     const exitText = R.ipCC ? `${flagEmoji(R.ipCC)} ${[exitCity, countryName(R.ipCC)].filter(Boolean).join(", ")}` : (R.finished ? "出口查询超时" : "读取中…");
 
-    // 1. Update Live 3-Node Topology Diagram
-    $("#snapOrigin").textContent = originShort;
+    // 1. Update Live 3-Node Topology Diagram (Resolve Real Client-Side IP: CN Direct Leak > WebRTC STUN Leak > Split Exit > Direct Terminal IP)
+    const leakedRtc = getLeakedWebrtcIps();
+    const isProxySession = !!(
+      R.netKind === "dc" ||
+      R.netKind === "relay" ||
+      checks.conn?.level === "bad" ||
+      checks.reality?.level === "bad" ||
+      checks.lease?.level === "bad" ||
+      checks.tz?.level === "bad" ||
+      checks.split?.level === "bad" ||
+      checks.rtt?.level === "bad" ||
+      (origin?.cc && R.ipCC && origin.cc !== R.ipCC)
+    );
+
+    let realClientIp = "";
+    let realClientGeo = originShort;
+    let leakBadge = "";
+    if (cnLeak && R.exits?.ex_cn?.ip) {
+      realClientIp = R.exits.ex_cn.ip;
+      realClientGeo = originShort;
+      leakBadge = "直连漏底";
+    } else if (leakedRtc.length > 0) {
+      realClientIp = leakedRtc.find(x => !x.includes(":")) || leakedRtc[0];
+      const rtcCC = candidateCC(realClientIp);
+      const rtcMeta = R.ipMeta?.[cleanIp(realClientIp)];
+      realClientGeo = [rtcCC ? `${flagEmoji(rtcCC)} ${countryName(rtcCC)}` : "", rtcMeta?.org || rtcMeta?.isp || ""].filter(Boolean).join(" · ") || originShort;
+      leakBadge = "STUN 漏底";
+    } else if (origin?.cc && R.ipCC && origin.cc !== R.ipCC) {
+      const splitHit = Object.entries(R.exits || {}).find(([k, v]) => v?.ip && !isSafariSubprobeRelay(k, v) && v.cc === origin.cc && cleanIp(v.ip) !== cleanIp(R.ip));
+      if (splitHit) {
+        realClientIp = splitHit[1].ip;
+        realClientGeo = `${flagEmoji(splitHit[1].cc)} ${(splitHit[1].label || countryName(splitHit[1].cc)).replace(/^中国\s*[·-]?\s*/, "")}`;
+        leakBadge = "分流漏底";
+      }
+    } else if (!isProxySession && R.ip) {
+      realClientIp = R.ip;
+      realClientGeo = originShort;
+    }
+
+    const snapOriginEl = $("#snapOrigin");
+    const snapDeviceEl = $("#snapDevice");
+    const devBase = `${R.osLabel || "未知系统"} · ${shortTzCity(R.tz)}`;
+    if (snapOriginEl) {
+      const originPrimary = realClientIp
+        ? realClientIp
+        : (!R.finished ? `${originShort} · 探测中…` : `${originShort} · 未暴露真实IP`);
+      snapOriginEl.textContent = originPrimary;
+      snapOriginEl.title = originPrimary;
+    }
     $("#snapExit").textContent = exitText;
-    $("#snapDevice").textContent = `${R.osLabel || "未知系统"} · ${shortTzCity(R.tz)}`;
+    if (snapDeviceEl) {
+      const devSubTxt = realClientIp ? `${realClientGeo} · ${devBase}` : devBase;
+      snapDeviceEl.textContent = devSubTxt;
+      snapDeviceEl.title = devSubTxt;
+    }
     $("#snapGpu").textContent = R.gpuDiscrete ? `${R.gpuDiscrete} + ${R.gpuClean}` : (R.gpuClean || "未知显卡");
 
     const clientTag = $("#topoClientTag");
     if (clientTag) {
-      clientTag.textContent = cnLeak ? "直连漏底" : (checks.tz?.level === "bad" ? "原时区暴露" : "终端");
-      clientTag.className = "py-0.5 px-1.5 rounded text-[10px] font-semibold " + (
-        cnLeak || checks.tz?.level === "bad"
+      const badClient = !!(leakBadge || checks.tz?.level === "bad");
+      const hiddenOk = !badClient && isProxySession && R.finished && !realClientIp;
+      clientTag.textContent = leakBadge || (checks.tz?.level === "bad" ? "原时区暴露" : (hiddenOk ? "IP已隐藏" : "终端"));
+      clientTag.className = "py-0.5 px-1.5 rounded text-[10px] font-semibold whitespace-nowrap shrink-0 " + (
+        badClient
           ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+          : hiddenOk
+          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
           : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
       );
     }
@@ -8267,7 +8326,7 @@
         originLabel: originCountryOnly,
         clientTag: scrubClientShareText($("#topoClientTag")?.textContent || "终端"),
         clientTone: cnLeak || checks.tz?.level === "bad" ? "bad" : "neutral",
-        deviceSub: scrubClientShareText($("#snapDevice")?.textContent || ""),
+        deviceSub: scrubClientShareText(`${R.osLabel || "未知系统"} · ${shortTzCity(R.tz)}`),
         link1Badge: scrubClientShareText($("#topoLink1Badge")?.textContent || "路由核验"),
         link1Sub: scrubClientShareText($("#topoLink1Sub")?.textContent || ""),
         link1Tone,

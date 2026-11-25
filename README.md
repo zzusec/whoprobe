@@ -1,4 +1,24 @@
-# WhoProbe v7.7 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
+# WhoProbe v7.8 · 网站能看到什么
+
+首页「网站能看到什么」以**加载这一页的 HTTP 导航**为样本：展示本站应用收到的请求、网络对端、可信入口协商的协议，以及能关联到同一连接的抓包。区分浏览器脚本可读、第三方情报推断和未测项；分流环境下，不同网站见到的地址可能不同。
+
+Cookie、认证头、ETag、URL 查询值都不回显，来源网址只保留 origin；原始收据和主动联测结果不进入公开分享快照。点「发送探针请求」会另发不带 Cookie 的请求，不覆盖原始导航收据。
+
+### 可选：配置自己的对照端点
+
+这些探针仅在用户点击后运行；不配置时，收据和现有探针库仍可用。请在自有或已获授权的网络、域名与服务上配置。
+
+| 联测 | 配置和证据 |
+| --- | --- |
+| 双栈与实际 HTTP/3 | `--visibility-ipv4-url`、`--visibility-ipv6-url`、`--visibility-h2-url`、`--visibility-h3-url` 支持分别指向自有 `https://…/api/who/visibility/sample`（兼容 `/who/`）。IPv4-only 与 IPv6-only 主机分别发布 A 与 AAAA；H3 目标需真正终止 HTTP/3，向后端透传 `$server_protocol` 与 ALPN，由完整 HTTP 响应证明可达。首包到达、Alt-Svc 广告和回退均不是 H3 成功。跨源目标在其后端配置 `--visibility-origin https://主测站`，不要配置通配 CORS 或加凭证。 |
+| 自有权威 DNS | 将专用测量子域委派给自有 NS。使用 `--visibility-dns-zone`、`--visibility-dns-ns`（区外 NS 名称）、`--visibility-dns-bind`、`--visibility-dns-port`（默认 53）及 `--visibility-dns-a` / `--visibility-dns-aaaa` 指定 HTTPS 目标。开放该 NS 的 UDP/TCP 53；与 HTTPS 目标地址独立。为该区准备通配 HTTPS 证书并将采样路径反代到 WhoProbe；可用 `--visibility-dns-acme-cname` 将固定 `_acme-challenge` 名称委派到区外 DNS-01 验证名。公网解析器能看到一次性查询名，但读回报告的私有凭证是另一随机值。仅观察递归端来源、QTYPE 和最细 `/24` 或 `/56` 的 ECS，不判断客户端到解析器是否使用 DoH。 |
+| WebRTC 中继 | `--visibility-turn-url turn[s]:…` 只配置自有 TURN 地址，不包含凭证。用户按需输入短期凭证，页面做 WebRTC DataChannel 往返后读选中的 ICE 候选对和可用 RTT。该结果只代表经 TURN 的路径，不代表直连、设备 IP 或所有 WebRTC 通话。 |
+| 跨站存储 | 设置 `--visibility-storage-site`（顶部对照站 B）与 `--visibility-storage-frame`（独立测试源），分别部署 `static/visibility-frame.html` 与同目录 `visibility-lab.js`，按模板填写 A/B origin 和 frame URL。三个都须为独立站点，而非同一注册域的不同子域。候选域边界无法确认时结果为未测。B 必须允许跨源 opener；frame 用 CSP `frame-ancestors` 只允许 A/B。实验使用短期标记并尽力清理，不建立长期访客标识。 |
+| BGP 历史与来源覆盖 | 手动查看公开路由前缀最近约 30 天的 RIPE RIS 起源档案；只传公开前缀，不传单个访客 IP。显示实际档案窗口、起源变更或同时间多起源，不据此认定劫持。信誉覆盖率单列：未知来源不算清白，覆盖不足不显示高等级。 |
+
+Linux 抓包用 IPv4/IPv6 的 TCP 四元组匹配，默认只信回环反代的透传，非回环入口用 `--trusted-edge IP_OR_CIDR` 显式指定。用 [`deploy/nginx-example.conf`](./deploy/nginx-example.conf) 覆盖 `X-Edge-*`、`X-HTTP-Version` 和 `X-TLS-*` 等内部头。若前面还有 CDN，标明 CDN 到源站所见，不能当成用户设备的 IP/TLS 栈。老部署缺透传时显示未测，不按公网 IP 回退。独立 QUIC Initial 监听不是 HTTP/3 服务器，不应抢占 H3 入口 UDP 端口，也不会把公网 IP 下其他人的首包回显给当前浏览器。
+
+## 既有探针库与部署
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B%20(Zero%20Deps)-3776AB.svg)](./probe.py)
@@ -129,7 +149,7 @@ SNIFF_IFACE=ens5 docker compose --profile sniffer up -d whoprobe-sniffer
 | **7. 浏览器与防篡改 (`brw`)** | 38 | 外观/对比度/动画无障碍媒体查询、权限静默状态、WebDriver 自动化痕迹、CDP Runtime 附着与注入帧 (`cdp`)、无头窗口外框 (`winchrome`)、无痕窗口侧信道 (`incog`)、`isTrusted` 合成事件与机械轨迹 (`input`)、**精细行为生物动力学：速度变异/滚轮连续性/按键驻留 (`biodyn`)**、59 个自动化框架全局标记 (`autokeys`)、Node / Electron / jsdom 宿主 (`jsenv`)、无头渲染特征 (`headless`)、stealth 补丁残留 (`stealth`)、焦点与用户激活 (`focus`)、`--disable-ipc-flooding-protection` 洪泛限流开关 (`ipcflood`)、CSP 绕过检测 (`cspbypass`)、`--disable-popup-blocking` 无手势弹窗开关 (`popupblk`)、Worker `OffscreenCanvas` 显卡跨线程核验 (`glworker`)、**第 4/5 界 `SharedWorker` 与 `ServiceWorker` 即采即销核验 (`swrealm`)**、AdBlock 双重实测、注入扩展识别、36 款 Chrome 扩展 `chrome-extension://` 扫描、Web Worker 独立线程交叉核验、洁净 `iframe` 沙箱核验、52 项原生 API 谎言检测、防指纹护盾归因、7 大追踪器手动拦截实测、**本机代理与指纹浏览器控制端口手动自检 (`localport`)** |
 | **8. 跨站追踪指纹 (`fp`)** | 24 | 跨站综合指纹 ID、跨浏览器物理硬件码、无状态 HTTP `ETag` 缓存追踪、4 大浏览器存储复活测试、Canvas 2D 与 16×16 棋盘格隐蔽加噪陷阱、WebGL 着色像素回读、OfflineAudio 压缩与 ConstantSource 加噪陷阱、AudioContext 基础延迟 (`audiolat`)、52 款字库画像、DOMRect/SVG/TextMetrics 亚像素指纹、超越函数数学库指纹、时钟粒度、可选硬件定位与传感器噪声实测 |
 
-> **端口回扫说明**：`portscan` 仅对「访客自身当前出口 IP」执行 TCP `connect` 并被动读取欢迎横幅，不发送任何载荷、结果仅缓存 15 分钟于内存；通过 `?ip=` 查询任意 IP 时不会扫描，`--no-active-probe` 可同时关闭 `:443` 回探与端口回扫。
+> **主动回探说明**：默认关闭。如确有授权且启用 `--active-probe`，主动回探仍仅接受明确请求的当前可验证出口；任意外部 `?ip=` 查询只使用被动情报。证书与开放端口只是线索，并不证明使用某种代理协议。
 
 ---
 
@@ -179,7 +199,8 @@ SNIFF_IFACE=ens5 docker compose --profile sniffer up -d whoprobe-sniffer
 usage: probe.py [-h] [--host HOST] [--port PORT] [--sniff-iface SNIFF_IFACE]
                 [--sniff-port SNIFF_PORT] [--quic-port QUIC_PORT]
                 [--tls-bridge-port PORT --tls-cert PEM --tls-key PEM]
-                [--no-active-probe] [--self-test]
+                [--trusted-edge IP_OR_CIDR] [--active-probe] [--self-test]
+                [--visibility-origin ORIGIN] [--visibility-h3-url URL] …
 ```
 
 ---
@@ -195,7 +216,7 @@ usage: probe.py [-h] [--host HOST] [--port PORT] [--sniff-iface SNIFF_IFACE]
 
 ## 隐私与合规声明
 
-- **零持久化日志**：[`probe.py`](./probe.py) 与 [`egress_intel.py`](./egress_intel.py) 不连接任何数据库、不落盘保存访问者 IP 或指纹日志；所有嗅探包头与情报缓存均保存在定长内存 `TTLCache` 中到期自动销毁。
+- **观测数据限时保留**：抓包摘要、自有 DNS 会话和情报缓存在内存中到期删除，不记录访问日志。只有用户主动创建的脱敏分享快照写入 SQLite，原始请求收据和对照结果不在其中。独立部署的 CDN、反代和 DNS 日志需按各自策略管理。
 - **合规用途**：本项目仅供网络安全研究、反欺诈风控原理解析、跨境网络排障及个人隐私暴露面自检使用。
 
 ## License

@@ -11,6 +11,7 @@ from __future__ import annotations
 import bisect
 import concurrent.futures
 import errno
+import http.client
 import ipaddress
 import json
 import math
@@ -22,8 +23,12 @@ import ssl
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 USER_AGENT = "Mozilla/5.0 (compatible; WhoProbe/6.0; +https://github.com/zzusec/whoprobe)"
@@ -64,6 +69,7 @@ class SimpleTTLCache:
 
 INTEL_CACHE = SimpleTTLCache(maxsize=1024, ttl_sec=600.0)
 ASN_CACHE = SimpleTTLCache(maxsize=1024, ttl_sec=3600.0)
+ROUTE_HISTORY_CACHE = SimpleTTLCache(maxsize=128, ttl_sec=900.0)
 TLS443_CACHE = SimpleTTLCache(maxsize=2048, ttl_sec=900.0)
 CIDR_CACHE = SimpleTTLCache(maxsize=32, ttl_sec=21600.0)  # 6 hours
 RAW_TLS443_CACHE = SimpleTTLCache(maxsize=2048, ttl_sec=900.0)
@@ -628,10 +634,12 @@ def _fetch_shodan(ip: str) -> dict[str, Any] | None:
         return None
     except Exception:
         return None
-    tags = [str(t) for t in (d.get("tags") or [])]
-    ports = [int(p) for p in (d.get("ports") or []) if isinstance(p, int)]
-    vulns = [str(v) for v in (d.get("vulns") or [])][:12]
-    hosts = [str(h) for h in (d.get("hostnames") or [])][:5]
+    if not isinstance(d, dict) or not all(isinstance(d.get(k), list) for k in ("tags", "ports", "vulns", "hostnames")):
+        return None
+    tags = [str(t) for t in d["tags"]]
+    ports = [int(p) for p in d["ports"] if isinstance(p, int)]
+    vulns = [str(v) for v in d["vulns"]][:12]
+    hosts = [str(h) for h in d["hostnames"]][:5]
     return {"ports": ports, "tags": tags, "vulns": vulns, "hostnames": hosts, "unseen": False}
 
 
@@ -639,8 +647,11 @@ def _fetch_sfs(ip: str) -> dict[str, Any] | None:
     try:
         d = _http_json(f"https://api.stopforumspam.org/api?ip={urllib.parse.quote(ip)}&json", timeout=3.8)
         rec = d.get("ip") if isinstance(d.get("ip"), dict) else {}
+        appears = rec.get("appears")
+        if d.get("success") not in (1, "1") or appears not in (0, 1, "0", "1"):
+            return None
         return {
-            "appears": int(rec.get("appears") or 0),
+            "appears": int(appears),
             "frequency": int(rec.get("frequency") or 0),
             "confidence": _num_or_none(rec.get("confidence")),
             "lastseen": rec.get("lastseen"),
@@ -655,11 +666,14 @@ def _fetch_otx(ip: str, ip_ver: int) -> dict[str, Any] | None:
     try:
         d = _http_json(f"https://otx.alienvault.com/api/v1/indicators/{kind}/{urllib.parse.quote(ip)}/general", timeout=4.0)
         pinfo = d.get("pulse_info") if isinstance(d.get("pulse_info"), dict) else {}
+        count = pinfo.get("count")
+        if type(count) is not int or count < 0:
+            return None
         pulses = pinfo.get("pulses") if isinstance(pinfo.get("pulses"), list) else []
         vals = [str(v.get("source") or v.get("name") or "") for v in (d.get("validation") or []) if isinstance(v, dict)]
         benign = bool(d.get("false_positive")) or any(re.search(r"whitelist|alexa|majestic|akamai|false", v, re.I) for v in vals)
         return {
-            "pulses": int(pinfo.get("count") or 0),
+            "pulses": count,
             "pulseNames": [str(p.get("name")) for p in pulses if isinstance(p, dict) and p.get("name")][:4],
             "benign": benign,
         }
@@ -674,7 +688,11 @@ def _fetch_onionoo(ip: str, ip_ver: int) -> dict[str, Any] | None:
             f"https://onionoo.torproject.org/details?search={urllib.parse.quote(query)}&fields=nickname,or_addresses,exit_addresses,flags,running",
             timeout=4.0,
         )
-        relays = d.get("relays") or []
+        relays = d.get("relays")
+        if not isinstance(relays, list) or any(
+            not isinstance(r, dict) or not isinstance(r.get("or_addresses"), list) for r in relays
+        ):
+            return None
 
         def _addrs(r: dict[str, Any]) -> list[str]:
             out = list(r.get("exit_addresses") or [])
@@ -686,6 +704,8 @@ def _fetch_onionoo(ip: str, ip_ver: int) -> dict[str, Any] | None:
         exact = [r for r in relays if ip in _addrs(r)]
         neigh = [r for r in relays if r not in exact and any(a.startswith(query) for a in _addrs(r))] if ip_ver == 4 else []
         is_exit = any("Exit" in (r.get("flags") or []) or ip in (r.get("exit_addresses") or []) for r in exact)
+        if not is_exit and any(not isinstance(r.get("flags"), list) for r in exact):
+            return None
         return {
             "torRelay": len(exact) > 0,
             "torExit": is_exit,
@@ -1092,16 +1112,24 @@ def _check_single_dnsbl(entry: dict[str, Any], ip: str, ip_ver: int) -> dict[str
         try:
             d = _http_json(url, timeout=t_lim, headers={"Accept": "application/dns-json"})
             st = d.get("Status")
+            if type(st) is not int or d.get("TC") is True:
+                continue
             if st == 3:
                 return {"id": entry["id"], "name": entry["name"], "kind": entry["kind"], "status": "ok", "listed": False, "codes": [], "proxy": False}
             if st != 0:
                 continue
-            ans = [str(a.get("data")) for a in (d.get("Answer") or []) if isinstance(a, dict) and a.get("type") == 1]
+            answers = d.get("Answer", [])
+            if not isinstance(answers, list) or any(not isinstance(a, dict) or type(a.get("type")) is not int for a in answers):
+                continue
+            ans = [str(a.get("data")) for a in answers if a["type"] == 1]
             ignore = entry.get("ignore") or set()
             codes = [
                 a for a in ans
                 if a.startswith("127.") and not a.startswith("127.255.") and a != "127.0.0.1" and a not in ignore
             ]
+            if ans and not codes:
+                # 查询限制/错误或无法识别的回答不是不在名单的证据。
+                continue
             proxy_codes = entry.get("proxyCodes") or set()
             is_proxy = any(int(c.split(".")[3]) in proxy_codes for c in codes if len(c.split(".")) == 4 and c.split(".")[3].isdigit())
             return {
@@ -1183,6 +1211,8 @@ def load_cidr_list(entry: dict[str, Any], timeout: float = 5.5) -> tuple[list[in
         try:
             body = _http_text(entry["url"], timeout=timeout)
             parsed = _parse_cidr_ranges(body)
+            if not parsed[1]:  # 空体或错误页面不是一次有效的未命中。
+                return None
             CIDR_CACHE.set(lid, parsed)
             return parsed
         except Exception:
@@ -1367,6 +1397,195 @@ def fetch_asn_profile(asn: int, prefix: str | None = None) -> dict[str, Any]:
 
     ASN_CACHE.set(cache_key, profile)
     return profile
+
+
+# 按需查询，与当前 ASN 档案及纯净度评分独立。
+_ROUTE_HISTORY_DOC = "https://stat.ripe.net/docs/data-api/api-endpoints/routing-history.html"
+_ROUTE_HISTORY_URL = "https://stat.ripe.net/data/routing-history/data.json"
+_ROUTE_HISTORY_DAYS = 30
+_ROUTE_HISTORY_MIN_PEERS = 1
+_ROUTE_HISTORY_MAX_ROWS = 1000
+_ROUTE_HISTORY_MAX_BYTES = 1024 * 1024
+# is_global 对整个大段只看边界，仍需排除落在段内的特殊用途地址块。
+_ROUTE_NONPUBLIC = {
+    4: tuple(map(ipaddress.ip_network, (
+        "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+        "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16",
+        "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/3",
+    ))),
+    6: tuple(map(ipaddress.ip_network, ("2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20"))),
+}
+_ROUTE_V6_UNICAST = ipaddress.IPv6Network("2000::/3")
+
+
+def _public_route_prefix(prefix: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network | None:
+    if not isinstance(prefix, str) or len(prefix) > 49 or not re.fullmatch(r"[0-9a-fA-F:.]+/[0-9]{1,3}", prefix):
+        return None
+    try:
+        # 不将带主机位的输入纠正后发送，也不接受 /32、/128 或默认路由。
+        net = ipaddress.ip_network(prefix, strict=True)
+    except ValueError:
+        return None
+    if not 0 < net.prefixlen < net.max_prefixlen or not net.is_global:
+        return None
+    if isinstance(net, ipaddress.IPv6Network) and not net.subnet_of(_ROUTE_V6_UNICAST):
+        return None
+    return None if any(net.overlaps(block) for block in _ROUTE_NONPUBLIC[net.version]) else net
+
+
+class _NoRouteHistoryRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _route_history_json(query: str) -> Any:
+    # 只向固定的情报索引发请求，不跟随重定向、不转发访客头部。
+    req = urllib.request.Request(f"{_ROUTE_HISTORY_URL}?{query}", headers={
+        "User-Agent": "BGP-Routing-History-Client", "Accept": "application/json",
+    })
+    opener = urllib.request.build_opener(_NoRouteHistoryRedirect())
+    with opener.open(req, timeout=3.0) as resp:
+        raw = resp.read(_ROUTE_HISTORY_MAX_BYTES + 1)
+    if len(raw) > _ROUTE_HISTORY_MAX_BYTES:
+        raise ValueError("route history response too large")
+    return json.loads(raw)
+
+
+def _route_time(value: Any) -> datetime:
+    if not isinstance(value, str) or len(value) < 19:
+        raise ValueError("invalid RIS timestamp")
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    # RIPEstat 通常返回不带后缀的 UTC 时间。
+    return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _route_iso(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _route_timeline(
+    data: dict[str, Any], net: ipaddress.IPv4Network | ipaddress.IPv6Network, start: datetime, end: datetime,
+) -> list[dict[str, Any]]:
+    events: dict[datetime, Counter[int]] = {}
+    snapshots: dict[datetime, set[int]] = {}
+    groups = data.get("by_origin")
+    if not isinstance(groups, list):
+        raise ValueError("missing RIS origin groups")
+    rows = intervals = 0
+    for group in groups:
+        prefixes = group.get("prefixes") if isinstance(group, dict) else None
+        if not isinstance(prefixes, list):
+            raise ValueError("invalid RIS prefix list")
+        rows += len(prefixes)
+        if rows >= _ROUTE_HISTORY_MAX_ROWS:
+            raise ValueError("potentially truncated RIS result")
+        for item in prefixes:
+            if not isinstance(item, dict) or not isinstance(item.get("prefix"), str) or "/" not in item["prefix"]:
+                raise ValueError("invalid RIS prefix record")
+            if ipaddress.ip_network(item["prefix"]) != net:
+                continue  # 覆盖/更细前缀不能算作本前缀宣告。
+            origin = re.fullmatch(r"(?:AS)?([0-9]{1,10})", str(group.get("origin")), re.I)
+            periods = item.get("timelines")
+            if not origin or not 0 < (asn := int(origin[1])) < 2**32 or not isinstance(periods, list):
+                raise ValueError("invalid RIS origin or timelines")
+            intervals += len(periods)
+            if intervals > 256:
+                raise ValueError("too many RIS intervals")
+            for period in periods:
+                if not isinstance(period, dict):
+                    raise ValueError("invalid RIS timeline item")
+                lo, hi = _route_time(period.get("starttime")), _route_time(period.get("endtime"))
+                if hi < lo:
+                    raise ValueError("reversed RIS timeline")
+                if lo == hi and start <= lo <= end:
+                    snapshots.setdefault(lo, set()).add(asn)
+                lo, hi = max(lo, start), min(hi, end)
+                if lo < hi:
+                    events.setdefault(lo, Counter())[asn] += 1
+                    events.setdefault(hi, Counter())[asn] -= 1
+
+    # 用半开区间消除相接边界上的假重叠；单时刻记录仍是一个观测。
+    active: Counter[int] = Counter()
+    timeline: list[dict[str, Any]] = []
+
+    def record(lo: datetime, hi: datetime, origins: list[int]) -> None:
+        if not origins:
+            return
+        start_iso, end_iso = _route_iso(lo), _route_iso(hi)
+        if lo != hi and timeline and timeline[-1]["end"] == start_iso and timeline[-1]["origins"] == origins:
+            timeline[-1]["end"] = end_iso
+        else:
+            timeline.append({"start": start_iso, "end": end_iso, "origins": origins})
+
+    previous = None
+    for when in sorted(events.keys() | snapshots.keys()):
+        if previous is not None and active:
+            record(previous, when, sorted(active))
+        for asn, delta in events.get(when, {}).items():
+            active[asn] += delta
+            if not active[asn]:
+                del active[asn]
+        if when in snapshots:
+            record(when, when, sorted(active.keys() | snapshots[when]))
+        previous = when
+    return timeline
+
+
+def fetch_route_history(prefix: str) -> dict[str, Any]:
+    """近 30 天的精确公共前缀 RIS 观测；没有观测不代表路由不存在或稳定。"""
+    net = _public_route_prefix(prefix)
+    result: dict[str, Any] = {
+        "ok": False, "status": "invalid", "prefix": str(net) if net is not None else None,
+        "source": "RIPEstat (RIS)", "sourceUrl": _ROUTE_HISTORY_DOC, "minPeers": _ROUTE_HISTORY_MIN_PEERS,
+        "window": None, "origins": [], "multiOrigin": None, "originChanged": None, "timeline": [], "cacheHit": False,
+    }
+    if net is None:
+        return {**result, "error": "invalid-prefix"}
+
+    key = str(net)
+    cached = ROUTE_HISTORY_CACHE.get(key)
+    if cached is not None:
+        return {**deepcopy(cached), "cacheHit": True}
+
+    end = datetime.now(timezone.utc).replace(microsecond=0)
+    start = end - timedelta(days=_ROUTE_HISTORY_DAYS)
+    result.update(status="unknown", window={"start": _route_iso(start), "end": _route_iso(end)})
+    # 省略 endtime，让上游使用最近可用的 BGP 数据；以其返回的窗口为准。
+    query = urllib.parse.urlencode({
+        "resource": key, "starttime": _route_iso(start), "min_peers": _ROUTE_HISTORY_MIN_PEERS,
+        "include_first_hop": "false", "max_rows": _ROUTE_HISTORY_MAX_ROWS,
+    })
+    try:
+        raw = _route_history_json(query)
+        if not isinstance(raw, dict) or raw.get("status") != "ok" or not isinstance(raw.get("data"), dict):
+            raise ValueError("unsuccessful RIS response")
+        data = raw["data"]
+        start = max(start, _route_time(data.get("query_starttime")))
+        end = min(end, _route_time(data.get("query_endtime")))
+        if start >= end:
+            raise ValueError("empty RIS observation window")
+        timeline = _route_timeline(data, net, start, end)
+        states = list({frozenset(row["origins"]) for row in timeline})
+        result.update(ok=True, status="observed" if states else "not_observed", timeline=timeline,
+                      window={"start": _route_iso(start), "end": _route_iso(end)})
+        if states:
+            result.update(
+                origins=sorted(set().union(*states)),
+                multiOrigin=any(len(state) > 1 for state in states),
+                # 观察到互不相交的起源集合才算变更；短暂增加第二起源本身不算。
+                originChanged=any(state.isdisjoint(other) for i, state in enumerate(states) for other in states[:i]),
+            )
+    except urllib.error.URLError as err:
+        result["error"] = "timeout" if isinstance(err.reason, TimeoutError) else "upstream-error"
+    except TimeoutError:
+        result["error"] = "timeout"
+    except (OSError, http.client.HTTPException):
+        result["error"] = "upstream-error"
+    except (ValueError, OverflowError, RecursionError):
+        result["error"] = "invalid-upstream-response"
+
+    ROUTE_HISTORY_CACHE.set(key, deepcopy(result), ttl_sec=None if result["ok"] else 45.0)
+    return result
 
 
 def infer_asn_class(
@@ -1574,6 +1793,10 @@ def _tally_votes(votes: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _evidence_state(value: Any) -> str:
+    return "hit" if value is True else "clear" if value is False else "unknown"
+
+
 def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enable_port_scan: bool = False) -> dict[str, Any]:
     norm_ip, ip_ver = normalize_public_ip(target_ip)
     if not norm_ip or not ip_ver:
@@ -1589,13 +1812,19 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
     t_start = time.monotonic()
 
     # Stage 1: 共享线程池并发拉取 8 大情报源 + RDAP + Shodan + SFS + OTX + Onionoo + 12 项 DNSBL + 15 项 CIDR + :443 握手
-    source_fns = [
-        _src_ipapiis, _src_ipquery, _src_iplocate, _src_blackbox,
-        _src_ipapi, _src_ipinfo, _src_ipleak, _src_freeipapi,
+    source_specs = [
+        ("ipapiis", "ipapi.is", _src_ipapiis, ("vpn", "proxy", "tor", "hosting", "abuser")),
+        ("ipquery", "IPQuery", _src_ipquery, ("vpn", "proxy", "tor", "hosting")),
+        ("iplocate", "IPLocate", _src_iplocate, ("vpn", "proxy", "tor", "hosting", "abuser")),
+        ("blackbox", "Blackbox v3", _src_blackbox, ("vpn", "proxy", "tor", "hosting")),
+        ("ipapi", "ip-api.com", _src_ipapi, ("proxy", "hosting")),
+        ("ipinfo", "IPinfo", _src_ipinfo, ()),
+        ("ipleak", "MaxMind (ipleak)", _src_ipleak, ()),
+        ("freeipapi", "FreeIPAPI (DB-IP)", _src_freeipapi, ("proxy",)),
     ]
     sources: list[dict[str, Any]] = []
 
-    f_srcs = [_INTEL_POOL.submit(fn, norm_ip) for fn in source_fns]
+    f_srcs = [_INTEL_POOL.submit(fn, norm_ip) for _, _, fn, _ in source_specs]
     f_rdap = _INTEL_POOL.submit(_fetch_rdap_ip, norm_ip)
     f_shodan = _INTEL_POOL.submit(_fetch_shodan, norm_ip)
     f_sfs = _INTEL_POOL.submit(_fetch_sfs, norm_ip)
@@ -1637,6 +1866,11 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
         _safe_res(f, {"id": entry["id"], "name": entry["name"], "kind": entry["kind"], "status": "timeout", "listed": False})
         for entry, f in zip(DNSBLS, f_dnsbls)
     ]
+    dnsbl_states = [
+        "not_applicable" if ip_ver == 6 else _evidence_state(d.get("listed") if d.get("status") == "ok" else None)
+        for d in dnsbl_results
+    ]
+    listed_dnsbls = [d for d, state in zip(dnsbl_results, dnsbl_states) if state == "hit"]
     loaded_cidrs = [_safe_res(f) for f in f_cidrs]
     raw_tls443 = _safe_res(f_raw443, {"port443Open": False, "tlsActive": False, "certInfo": {}, "rttMs": None})
     exit_ports = _safe_res(f_ports, {"probed": False, "reason": "timeout"}) if f_ports is not None else {"probed": False, "reason": "disabled"}
@@ -1686,6 +1920,7 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
 
     # Stage 3: CIDR 命中、同 /24 脏邻居与全 ASN 滥用密度计算
     cidr_hits: list[dict[str, Any]] = []
+    cidr_states = {entry["id"]: "unknown" if ip_ver == 4 else "not_applicable" for entry in CIDR_LISTS}
     neighbour_ips: set[int] = set()
     neighbour_lists: list[str] = []
     whole_block_lists: list[str] = []
@@ -1699,11 +1934,12 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
         block_start = ip_u32 & 0xFFFFFF00
         block_end = block_start + 255
         for entry, parsed in zip(CIDR_LISTS, loaded_cidrs):
-            if not parsed:
+            if not parsed or not parsed[1]:
                 continue
             starts, merged, _ = parsed
             direct = _intersect_merged(starts, merged, ip_u32, ip_u32)
             is_hit = len(direct) > 0
+            cidr_states[entry["id"]] = _evidence_state(is_hit)
             kind = entry["kind"]
             if entry["id"] == "x4bdc":
                 x4b_dc_hit = is_hit
@@ -1738,7 +1974,7 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
         listed_in_asn = 0
         global_listed = 0
         for entry, parsed in zip(CIDR_LISTS, loaded_cidrs):
-            if not entry.get("density") or not parsed:
+            if not entry.get("density") or cidr_states[entry["id"]] == "unknown" or not parsed:
                 continue
             _, merged, total_ips = parsed
             listed_in_asn += _overlap_count(merged, merged_routes)
@@ -1815,7 +2051,7 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
         hosting_votes.append({"by": "PTR 主机名命名", "value": ptr_hint["hosting"], "w": 0.45})
     if open_proxy_hit:
         proxy_votes.append({"by": "FireHOL 公开代理列表", "value": True, "w": 0.85, "obs": True})
-    if any(d.get("proxy") for d in dnsbl_results):
+    if any(d.get("proxy") for d in listed_dnsbls):
         proxy_votes.append({"by": "DroneBL 代理特征码", "value": True, "w": 0.9, "obs": True})
     if shodan and "proxy" in (shodan.get("tags") or []):
         proxy_votes.append({"by": "Shodan 代理标签", "value": True, "w": 0.55, "obs": True})
@@ -1831,7 +2067,7 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
             vpn_votes.append({"by": "出口开放 VPN 服务端口", "value": True, "w": 0.75, "obs": True})
         if exit_ports.get("remoteOpen") or exit_ports.get("panelOpen"):
             hosting_votes.append({"by": "出口开放 SSH/RDP/面板端口", "value": True, "w": 0.4, "obs": True})
-    if cidr_tor_hit or any(d["id"] == "dantor" and d.get("listed") for d in dnsbl_results) or (onionoo and onionoo.get("torExit")):
+    if cidr_tor_hit or any(d["id"] == "dantor" for d in listed_dnsbls) or (onionoo and onionoo.get("torExit")):
         tor_votes.append({"by": "Tor 官方共识/出口表", "value": True, "w": 0.95, "hard": True, "obs": True})
     if sfs and sfs.get("appears", 0) > 0:
         abuser_votes.append({"by": "StopForumSpam", "value": True, "w": 0.8, "obs": True})
@@ -1842,9 +2078,88 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
     t_hosting = _tally_votes(hosting_votes)
     t_abuser = _tally_votes(abuser_votes)
 
-    # 聚合风险分
-    risk_vals = [float(s["risk"]) for s in sources if isinstance(s.get("risk"), (int, float))]
-    agg_risk = round(0.6 * (sum(risk_vals) / len(risk_vals)) + 0.4 * max(risk_vals), 1) if risk_vals else 0.0
+    # 缺值不归零；只有可用的实际分数才参与聚合。
+    risk_vals = {
+        s["id"]: val for s in sources
+        if (val := _num_or_none(s.get("risk"))) is not None and 0 <= val <= 100
+    }
+    agg_risk = round(0.6 * (sum(risk_vals.values()) / len(risk_vals)) + 0.4 * max(risk_vals.values()), 1) if risk_vals else None
+
+    # 记录评分所依赖的来源及派生测量，clear 仅表示该项明确未命中。
+    evidence: list[dict[str, Any]] = []
+
+    def _record(id_: str, name: str, group: str, status: str, **details: Any) -> None:
+        evidence.append({"id": id_, "name": name, "group": group, "status": status, **details})
+
+    sources_by_id = {s["id"]: s for s in sources}
+    flag_checks: list[dict[str, str]] = []
+    for id_, name, _, flags in source_specs:
+        src = sources_by_id.get(id_, {})
+        if flags:
+            checks = {flag: _evidence_state((src.get("flags") or {}).get(flag)) for flag in flags}
+            status = "hit" if "hit" in checks.values() else "unknown" if "unknown" in checks.values() else "clear"
+            flag_checks.append(checks)
+            _record(id_, name, "ip", status, checks=checks)
+        else:
+            _record(id_, name, "ip", "observed" if any(src.get(k) for k in ("country", "asn", "regCountry")) else "unknown")
+
+    for entry, state in zip(DNSBLS, dnsbl_states):
+        _record(f"dnsbl:{entry['id']}", entry["name"], "dnsbl", state)
+    for entry in CIDR_LISTS:
+        _record(f"cidr:{entry['id']}", entry["name"], "cidr", cidr_states[entry["id"]])
+
+    shodan_state = "unknown"
+    if shodan and not shodan.get("unseen"):
+        shodan_state = "hit" if shodan.get("vulns") or {"proxy", "vpn"}.intersection(shodan.get("tags") or []) else "observed"
+    _record("shodan", "Shodan InternetDB", "threat", shodan_state)
+    appears = (sfs or {}).get("appears")
+    _record("sfs", "StopForumSpam", "threat", _evidence_state(appears > 0 if type(appears) is int else None))
+    pulses = (otx or {}).get("pulses")
+    otx_state = _evidence_state(pulses > 0 if type(pulses) is int else None)
+    _record("otx", "AlienVault OTX", "threat", "observed" if otx_state == "hit" and otx.get("benign") else otx_state)
+    _record("onionoo", "Tor Onionoo 出口", "threat", _evidence_state((onionoo or {}).get("torExit")))
+
+    _record("rdap", "IP RDAP 注册资料", "assessment", "observed" if any(
+        (rdap_ip or {}).get(k) for k in ("regCountry", "netname", "orgName", "cidr", "rir")
+    ) else "unknown")
+    risk_covered = {"ipapiis", "ipquery"} <= risk_vals.keys()
+    _record("risk", "欺诈/滥用风险分", "assessment", "observed" if risk_covered else "unknown", sources=sorted(risk_vals))
+    _record("asn-type", "ASN 网络类型", "assessment", "observed" if inferred_asn.get("cls") else "unknown")
+    _record("registration-geo", "注册地与定位比对", "assessment", _evidence_state(not is_native if is_native is not None else None))
+    rpki = asn_prof.get("rpki")
+    _record("rpki", "BGP RPKI 校验", "assessment", _evidence_state(rpki == "invalid" if rpki in ("valid", "invalid") else None))
+
+    nb_count = len(neighbour_ips)
+    tor_neighbours = (onionoo or {}).get("neighbourRelays")
+    neighbour_covered = ip_ver == 4 and type(tor_neighbours) is int and all(
+        cidr_states[e["id"]] != "unknown" for e in CIDR_LISTS if e["kind"] in {"attack", "spam"}
+    )
+    neighbour_hit = bool(nb_count or whole_block_lists or tor_neighbours)
+    _record("neighbours", "同 /24 邻居名单与 Tor 中继", "assessment",
+            "not_applicable" if ip_ver != 4 else "hit" if neighbour_hit else "clear" if neighbour_covered else "unknown")
+    density_covered = asn_rep is not None and all(
+        cidr_states[e["id"]] != "unknown" for e in CIDR_LISTS if e.get("density")
+    )
+    _record("asn-density", "ASN IPv4 滥用密度", "assessment",
+            "not_applicable" if ip_ver != 4 else "observed" if density_covered else "unknown")
+
+    _record("tls443", ":443 证书归属核验", "optional",
+            "not_applicable" if not enable_active_443 else "hit" if tls443.get("realitySuspect") else
+            "observed" if tls443.get("tlsActive") else "unknown")
+    _record("ports", "出口端口观测", "optional",
+            "not_applicable" if not enable_port_scan else "hit" if exit_ports.get("probed") and
+            not exit_ports.get("synProxyLikely") and any(exit_ports.get(k) for k in ("proxyOpen", "vpnOpen", "remoteOpen", "panelOpen"))
+            else "unknown")
+
+    not_applicable = sum(item["status"] == "not_applicable" for item in evidence)
+    unknown = sum(item["status"] == "unknown" for item in evidence)
+    applicable = len(evidence) - not_applicable
+    known = applicable - unknown
+    coverage = {
+        "known": known, "unknown": unknown, "notApplicable": not_applicable, "applicable": applicable,
+        "ratio": round(known / applicable, 3) if applicable else None,
+    }
+    uncertain = not known or unknown > 0 or any("unknown" in checks.values() for checks in flag_checks)
 
     # Stage 6: 透明扣分与加分引擎（满分 100，基准 92 + 安全加分 ≤ 10 − 分类封顶扣分）
     deductions: list[dict[str, Any]] = []
@@ -1875,12 +2190,11 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
         _deduct("anon", "VPN 隧道出口", vpn_pts, f"命中：{', '.join(t_vpn['by'][:4])} (E={round(t_vpn['E']*100)}%)")
 
     # 2) 滥用与黑名单
-    if agg_risk >= 5:
+    if agg_risk is not None and agg_risk >= 5:
         _deduct("abuse", "欺诈/滥用风险分", agg_risk * 0.3, f"多库综合风险分 {agg_risk}/100")
     if t_abuser["E"] > 0:
         _deduct("abuse", "滥用源标记", 10.0 * t_abuser["E"], f"命中：{', '.join(t_abuser['by'][:3])}")
 
-    listed_dnsbls = [d for d in dnsbl_results if d.get("listed")]
     if listed_dnsbls:
         dnsbl_pts = min(20.0, sum(6.0 if d["kind"] == "abuse" else 4.0 for d in listed_dnsbls))
         _deduct("abuse", "DNS 实时黑名单上榜", dnsbl_pts, f"命中 {len(listed_dnsbls)} 家：{', '.join(d['name'] for d in listed_dnsbls[:4])}")
@@ -1903,7 +2217,6 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
         _deduct("abuse", "Shodan 暴露端口含历史 CVE", 6.0, f"涉及 {', '.join(shodan['vulns'][:3])}")
 
     # 3) 同段邻居与 ASN 信誉
-    nb_count = len(neighbour_ips)
     if whole_block_lists:
         _deduct("neighbours", "整个 /24 网段被封禁", 15.0, f"整段列入 {', '.join(whole_block_lists[:3])}")
     if nb_count > 0:
@@ -1936,17 +2249,22 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
     if len(ranked_countries) > 1 and country_support < 0.85:
         _deduct("geo", "多库地理位置分歧", min(5.0, 6.0 * (0.85 - country_support) / 0.35), " · ".join(f"{c} ({len(country_by[c])}源)" for c, _ in ranked_countries[:3]))
 
-    # 正面干净加分（最高 +10）
-    anon_max = max(t_vpn["E"], t_proxy["E"], t_tor["E"])
-    if len(sources) >= 4 and anon_max == 0 and agg_risk <= 10:
+    # 正面加分需要对应项目的实测佐证；未加载、未查询或缺字段不作否定票。
+    anon_clear = not any(t["yes"] for t in (t_vpn, t_proxy, t_tor)) and sum(
+        all(checks.get(flag) == "clear" for flag in ("vpn", "proxy", "tor")) for checks in flag_checks
+    ) >= 2
+    low_risk = risk_covered and agg_risk is not None and agg_risk <= 10
+    if anon_clear and low_risk:
         bonuses.append({"label": "多库一致无匿名标记", "pts": 2.0})
-    if ip_ver == 4 and nb_count == 0 and not whole_block_lists and not (onionoo and onionoo.get("neighbourRelays")):
-        bonuses.append({"label": "同 /24 邻居零污点", "pts": 2.0})
-    if asn_rep and asn_v4_size >= 4096 and asn_rep["ratio"] < 0.5:
+    if neighbour_covered and not neighbour_hit:
+        bonuses.append({"label": "已测同 /24 邻居名单未命中", "pts": 2.0})
+    if density_covered and asn_v4_size >= 4096 and asn_rep["ratio"] < 0.5:
         b_asn = round(2.0 + 2.0 * min(1.0, max(0.0, (0.5 - asn_rep["ratio"]) / 0.4)), 1)
         bonuses.append({"label": f"ASN 滥用密度优异 ({asn_rep['ratio']}x)", "pts": b_asn})
-    if t_hosting["E"] < 0.15 and anon_max < 0.15 and inferred_asn.get("cls") in {"isp", "mobile"} and not listed_dnsbls:
-        bonuses.append({"label": "纯净原生宽带/移动接入网", "pts": 2.5})
+    hosting_clear = t_hosting["yes"] == 0 and sum(checks.get("hosting") == "clear" for checks in flag_checks) >= 2
+    if (anon_clear and low_risk and hosting_clear and inferred_asn.get("cls") in {"isp", "mobile"}
+            and not inferred_asn.get("conflict") and all(state in {"clear", "not_applicable"} for state in dnsbl_states)):
+        bonuses.append({"label": "多库佐证宽带/移动接入网", "pts": 2.5})
     if is_native is True:
         bonuses.append({"label": "注册地与定位一致 (原生 IP)", "pts": 0.5})
     if asn_prof.get("rpki") == "valid":
@@ -1978,6 +2296,9 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
             "score": purity_score,
             "grade": grade,
             "base": 92,
+            "uncertain": uncertain,
+            "coverage": coverage,
+            "evidence": evidence,
             "bonusTotal": round(bonus_total, 1),
             "deductTotal": round(deduct_total, 1),
             "bonuses": bonuses,
@@ -2036,10 +2357,10 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
             "onionoo": onionoo,
         },
         "dnsbl": {
-            "total": len([d for d in dnsbl_results if d["status"] == "ok"]),
+            "total": sum(state in {"hit", "clear"} for state in dnsbl_states),
             "listedCount": len(listed_dnsbls),
             "listed": [d["name"] for d in listed_dnsbls],
-            "droneProxy": any(d.get("proxy") for d in dnsbl_results),
+            "droneProxy": any(d.get("proxy") for d in listed_dnsbls),
         },
         "cidr": {
             "hits": cidr_hits,

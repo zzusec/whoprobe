@@ -174,8 +174,8 @@
   }
   const shortHash = h => h ? `${h.slice(0, 8)}·${h.slice(8, 16)}` : "–";
 
-  const getJSON = (url, ms = 5500, creds = "omit") =>
-    fetch(url, { cache: "no-store", credentials: creds, signal: AbortSignal.timeout(ms) }).then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)));
+  const getJSON = (url, ms = 5500, creds = "omit", headers) =>
+    fetch(url, { cache: "no-store", credentials: creds, headers, signal: AbortSignal.timeout(ms) }).then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)));
   const getText = (url, ms = 5500) =>
     fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(ms) }).then(r => r.ok ? r.text() : Promise.reject(new Error(r.status)));
 
@@ -1382,18 +1382,26 @@
     }
   }
 
+  function wireRunHeaders() {
+    if (!R.wireRunToken) {
+      R.wireRunToken = Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, "0")).join("");
+    }
+    return { "X-Who-Run-Token": R.wireRunToken };
+  }
+
   async function probeServer() {
     const t0 = Date.now();
+    const headers = wireRunHeaders();
     let data = null;
     try {
-      data = await getJSON(`./api/who/me?t=${t0}`, 11000, "omit");
+      data = await getJSON(`./api/who/me?t=${t0}`, 11000, "omit", headers);
       if (!data) {
-        data = await getJSON(`./api/who/me?t=${Date.now()}&r=retry`, 7500, "omit");
+        data = await getJSON(`./api/who/me?t=${Date.now()}&r=retry`, 7500, "omit", headers);
       }
       // If socket was freshly established and BPF sniffer buffer is 50ms behind, retry once cleanly
       if (data && (!data.packet || !data.packet.tcp)) {
         await new Promise(r => setTimeout(r, 160));
-        const retry = await getJSON(`./api/who/me?t=${Date.now()}&r=1`, 5500, "omit").catch(() => null);
+        const retry = await getJSON(`./api/who/me?t=${Date.now()}&r=1`, 5500, "omit", headers).catch(() => null);
         if (retry && retry.packet && retry.packet.tcp) data = retry;
       }
     } catch (e) {}
@@ -1482,7 +1490,9 @@
 
     // Protocol & Cipher
     const ngTls = data.connection || data.nginxTls || {};
-    setProbe("proto", [ngTls.httpVersion || ngTls.httpProtocol, ngTls.tlsProtocol, ngTls.tlsCipher].filter(Boolean).join(" · ") || "HTTPS");
+    const observedProtocol = [ngTls.httpVersion || ngTls.httpProtocol, ngTls.tlsProtocol, ngTls.tlsCipher].filter(Boolean).join(" · ");
+    if (observedProtocol) setProbe("proto", observedProtocol);
+    else setNA("proto", "未观测到入口的协议协商");
 
     // Passive TCP SYN fingerprint
     if (tcp) {
@@ -1558,12 +1568,12 @@
       R.srvPq = !!tls.pqSupported;
       R.srvPqGroup = tls.pqGroup || null;
       R.srvEch = !!tls.echExtension;
-      setProbe("pqkex", tls.pqSupported ? `已启用 (${tls.pqGroup})` : `未启用 (KeyShare: ${(tls.keyShareGroups || []).join(",") || "经典椭圆曲线"})`, {
-        tone: tls.pqSupported ? "ok" : "neutral"
+      setProbe("pqkex", tls.pqSupported ? `ClientHello 提议 ${tls.pqGroup}；未验证协商结果` : `未见后量子提议 (KeyShare: ${(tls.keyShareGroups || []).join(",") || "未读出"})`, {
+        tone: "neutral"
       });
-      setProbe("ech", tls.echExtension ? "ClientHello 携带 ECH 加密扩展" : "明文 SNI (未启用 ECH)");
+      setProbe("ech", tls.echExtension ? "ClientHello 有 ECH 扩展（可能是 GREASE）；未验证是否接受" : "ClientHello 未见 ECH 扩展");
     } else {
-      ["ja4", "ja3", "tlsext", "pqkex", "ech"].forEach(k => setNA(k, "TLS 会话复用未重发 ClientHello"));
+      ["ja4", "ja3", "tlsext", "pqkex", "ech"].forEach(k => setNA(k, "未关联到本连接的 ClientHello"));
     }
 
     // Header order signature
@@ -1662,6 +1672,7 @@
     }
     const p = intel.purity || {};
     const c = intel.consensus || {};
+    window.WhoVisibilityPanel?.updateIntel(intel);
     const v = intel.votes || {};
     const ap = intel.asnProfile || {};
     const inf = ap.inferred || {};
@@ -1691,10 +1702,11 @@
         source: "8源情报共识"
       });
       const pill = $("#purityPill");
-      if (pill && p.score != null) {
-        pill.textContent = `信誉 ${p.score}·${p.grade}`;
+      if (pill && (p.uncertain || p.score != null)) {
+        pill.textContent = p.uncertain ? "信誉覆盖不足" : `信誉 ${p.score}·${p.grade}`;
         pill.className = "inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-mono font-semibold whitespace-nowrap shrink-0 " + (
-          p.score >= 82 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+          p.uncertain ? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+            : p.score >= 82 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
             : p.score >= 58 ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
             : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
         );
@@ -1753,16 +1765,17 @@
     // 2) rep_score: Purity Score & Ledger
     const dedLines = (p.deductions || []).map(d => `−${d.pts} [${d.label}] ${d.detail}`);
     const bonLines = (p.bonuses || []).map(b => `+${b.pts} [${b.label}]`);
-    setProbe("rep_score", `${prefixTag}${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}（奖励 +${p.bonusTotal ?? 0} / 扣分 −${p.deductTotal ?? 0}）`, {
-      tone: (p.score ?? 0) >= 82 ? "ok" : (p.score ?? 0) >= 58 ? "warn" : "bad",
-      why: [...bonLines, ...dedLines].join("\n") || "基准分 92"
+    setProbe("rep_score", p.uncertain ? `${prefixTag}覆盖不足（${p.coverage?.known ?? 0}/${p.coverage?.applicable ?? 0} 项有数据）`
+      : `${prefixTag}${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}（奖励 +${p.bonusTotal ?? 0} / 扣分 −${p.deductTotal ?? 0}）`, {
+      tone: p.uncertain ? "neutral" : p.score >= 82 ? "ok" : p.score >= 58 ? "warn" : "bad",
+      why: [...bonLines, ...dedLines].join("\n") || (p.uncertain ? "未知来源不算无风险" : "基准分 92")
     });
 
     // 3) rep_votes: 8-Source Weighted Odds Voting
-    const pct = x => `${Math.round((x?.E || 0) * 100)}%`;
+    const pct = x => x?.of ? `${Math.round(x.E * 100)}%` : "未测";
     const maxAnon = Math.max(v.vpn?.E || 0, v.proxy?.E || 0, v.tor?.E || 0);
-    setProbe("rep_votes", `${prefixTag}机房 ${pct(v.hosting)} · 代理 ${pct(v.proxy)} · VPN ${pct(v.vpn)} · Tor ${pct(v.tor)} · 风险分 ${c.riskScore ?? 0}`, {
-      tone: maxAnon >= 0.45 || (v.hosting?.E || 0) >= 0.6 ? "bad" : maxAnon >= 0.2 || (v.hosting?.E || 0) >= 0.35 ? "warn" : "ok",
+    setProbe("rep_votes", `${prefixTag}机房 ${pct(v.hosting)} · 代理 ${pct(v.proxy)} · VPN ${pct(v.vpn)} · Tor ${pct(v.tor)} · 风险分 ${c.riskScore ?? "未测"}`, {
+      tone: maxAnon >= 0.45 || (v.hosting?.E || 0) >= 0.6 ? "bad" : maxAnon >= 0.2 || (v.hosting?.E || 0) >= 0.35 ? "warn" : p.uncertain ? "neutral" : "ok",
       why: (intel.sources || []).map(s => `${s.name}: ${s.country || "?"} · ${s.type || "-"} · risk=${s.risk ?? "-"} · ${JSON.stringify(s.flags || {})}`).join("\n")
     });
 
@@ -1879,9 +1892,10 @@
     $("#extIpVal").textContent = ext.targetIp || externalQueryIp;
     const pb = $("#extPurityBadge");
     if (pb) {
-      pb.textContent = `纯净度 ${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}`;
+      pb.textContent = p.uncertain ? "信誉覆盖不足" : `纯净度 ${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}`;
       pb.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold " + (
-        (p.score ?? 0) >= 82 ? "bg-emerald-600 text-white" : (p.score ?? 0) >= 58 ? "bg-amber-500 text-white" : "bg-rose-600 text-white"
+        p.uncertain ? "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+          : p.score >= 82 ? "bg-emerald-600 text-white" : p.score >= 58 ? "bg-amber-500 text-white" : "bg-rose-600 text-white"
       );
     }
     const topDed = (p.deductions || [])[0];
@@ -2235,8 +2249,9 @@
       const v4 = r4?.ip || "";
       const v6 = r6?.ip && r6.ip.includes(":") ? r6.ip : "";
       R.stack = { v4, v6 };
-      setProbe("stack", `IPv4: ${v4 || "无"} · IPv6: ${v6 || "未启用/仅IPv4"}`);
-      setRouteRow("stack", v4 && v6 ? "IPv4 + IPv6 双栈在线" : v4 ? "纯 IPv4 链路" : "纯 IPv6 链路", `v4: ${v4 || "–"} / v6: ${v6 || "无"}`, "ok");
+      setProbe("stack", `IPv4: ${v4 || "未测出"} · IPv6: ${v6 || "未测出"}`);
+      const observed = v4 && v6 ? "观测到 IPv4 和 IPv6" : v4 ? "仅观测到 IPv4" : v6 ? "仅观测到 IPv6" : "两种地址均未测出";
+      setRouteRow("stack", observed, `v4: ${v4 || "–"} / v6: ${v6 || "–"}`, v4 && v6 ? "ok" : "neutral");
     })();
 
     const [, , , , cfKv] = await Promise.all([pCn, pIntl, pGpt, pClaude, pCf, pStack]);
@@ -2254,7 +2269,7 @@
     const navProtos = performance.getEntriesByType("navigation").concat(performance.getEntriesByType("resource")).map(e => e.nextHopProtocol).filter(Boolean);
     const hasH3 = navProtos.some(p => /^h3/i.test(p)) || [R.exits.ex_cf, R.exits.ex_gpt, R.exits.ex_claude].some(x => x && /http\/3|h3/i.test(x.http || ""));
     R.hasH3 = hasH3;
-    setProbe("quicfp", hasH3 ? "已连通 HTTP/3 (UDP 443 QUIC 畅通)" : "当前走 TCP HTTP/2（代理或防火墙未放行 UDP 443 QUIC）", {
+    setProbe("quicfp", hasH3 ? "至少一个导航或资源请求使用了 HTTP/3" : "本轮未观测到 HTTP/3，不确定是否可达", {
       tone: hasH3 ? "ok" : "neutral"
     });
 
@@ -2486,7 +2501,7 @@
     R.rtcDone = true;
 
     if (!pubList.length) {
-      setProbe("webrtc", "安全（未暴露公网 STUN 候选地址）", { tone: "ok" });
+      setNA("webrtc", "本轮未获得公网 ICE 候选；无法判定 WebRTC 出口");
     } else if (!R.ip) {
       setProbe("webrtc", `${pubList.join(" · ")} (等待主出口归属核验…)`, { tone: "neutral" });
     } else {
@@ -2504,7 +2519,7 @@
     if (!R.rtcDone || R.rtc === "off") return;
     const pubList = Array.isArray(R.rtc) ? R.rtc : [];
     if (!pubList.length) {
-      setProbe("webrtc", "安全（未暴露公网 STUN 候选地址）", { tone: "ok" });
+      setNA("webrtc", "本轮未获得公网 ICE 候选；无法判定 WebRTC 出口");
       return;
     }
     if (!R.ip) return;
@@ -2562,7 +2577,7 @@
       .filter(x => x && x.includes(":"));
     if (!v6Pool.length) {
       R.v6mac = null;
-      setProbe("v6mac", "当前无 IPv6 流量（无网卡 MAC 泄露风险）", { tone: "ok" });
+      setNA("v6mac", "未观测到可检查的 IPv6 地址");
       return;
     }
     const mac = v6Pool.map(extractV6Mac).find(Boolean) || null;
@@ -2570,7 +2585,7 @@
     if (mac) {
       setProbe("v6mac", `高危：从 IPv6 提取出物理网卡 MAC ${mac}`, { tone: "bad" });
     } else {
-      setProbe("v6mac", `安全（已启用 IPv6 隐私临时随机后缀，共检验 ${v6Pool.length} 个地址）`, { tone: "ok" });
+      setProbe("v6mac", `本轮 ${v6Pool.length} 个 IPv6 地址未见 EUI-64 MAC 格式`, { tone: "neutral" });
     }
   }
 
@@ -5366,7 +5381,7 @@
     R.tlsStaticPerm = false;
     let perm = R.srv?.packet?.tlsPermutation || null;
     if (!perm || (perm.samples || 0) < 2) {
-      const r2 = await getJSON(`./api/who/tls2?t=${Date.now()}`, 3500, "include").catch(() => null);
+      const r2 = await getJSON(`./api/who/tls2?t=${Date.now()}`, 3500, "omit", wireRunHeaders()).catch(() => null);
       if (r2?.tlsPermutation) perm = r2.tlsPermutation;
     }
     const cnt = perm?.samples || 0;
@@ -5374,7 +5389,7 @@
       return setNA("tlsperm", location.protocol === "https:" ? "连接复用未捕获新 ClientHello" : "明文 HTTP 未经 TLS 握手（线上 HTTPS 自动核验）");
     }
     if (cnt < 2 || perm.permuted == null) {
-      return setProbe("tlsperm", `已捕获 1 次握手${perm.pskSeen ? " (含 PSK 会话票据)" : ""} · 点击「重新检测」比对二次扩展洗牌`, { tone: "neutral" });
+      return setProbe("tlsperm", `本轮只有 ${cnt} 条不同连接握手${perm.pskSeen ? "（含 PSK 提议）" : ""}；无法核验扩展顺序变化`, { tone: "neutral" });
     }
     const claimedChrome = +((/Chrome\/(\d+)/.exec(navigator.userAgent) || [])[1] || 0);
     const shouldPermute = R.engine === "V8" && claimedChrome >= 112;
@@ -5397,28 +5412,9 @@
   async function probeQuicParams() {
     R.quicStackMismatch = "";
     R.quicFp = null;
-    if (location.protocol !== "https:") {
-      return setNA("quicpar", "仅 HTTPS 环境可触发 UDP 443 QUIC Initial 采集");
-    }
-    if (typeof WebTransport === "function") {
-      try {
-        const wt = new WebTransport(`https://${location.host}/api/who/quic-wt?t=${Date.now()}`);
-        wt.ready.catch(() => {});
-        wt.closed.catch(() => {});
-        await new Promise(r => setTimeout(r, 320));
-        try { wt.close(); } catch (e) {}
-      } catch (e) {}
-    }
-    const qRes = await getJSON(`./api/who/quic?t=${Date.now()}`, 3000, "omit").catch(() => null);
-    const q = qRes?.quic || R.srv?.packet?.quic || null;
+    const q = R.srv?.packet?.quic || null;
     if (!q) {
-      if (typeof WebTransport !== "function") {
-        return setNA("quicpar", "当前内核不支持 WebTransport 主动触发（未捕获 UDP 443 首包）");
-      }
-      if (qRes && qRes.collectorActive === false) {
-        return setNA("quicpar", "服务端未启用 UDP 443 QUIC 嗅探器");
-      }
-      return setProbe("quicpar", "UDP 443 QUIC 首包未达服务端（代理仅转发 TCP 或防火墙拦截 UDP）", { tone: "neutral" });
+      return setNA("quicpar", "未关联到本请求的 QUIC Initial；可在网站视角单独实测 HTTP/3");
     }
     R.quicFp = q;
     const cb = claimedBrowser();
@@ -6254,15 +6250,17 @@
           ? `分流导致 TCP/UDP 出口分裂：当前页面走大陆直连 (CN)，但 WebRTC STUN 走了海外代理 (${leakCC} · ${leakedRtc.join(", ")})`
           : `WebRTC UDP 穿透泄漏了与代理出口不同的真实公网 IP：${leakedRtc.join(", ")}`
       };
+    } else if (!rtcList.length || !R.ip) {
+      out.webrtc = { level: "info", summary: !rtcList.length
+        ? "未获得公网 ICE 候选；当前条件下无法判定 WebRTC 出口"
+        : "缺少本站 HTTP 出口，无法与 WebRTC 候选对照" };
     } else {
-      const sameNet = rtcList.length && rtcList.every(x => cleanIp(x) === cleanIp(R.ip) || netPrefix(x) === netPrefix(R.ip));
+      const sameNet = rtcList.every(x => cleanIp(x) === cleanIp(R.ip) || netPrefix(x) === netPrefix(R.ip));
       out.webrtc = {
         level: "ok",
-        summary: rtcList.length
-          ? (sameNet
-            ? `WebRTC 反射地址 (${rtcList[0]}) 与当前出口一致，未漏真实 IP`
-            : `WebRTC 公网候选 (${rtcList[0]}) 属同国同运营商双栈/CGNAT 地址池，未跨网泄漏`)
-          : "WebRTC 未暴露额外公网候选地址，局域网地址已隐藏"
+        summary: sameNet
+          ? `本轮观测的 WebRTC 公网候选 (${rtcList[0]}) 与本站 HTTP 出口一致`
+          : `本轮候选 (${rtcList[0]}) 与本站出口为同国同运营商；不能据此确定实际选中路径`
       };
     }
 
@@ -6310,26 +6308,29 @@
       const cidrHits = (R.intel.cidr?.hits || []).filter(isThreatCidrHit).length;
       const dirty = R.intel.cidr?.neighbours?.dirtyCount || 0;
       const whole = (R.intel.cidr?.neighbours?.wholeBlockListed || []).length > 0;
-      const pScore = R.intel.purity?.score ?? 90;
+      const pScore = R.intel.purity?.uncertain ? null : (R.intel.purity?.score ?? null);
       const pGrade = R.intel.purity?.grade || "-";
+      const scoreLabel = pScore == null ? "综合覆盖不足" : `纯净度 ${pScore}/100 (${pGrade})`;
       const vulns = (R.intel.shodan?.vulns || []).length;
       const torHit = R.intel.threat?.onionoo?.isTorExit || R.intel.threat?.onionoo?.isTorRelay;
       const asnAbuse = R.intel.asnProfile?.abuseDensity?.ratio || 0;
 
-      if (blCnt > 0 || cidrHits > 0 || whole || torHit || pScore < 52) {
+      if (blCnt > 0 || cidrHits > 0 || whole || torHit || (pScore != null && pScore < 52)) {
         out.reputation = {
           level: "bad",
-          summary: `高危信誉污染：纯净度 ${pScore}/100 (${pGrade}) · DNSBL 上榜 ${blCnt} 家 · 威胁段命中 ${cidrHits} 项${dirty ? ` · 同 /24 脏邻居 ${dirty} 个` : ""}`
+          summary: `有风险来源命中：${scoreLabel} · DNSBL 上榜 ${blCnt} 家 · 威胁段命中 ${cidrHits} 项${dirty ? ` · 同 /24 脏邻居 ${dirty} 个` : ""}`
         };
-      } else if (dirty > 0 || vulns > 0 || asnAbuse >= 3.5 || pScore < 78) {
+      } else if (dirty > 0 || vulns > 0 || asnAbuse >= 3.5 || (pScore != null && pScore < 78)) {
         out.reputation = {
           level: "warn",
-          summary: `存在网段连坐或历史瑕疵：纯净度 ${pScore}/100 (${pGrade})${dirty ? ` · 同 /24 检出 ${dirty} 个黑名单脏邻居` : ""}${vulns ? ` · Shodan 暴露 ${vulns} 个 CVE` : ""}${asnAbuse >= 3.5 ? ` · 全 ASN 滥用密度 ${asnAbuse}x` : ""}`
+          summary: `存在网段或历史风险线索：${scoreLabel}${dirty ? ` · 同 /24 检出 ${dirty} 个黑名单脏邻居` : ""}${vulns ? ` · Shodan 记录 ${vulns} 个 CVE` : ""}${asnAbuse >= 3.5 ? ` · 全 ASN 滥用密度 ${asnAbuse}x` : ""}`
         };
+      } else if (pScore == null) {
+        out.reputation = { level: "info", summary: "出口信誉情报覆盖不足；未命中不能按无风险计" };
       } else {
         out.reputation = {
           level: "ok",
-          summary: `出口信誉洁净：纯净度 ${pScore}/100 (${pGrade})，12 家 DNSBL、15 份威胁段与同 /24 邻居全部零污点`
+          summary: `已获取的情报未见显著风险：${scoreLabel}；不是对第三方网站的准入判断`
         };
       }
     }
@@ -6546,19 +6547,19 @@
 
     // 4 Protocol Checks (Informational / Transport Diagnostics)
     const edgeKex = R.cfEdge?.kex || "";
-    const pqOk = R.srvPq || /MLKEM|Kyber/i.test(edgeKex);
+    const pqOk = /MLKEM|Kyber/i.test(edgeKex);
     out.pq = {
       level: pqOk ? "ok" : "info",
-      summary: pqOk ? `已启用抗量子混合密钥交换 (${R.srvPqGroup || edgeKex})` : "当前连接使用传统椭圆曲线密钥交换 (X25519)"
+      summary: pqOk ? `所测边缘报告采用了混合密钥交换 (${edgeKex})` : R.srvPq ? `本连接提议 ${R.srvPqGroup}，未观测协商结果` : "未确认本连接的密钥交换组"
     };
-    const echOk = R.srvEch || R.cfEdge?.sni === "encrypted";
+    const echOk = R.cfEdge?.sni === "encrypted";
     out.ech = {
       level: echOk ? "ok" : "info",
-      summary: echOk ? "TLS ClientHello 已启用 ECH 加密域名保护" : "当前连接发送明文 SNI 域名（常规状态，不影响伪装评分）"
+      summary: echOk ? "所测边缘报告接收了加密 SNI" : R.srvEch ? "本请求 ClientHello 有 ECH 扩展；不能确认协商成功" : "本轮未确认 ECH 状态"
     };
     out.h3 = {
       level: R.hasH3 ? "ok" : "info",
-      summary: R.hasH3 ? "UDP 443 畅通，浏览器已成功建立 HTTP/3 (QUIC) 连接" : "当前走 TCP HTTP/2（多数代理节点未转发 UDP 443 QUIC，属常见现象）"
+      summary: R.hasH3 ? "至少一个测试请求实际使用了 HTTP/3" : "本轮未观测到 HTTP/3；可在网站视角联测自有端点"
     };
     const warpVal = R.cfEdge?.warp || "off";
     out.warp = {
@@ -7817,7 +7818,7 @@
     });
     $("#workspaceTabs")?.addEventListener("keydown", e => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
-      const tabs = $$("#workspaceTabs [data-wstab]");
+      const tabs = $$("#workspaceTabs [data-wstab]:not([hidden])");
       const cur = tabs.findIndex(t => t.dataset.wstab === activeWorkspaceTab);
       const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (cur + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
       e.preventDefault();

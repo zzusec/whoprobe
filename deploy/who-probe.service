@@ -12,15 +12,16 @@ Group=whoprobe
 WorkingDirectory=/opt/whoprobe
 
 # Replace eth0 with your server's public NIC (check via: ip route show default)
-# Optional: add `--quic-port 443` + CAP_NET_BIND_SERVICE if UDP 443 is unused on the host to capture QUIC Initial JA4Q
-ExecStart=/usr/bin/python3 /opt/whoprobe/probe.py --host 127.0.0.1 --port 18899 --sniff-iface eth0 --sniff-port 443 --quic-port 443
+# A dedicated HTTP/3 terminator must own its UDP listen port; do not bind a second collector there.
+# The optional delegated DNS listener on port 53 also needs CAP_NET_BIND_SERVICE.
+ExecStart=/usr/bin/python3 /opt/whoprobe/probe.py --host 127.0.0.1 --port 18899 --sniff-iface eth0 --sniff-port 443
 Restart=always
 RestartSec=2
 
-# Minimal privilege hardening (read-only AF_PACKET socket + UDP 443 QUIC Initial collector + isolated SQLite state directory)
+# Minimal privilege hardening (passive AF_PACKET packet sampling + isolated SQLite share state)
 StateDirectory=who-probe
-AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

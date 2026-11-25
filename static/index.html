@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <title>WhoProbe · 网站眼里的你 — L3–L7 全栈指纹、BGP 出口情报与伪装风控诊断</title>
-  <meta name="description" content="零权限弹窗读取 191 项网络协议栈、QUIC Initial JA4Q、TCP TSval 时钟、:443 Reality 偷证书反向验真、8 源欺诈/BGP 租赁情报、同 /24 脏邻居、硬件光栅化与 52 项原型谎言，精准评估 6 大业务准入与防关联破绽。">
+  <title>WhoProbe · 网站能看到什么</title>
+  <meta name="description" content="查看一次访问实际发送的 HTTP 请求、网站观测到的网络和协议，以及浏览器脚本可读取的信号。">
   <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.7.4">
   <link rel="stylesheet" href="./assets/style.css?v=7.7.4">
+  <link rel="stylesheet" href="./assets/visibility.css?v=7.8.0">
   <script>
     (function () {
       try {
@@ -365,13 +366,16 @@
       </div>
     </section>
 
-    <!-- Zone 3: 3-Tab Deep Diagnostic Workspace -->
+    <!-- Deep Diagnostic Workspace -->
     <section aria-label="深度诊断工作区" class="space-y-2">
       <div id="workspaceBar" class="sticky z-30 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 py-1.5 bg-[#F5F6F8]/85 backdrop-blur-xl dark:bg-[#0B0C0E]/85 flex flex-wrap items-center justify-between gap-3" style="top: var(--hdr-h, 0px)">
         <nav id="workspaceTabs" class="grid grid-cols-3 sm:inline-flex items-center gap-1 p-1 rounded-xl bg-zinc-200/65 dark:bg-[#15181F] w-full sm:w-auto" role="tablist" aria-label="诊断视图切换">
           <button type="button" role="tab" data-wstab="checks" aria-selected="true" aria-controls="panelChecks" tabindex="0" class="ws-tab shrink-0 min-w-0 py-2 px-2 sm:px-3.5 inline-flex items-center justify-center gap-1.5 sm:gap-2 rounded-lg text-xs transition font-semibold bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white">
             <span class="sm:hidden">体检</span><span class="hidden sm:inline">逐项风控体检</span>
             <span id="tabChecksBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-100 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">24</span>
+          </button>
+          <button id="tabVisibility" type="button" role="tab" data-wstab="visibility" aria-selected="false" aria-controls="panelVisibility" tabindex="-1" class="ws-tab shrink-0 min-w-0 py-2 px-2 sm:px-3.5 inline-flex items-center justify-center gap-1.5 sm:gap-2 rounded-lg text-xs transition font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
+            <span class="sm:hidden">网站视角</span><span class="hidden sm:inline">网站能看到什么</span>
           </button>
           <button type="button" role="tab" data-wstab="routes" aria-selected="false" aria-controls="panelRoutes" tabindex="-1" class="ws-tab shrink-0 min-w-0 py-2 px-2 sm:px-3.5 inline-flex items-center justify-center gap-1.5 sm:gap-2 rounded-lg text-xs transition font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
             <span class="sm:hidden">分流</span><span class="hidden sm:inline">8 路分流与地区模拟</span>
@@ -408,7 +412,95 @@
         </div>
       </div>
 
-      <!-- Panel 2: 8-Route Outbound Split Matrix + Target Country Alignment Simulator -->
+      <div id="panelVisibility" data-wspanel="visibility" role="tabpanel" aria-labelledby="tabVisibility" hidden class="ws-panel rounded-2xl overflow-hidden">
+        <div class="visibility-intro">
+          <div class="visibility-intro-top">
+            <h2>网站能看到什么</h2>
+            <div class="visibility-intro-actions">
+              <button id="visibilityRefresh" type="button" class="visibility-button">发送探针请求</button>
+              <button id="visibilityRestore" type="button" class="visibility-button" hidden>看原导航请求</button>
+            </div>
+          </div>
+          <p id="visibilityReceiptNote">正在读取本站收到的请求…</p>
+          <p class="visibility-boundary">这是本站的观测收据，不是所有网站统一看到的数据。不同域名、协议、网络路径和浏览器策略会改变结果。原始收据不会随分享链接上传。</p>
+          <div id="visibilityReceiptError" role="status"></div>
+        </div>
+
+        <div class="visibility-section">
+          <div class="visibility-split">
+            <section aria-label="HTTP 请求内容">
+              <h3>本站实际收到</h3>
+              <dl id="visibilityHttp" class="visibility-list"></dl>
+            </section>
+            <section aria-label="网络与 TLS">
+              <h3>网络与协议</h3>
+              <dl id="visibilityNetwork" class="visibility-list"></dl>
+            </section>
+          </div>
+          <details class="visibility-details">
+            <summary>展开后台实际收到的请求头</summary>
+            <p>这是本站应用所见的名称和顺序，代理可能已重排或改写。仅回显白名单字段；来源网址只显示来源，Cookie、认证令牌和其他头值不回显。</p>
+            <dl id="visibilityHeaders" class="visibility-list visibility-headers"></dl>
+          </details>
+          <details class="visibility-details">
+            <summary>展开本连接的包头与握手观测</summary>
+            <p>只有观测点能匹配到本请求的连接时才显示。CDN 到源站的连接不等于浏览器到 CDN。</p>
+            <dl id="visibilityWire" class="visibility-list"></dl>
+          </details>
+        </div>
+
+        <div class="visibility-section">
+          <div class="visibility-split">
+            <section aria-label="浏览器脚本可读取">
+              <h3>页面脚本能读取</h3>
+              <p>以下读数在浏览器内测量，并非自动随请求发来。网站可以自行读取并上报；本站这块只在本页显示。</p>
+              <dl id="visibilityLocal" class="visibility-list"></dl>
+            </section>
+            <section aria-label="不可自动获得的信息">
+              <h3>服务器不会自动收到</h3>
+              <p>地址栏 <code>#</code> 后的片段、其他站点的 Cookie 和存储、设备 MAC/序列号、本地文件、相册、联系人，以及未授权的精确定位、摄像头和麦克风。浏览器可能提供粗粒度特征；用户授权或主动上传会改变可见范围。</p>
+              <p>HTTPS 保护传输过程，不会对网站的 TLS 终止点隐藏请求路径、查询、发送的请求头或表单内容。</p>
+            </section>
+          </div>
+        </div>
+
+        <div class="visibility-section">
+          <h3>用另一条路径对照</h3>
+          <p>以下联测仅在点击后运行。端点由站方配置；超时、策略拦截和缺配置都不等于通过或发现异常。</p>
+          <div class="visibility-test">
+            <div class="visibility-test-title"><h4>IPv4、IPv6 与实际 HTTP/3</h4><button id="visibilityRouteGo" type="button" class="visibility-button" disabled>测各端点</button></div>
+            <div id="visibilityRouteResult" role="status"><p>未配置自有 HTTP 采样端点。</p></div>
+          </div>
+          <div class="visibility-test">
+            <div class="visibility-test-title"><h4>权威 DNS 收到的查询</h4><button id="visibilityDnsGo" type="button" class="visibility-button" disabled>测 DNS 与 HTTPS</button></div>
+            <div id="visibilityDnsResult" role="status"><p>未配置自有权威 DNS 测量区。</p></div>
+          </div>
+          <div class="visibility-test">
+            <div class="visibility-test-title"><h4>WebRTC 选中的中继路径</h4><button id="visibilityRtcGo" type="button" class="visibility-button" disabled>测 TURN 往返</button></div>
+            <div id="visibilityRtcInputs" class="visibility-credentials" hidden>
+              <label>TURN 临时用户名<input id="visibilityRtcUser" autocomplete="off" maxlength="160" spellcheck="false"></label>
+              <label>TURN 临时凭证<input id="visibilityRtcPass" type="password" autocomplete="off" maxlength="256"></label>
+            </div>
+            <div id="visibilityRtcResult" role="status"><p>未配置自有 TURN。已有的 STUN 候选不等于实际连接。</p></div>
+          </div>
+          <div class="visibility-test">
+            <div class="visibility-test-title"><h4>跨站存储隔离</h4><button id="visibilityStorageGo" type="button" class="visibility-button" disabled>测跨站读取</button></div>
+            <div id="visibilityStorageResult" role="status"><p>未配置独立的顶层对照站点和测试嵌入页。</p></div>
+          </div>
+        </div>
+
+        <div class="visibility-section">
+          <h3>从公开情报能推断什么</h3>
+          <p>运营商、地理位置和风险是数据源的推断，不是用户的真实住址、身份或第三方平台的判定。</p>
+          <div id="visibilityCoverage"><p>等待出口情报；未获得数据前不下结论。</p></div>
+          <div class="visibility-test">
+            <div class="visibility-test-title"><h4>公开 BGP 起源历史</h4><button id="visibilityBgpGo" type="button" class="visibility-button" disabled>查前缀历史</button></div>
+            <div id="visibilityBgpResult" role="status"><p>等待可查询的公开路由前缀。</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Exit split matrix and regional comparison -->
       <div id="panelRoutes" data-wspanel="routes" hidden class="ws-panel surface-sheet rounded-2xl overflow-hidden divide-y divide-zinc-950/[0.06] dark:divide-white/[0.07]">
         <div>
           <div class="px-5 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
@@ -478,7 +570,7 @@
 
     <!-- Quiet Footer -->
     <footer class="pt-1 pb-5 text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap items-center justify-between gap-2">
-      <span>WhoProbe v7.7.4 · 被动 L3/L4 BPF 与 QUIC 嗅探 · :443 伪装验真与端口回扫 · 多源 BGP 信誉 · 191 项全栈检测</span>
+      <span>WhoProbe v7.8.0 · 网站视角 · 双栈连接与握手 · 出口情报 · 191 项探针库</span>
       <div class="flex flex-wrap items-center gap-2">
         <span>当前会话实时计算 · 零持久化日志</span>
         <span>·</span>
@@ -538,6 +630,8 @@
   <div id="globalTip" role="tooltip" hidden class="fixed z-50 max-w-xs sm:max-w-sm rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-100 shadow-xl pointer-events-none whitespace-pre-line dark:border-white/[0.12] dark:bg-zinc-900"></div>
   <div id="toastBar" hidden class="fixed bottom-5 right-5 z-50 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-950 dark:border-white"></div>
 
-  <script src="./assets/app.js?v=7.7.4"></script>
+  <script defer src="./assets/visibility-lab.js?v=7.8.0"></script>
+  <script defer src="./assets/visibility.js?v=7.8.0"></script>
+  <script defer src="./assets/app.js?v=7.8.0"></script>
 </body>
 </html>

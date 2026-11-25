@@ -44,11 +44,82 @@ if str(BASE_DIR) not in sys.path:
 
 import egress_intel  # noqa: E402
 import share_store  # noqa: E402
+import visibility  # noqa: E402
+import visibility_dns  # noqa: E402
 
-ENABLE_ACTIVE_443 = True
+ENABLE_ACTIVE_443 = False
+VISIBILITY_VIEW = visibility.View()
+DEFAULT_TRUSTED_EDGES = (ipaddress.ip_network("127.0.0.0/8"), ipaddress.ip_network("::1/128"))
+TRUSTED_EDGES = DEFAULT_TRUSTED_EDGES
+EDGE_WIRE_HEADERS = ("X-Edge-Peer-IP", "X-Edge-Peer-Port", "X-Edge-Local-IP", "X-Edge-Local-Port")
+EDGE_PROTOCOL_HEADERS = {
+    "httpVersion": "X-HTTP-Version",
+    "tlsProtocol": "X-TLS-Protocol",
+    "tlsCipher": "X-TLS-Cipher",
+    "tlsCurves": "X-TLS-Curves",
+    "tlsAlpn": "X-TLS-ALPN",
+    "tlsSessionReused": "X-TLS-Reused",
+}
+WHO_RUN_TOKEN_HEADER = "X-Who-Run-Token"
+ACTIVE_PROBE_HEADER = "X-Who-Active-Probe"
+
 SHARE_STORE: share_store.ShareStore | None = None
 _SHARE_STORE_LOCK = threading.Lock()
 _SHARE_RATE_SALT = secrets.token_hex(16)
+
+
+def _ip_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    if not isinstance(value, str) or not value or len(value) > 45 or "%" in value:
+        return None
+    try:
+        return ipaddress.ip_address(value)
+    except ValueError:
+        return None
+
+
+def _normalized_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    addr = _ip_literal(value)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    return addr
+
+
+def _parse_trusted_edge(value: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    try:
+        if "%" in value:
+            raise ValueError("scoped IP unsupported")
+        net = ipaddress.ip_network(value)
+        if isinstance(net, ipaddress.IPv6Network) and net.prefixlen >= 96:
+            mapped = net.network_address.ipv4_mapped
+            if mapped is not None:
+                return ipaddress.IPv4Network((mapped, net.prefixlen - 96))
+        return net
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected an IP address or CIDR") from exc
+
+
+def _is_trusted_edge_ip(peer_ip: str) -> bool:
+    addr = _normalized_ip(peer_ip)
+    return addr is not None and any(addr in net for net in TRUSTED_EDGES)
+
+
+TcpConnection = tuple[str, int, str, int]
+
+
+def _tcp_connection_key(peer_ip: str, peer_port: str | int,
+                        local_ip: str, local_port: str | int) -> TcpConnection | None:
+    peer, local = _normalized_ip(peer_ip), _normalized_ip(local_ip)
+    if peer is None or local is None or peer.version != local.version:
+        return None
+    if peer.is_unspecified or local.is_unspecified or peer.is_multicast or local.is_multicast:
+        return None
+    ports = (str(peer_port), str(local_port))
+    if any(not re.fullmatch(r"[0-9]{1,5}", p) for p in ports):
+        return None
+    sport, dport = map(int, ports)
+    if not (1 <= sport <= 65535 and 1 <= dport <= 65535):
+        return None
+    return str(peer), sport, str(local), dport
 
 # RFC 8701 TLS GREASE 值集合
 GREASE_VALUES = {
@@ -66,9 +137,9 @@ class TTLCache:
         self.maxsize = maxsize
         self.ttl_sec = ttl_sec
         self._lock = threading.Lock()
-        self._data: collections.OrderedDict[str, tuple[float, object]] = collections.OrderedDict()
+        self._data: collections.OrderedDict[object, tuple[float, object]] = collections.OrderedDict()
 
-    def get(self, key: str) -> object | None:
+    def get(self, key: object) -> object | None:
         now = time.monotonic()
         with self._lock:
             item = self._data.get(key)
@@ -81,7 +152,7 @@ class TTLCache:
             self._data.move_to_end(key)
             return val
 
-    def set(self, key: str, val: object, ttl_sec: float | None = None) -> None:
+    def set(self, key: object, val: object, ttl_sec: float | None = None) -> None:
         exp = time.monotonic() + (self.ttl_sec if ttl_sec is None else ttl_sec)
         with self._lock:
             if key in self._data:
@@ -90,14 +161,18 @@ class TTLCache:
             while len(self._data) > self.maxsize:
                 self._data.popitem(last=False)
 
+    def discard(self, key: object) -> None:
+        with self._lock:
+            self._data.pop(key, None)
+
 
 GEO_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
 PTR_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
+# 抓包与 TLS 桥共享同一四元组记录，更新时不得混入旧连接的数据。
 PACKET_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
-H2_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
-TLS_META_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
+_WIRE_LOCK = threading.Lock()
 TLS_PERM_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
-QUIC_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
+_TLS_PERM_LOCK = threading.Lock()
 SHARE_RATE_CACHE = TTLCache(maxsize=4096, ttl_sec=60.0)
 _GEO_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="geo")
 _SERVER_COORDS: list[float] | None = None
@@ -581,6 +656,8 @@ def parse_tls_client_hello(payload: bytes, transport_prefix: str = "t") -> dict 
     if len(payload) < 43 or payload[0] != 0x16 or payload[1] != 0x03:
         return None
     rec_len = struct.unpack("!H", payload[3:5])[0]
+    if rec_len > len(payload) - 5:
+        return None
     hs = payload[5 : 5 + rec_len]
     # HandshakeType(1)=0x01 (ClientHello), Length(3)
     if len(hs) < 38 or hs[0] != 0x01:
@@ -601,13 +678,13 @@ def parse_tls_client_hello(payload: bytes, transport_prefix: str = "t") -> dict 
     # Session ID
     sid_len = body[pos]
     pos += 1 + sid_len
-    if pos + 2 > len(body):
+    if sid_len > 32 or pos + 2 > len(body):
         return None
 
     # Cipher Suites
     cs_len = struct.unpack("!H", body[pos : pos + 2])[0]
     pos += 2
-    if pos + cs_len > len(body):
+    if cs_len < 2 or cs_len % 2 or pos + cs_len > len(body):
         return None
     raw_ciphers = [
         struct.unpack("!H", body[pos + j : pos + j + 2])[0]
@@ -620,6 +697,8 @@ def parse_tls_client_hello(payload: bytes, transport_prefix: str = "t") -> dict 
         return None
     comp_len = body[pos]
     pos += 1 + comp_len
+    if not comp_len or pos > len(body):
+        return None
 
     has_grease = any(c in GREASE_VALUES for c in raw_ciphers)
     ciphers = [c for c in raw_ciphers if c not in GREASE_VALUES]
@@ -635,13 +714,21 @@ def parse_tls_client_hello(payload: bytes, transport_prefix: str = "t") -> dict 
     sni_host = ""
     quic_tp: dict | None = None
 
-    if pos + 2 <= len(body):
+    if pos < len(body):
+        if pos + 2 > len(body):
+            return None
         ext_total = struct.unpack("!H", body[pos : pos + 2])[0]
         pos += 2
-        end_ext = min(len(body), pos + ext_total)
-        while pos + 4 <= end_ext:
+        end_ext = pos + ext_total
+        if end_ext != len(body):
+            return None
+        while pos < end_ext:
+            if pos + 4 > end_ext:
+                return None
             etype, elen = struct.unpack("!HH", body[pos : pos + 4])
             pos += 4
+            if pos + elen > end_ext:
+                return None
             edata = body[pos : pos + elen]
             pos += elen
             if etype in GREASE_VALUES:
@@ -770,38 +857,46 @@ def parse_tls_client_hello(payload: bytes, transport_prefix: str = "t") -> dict 
     }
 
 
-_TLS_PERM_LOCK = threading.Lock()
+def record_tls_hello_sample(tls_info: dict, run_token: str = "",
+                            conn_key: TcpConnection | None = None) -> dict:
+    """每轮仅汇总确切归属本轮请求的 ClientHello；没有有效 token 时不保存。"""
+    hid = tls_info.get("helloId") or ""
+    sample = {
+        "conn": conn_key,
+        "hid": hid,
+        "exts": tuple(tls_info.get("extOrder") or []),
+        "psk": bool(tls_info.get("pskPresent")),
+        "ja3": tls_info.get("ja3") or "",
+    }
+    samples = [sample] if hid else []
+    if hid and conn_key is not None and re.fullmatch(r"[0-9a-fA-F]{32}", run_token):
+        key = hashlib.sha256(bytes.fromhex(run_token)).digest()
+        with _TLS_PERM_LOCK:
+            now = time.monotonic()
+            cur = TLS_PERM_CACHE.get(key)
+            if isinstance(cur, tuple):
+                deadline, cached_samples = cur
+            else:
+                deadline, cached_samples = now + TLS_PERM_CACHE.ttl_sec, []
+            samples = cached_samples
+            if len(samples) < 6 and all(s["hid"] != hid and s["conn"] != conn_key for s in samples):
+                samples = [*samples, sample]
+                TLS_PERM_CACHE.set(key, (deadline, samples), ttl_sec=deadline - now)
 
-
-def record_tls_hello_sample(src_ip: str, tls_info: dict) -> dict:
-    """按 ClientHello.random 去重记录同一客户端的多次独立 TLS 握手，检验扩展随机洗牌与 PSK 会话恢复。"""
-    hid = str(tls_info.get("helloId") or "")
-    ext_ord = tuple(tls_info.get("extOrder") or [])
-    psk = bool(tls_info.get("pskPresent"))
-    alpn0 = (tls_info.get("alpn") or [""])[0]
-    ja3 = str(tls_info.get("ja3") or "")
-    with _TLS_PERM_LOCK:
-        cur = TLS_PERM_CACHE.get(src_ip)
-        samples: list[dict] = list(cur) if isinstance(cur, list) else []
-        if hid and all(s.get("hid") != hid for s in samples):
-            samples.append({"hid": hid, "exts": ext_ord, "psk": psk, "alpn": alpn0, "ja3": ja3})
-            if len(samples) > 6:
-                samples = samples[-6:]
-            TLS_PERM_CACHE.set(src_ip, samples)
     permuted: bool | None = None
-    if len(samples) >= 2:
-        permuted = False
-        for i in range(len(samples)):
-            for j in range(i + 1, len(samples)):
-                a, b = samples[i]["exts"], samples[j]["exts"]
-                sa, sb = set(a), set(b)
-                common_a = [x for x in a if x in sb]
-                common_b = [x for x in b if x in sa]
-                if len(common_a) >= 4 and common_a != common_b:
+    for i, left in enumerate(samples):
+        for right in samples[i + 1:]:
+            a, b = left["exts"], right["exts"]
+            sa, sb = set(a), set(b)
+            common_a = [x for x in a if x in sb]
+            common_b = [x for x in b if x in sa]
+            if len(common_a) >= 4:
+                if common_a != common_b:
                     permuted = True
                     break
-            if permuted:
-                break
+                permuted = False
+        if permuted is True:
+            break
     return {
         "samples": len(samples),
         "permuted": permuted,
@@ -847,32 +942,95 @@ def evaluate_tcp_continuity(
     return None, False, None
 
 
-def update_handshake_rtt_window(
-    prev_samples: object,
-    now_mono: float,
-    rtt_ms: float,
-    window_sec: float = 12.0,
-) -> tuple[list[tuple[float, float]], float]:
-    """
-    维护同一出口 IP 最近 window_sec 秒内的干净握手 RTT 滑动窗口并返回中位数基准。
-    避免共享 5G CGNAT 地址池跨用户历史极小值或单次空口瞬时包粘滞长达数分钟。
-    """
-    fresh: list[tuple[float, float]] = []
-    if isinstance(prev_samples, list):
-        for item in prev_samples:
-            if (
-                isinstance(item, (tuple, list))
-                and len(item) == 2
-                and isinstance(item[0], (int, float))
-                and isinstance(item[1], (int, float))
-                and 0.0 <= (now_mono - float(item[0])) <= window_sec
-            ):
-                fresh.append((float(item[0]), float(item[1])))
-    fresh.append((now_mono, rtt_ms))
-    fresh = fresh[-5:]
-    ordered = sorted(v for _, v in fresh)
-    median_rtt = ordered[len(ordered) // 2]
-    return fresh, round(median_rtt, 1)
+_CAPTURE_BYTES = 4096  # 与既有内核抓包上限一致
+_MAX_HELLO_BYTES = 8192
+_MAX_IPV6_EXT_HEADERS = 4
+_SYN_HELLO_SEC = 10.0
+_TCP_SEQUENCE_MASK = 0xFFFFFFFF
+
+
+def _parse_tcp_frame(frame: bytes, port: int) -> tuple | None:
+    """只解析 Ethernet II 上目标端口的未分片 TCP；截短的有效 IP/TCP 头与载荷分别处理。"""
+    if len(frame) < 14:
+        return None
+    ether_type = struct.unpack_from("!H", frame, 12)[0]
+    df = ip_id = None
+    if ether_type == 0x0800:
+        if len(frame) < 34 or frame[14] >> 4 != 4 or frame[23] != 6:
+            return None
+        ihl = (frame[14] & 0x0F) * 4
+        ip_len, ip_id, frag = struct.unpack_from("!HHH", frame, 16)
+        if ihl < 20 or frag & 0x3FFF:  # MF 明确拒绝：首分片也不完整
+            return None
+        version, traffic_class, limit = 4, frame[15], frame[22]
+        df = bool(frag & 0x4000)
+        peer_ip = socket.inet_ntop(socket.AF_INET, frame[26:30])
+        local_ip = socket.inet_ntop(socket.AF_INET, frame[30:34])
+        ip_end, tcp_start = 14 + ip_len, 14 + ihl
+    elif ether_type == 0x86DD:
+        if len(frame) < 54 or frame[14] >> 4 != 6:
+            return None
+        payload_len = struct.unpack_from("!H", frame, 18)[0]
+        if payload_len == 0:  # 不支持 IPv6 jumbogram
+            return None
+        version, limit = 6, frame[21]
+        traffic_class = ((frame[14] & 0x0F) << 4) | (frame[15] >> 4)
+        peer_ip = socket.inet_ntop(socket.AF_INET6, frame[22:38])
+        local_ip = socket.inet_ntop(socket.AF_INET6, frame[38:54])
+        # IPv6 link-local/ULA 与回环源不参与公网抓包；不将线上 v6 映射地址当另一条 v4 连接。
+        if frame[22] & 0xFE == 0xFC or (frame[22] == 0xFE and frame[23] & 0xC0 == 0x80):
+            return None
+        if frame[22:34] == b"\x00" * 10 + b"\xff\xff" or frame[38:50] == b"\x00" * 10 + b"\xff\xff":
+            return None
+        ip_end, tcp_start = 54 + payload_len, 54
+        frame_end = min(len(frame), ip_end)
+        proto = frame[20]
+        saw_fragment = False
+        for _ in range(_MAX_IPV6_EXT_HEADERS):
+            if proto == 6:
+                break
+            if tcp_start + 8 > frame_end:
+                return None
+            next_proto, ext_len = frame[tcp_start : tcp_start + 2]
+            if proto in (0, 43, 60):  # Hop-by-Hop / Routing / Destination Options
+                if (proto == 0 and tcp_start != 54) or (proto == 43 and frame[tcp_start + 3] != 0):
+                    return None
+                size = (ext_len + 1) * 8
+            elif proto == 44:  # 仅原子分片（offset=0 / M=0），不重组 IP
+                if saw_fragment or ext_len or frame[tcp_start + 2 : tcp_start + 4] != b"\0\0":
+                    return None
+                saw_fragment = True
+                size = 8
+            elif proto == 51 and ext_len >= 1:  # AH
+                size = (ext_len + 2) * 4
+            else:
+                return None  # ESP、无后续头或未知扩展不可作为 TCP 证据
+            if tcp_start + size > frame_end:
+                return None
+            tcp_start += size
+            proto = next_proto
+        if proto != 6:
+            return None
+    else:
+        return None
+
+    frame_end = min(len(frame), ip_end)
+    if tcp_start + 20 > frame_end or is_private_or_loopback(peer_ip):
+        return None
+    peer_port, local_port, seq = struct.unpack_from("!HHI", frame, tcp_start)
+    if local_port != port:
+        return None
+    key = _tcp_connection_key(peer_ip, peer_port, local_ip, local_port)
+    data_offset = (frame[tcp_start + 12] >> 4) * 4
+    data_start = tcp_start + data_offset
+    if key is None or data_offset < 20 or data_start > frame_end:
+        return None
+    flags = frame[tcp_start + 13]
+    window = struct.unpack_from("!H", frame, tcp_start + 14)[0]
+    return (
+        key, version, limit, traffic_class, df, ip_id, seq, flags, window,
+        frame[tcp_start + 20 : data_start], frame[data_start : frame_end], frame_end == ip_end,
+    )
 
 
 class LinuxPacketSniffer:
@@ -889,11 +1047,13 @@ class LinuxPacketSniffer:
         self.port = port
         self.active = False
         self.error: str | None = None
+        self._fragments = TTLCache(maxsize=1024, ttl_sec=4.0)
 
     def start(self) -> None:
         if not sys.platform.startswith("linux"):
             self.error = "non-linux-platform"
             return
+        sock = None
         try:
             sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
             sock.bind((self.iface, 0))
@@ -903,205 +1063,223 @@ class LinuxPacketSniffer:
             t.start()
         except Exception as exc:
             self.error = str(exc)
+            self.active = False
+            if sock is not None:
+                sock.close()
+
+    @staticmethod
+    def _bpf_instructions(port: int) -> list[tuple[int, int, int, int]]:
+        """cBPF：有界 IPv6 扩展链与 IPv4 共用 TCP 端口/载荷过滤；不退回全量抓包。"""
+        code: list[tuple[int, int | str, str, str]] = []
+        labels: dict[str, int] = {}
+
+        def mark(name: str) -> None:
+            labels[name] = len(code)
+
+        def emit(op: int, k: int | str = 0, yes: str = "", no: str = "") -> None:
+            code.append((op, k, yes, no))
+
+        emit(0x28, 12)                    # ldh [12] EtherType
+        emit(0x15, 0x0800, "ipv4")
+        emit(0x15, 0x86DD, "ipv6", "drop")
+        mark("ipv4")
+        emit(0x30, 23)                    # ldb [23] protocol
+        emit(0x15, 6, no="drop")
+        emit(0x28, 20)                    # ldh [20] flags / offset
+        emit(0x45, 0x3FFF, "drop")
+        emit(0xB1, 14)                    # ldxb 4*([14] & 0xf), X = IPv4 头长
+        emit(0x05, "tcp")                 # ja tcp
+
+        mark("ipv6")
+        emit(0x01, 40)                    # ldx #40, 相对 IP 起点的偏移
+        emit(0x30, 20)                    # ldb [20] Next Header
+        for i in range(_MAX_IPV6_EXT_HEADERS):
+            frag, ah, opts, advance = (f"{kind}{i}" for kind in ("frag", "ah", "opts", "advance"))
+            emit(0x15, 6, "tcp")
+            emit(0x15, 44, frag)
+            emit(0x15, 51, ah)
+            emit(0x15, 0, opts)
+            emit(0x15, 43, opts)
+            emit(0x15, 60, opts, "drop")
+            mark(frag)
+            emit(0x48, 16)                # ldh [x + 16] Fragment Offset / M
+            emit(0x15, 0, no="drop")
+            emit(0x50, 14)                # ldb [x + 14] Next Header
+            emit(0x02, 0)                 # st M[0]
+            emit(0x00, 8)                 # ld #8
+            emit(0x05, advance)
+            mark(ah)
+            emit(0x50, 14)
+            emit(0x02, 0)
+            emit(0x50, 15)                # ldb [x + 15] Payload Len
+            emit(0x04, 2)                 # add #2
+            emit(0x64, 2)                 # lsh #2
+            emit(0x05, advance)
+            mark(opts)
+            emit(0x50, 14)
+            emit(0x02, 0)
+            emit(0x50, 15)                # ldb [x + 15] Hdr Ext Len
+            emit(0x04, 1)
+            emit(0x64, 3)
+            mark(advance)
+            emit(0x0C)                   # add x
+            emit(0x07)                   # tax
+            emit(0x60, 0)                 # ld M[0] (Next Header)
+        emit(0x15, 6, no="drop")
+
+        mark("tcp")
+        emit(0x48, 16)                    # ldh [x + 16] TCP dst port
+        emit(0x15, port, no="drop")
+        emit(0x50, 27)                    # ldb [x + 27] TCP flags
+        emit(0x54, 0x3F)
+        emit(0x15, 2, "accept")           # SYN，允许 ECE/CWR
+        emit(0x50, 26)                    # ldb [x + 26] TCP data offset
+        emit(0x74, 2)
+        emit(0x54, 0x3C)                   # TCP 头长
+        emit(0x0C)
+        emit(0x07)
+        emit(0x48, 14)                    # ldh [x + 14] payload[0:2]，越界由内核丢弃
+        emit(0x15, 0x1703, "drop")        # 排除 TLS Application Data
+        mark("accept")
+        emit(0x06, _CAPTURE_BYTES)
+        mark("drop")
+        emit(0x06, 0)
+
+        def offset(label: str, index: int) -> int:
+            return labels[label] - index - 1 if label else 0
+
+        return [
+            (op, offset(yes, i), offset(no, i), offset(k, i) if isinstance(k, str) else k)
+            for i, (op, k, yes, no) in enumerate(code)
+        ]
 
     @classmethod
     def _attach_bpf(cls, sock: socket.socket, port: int) -> None:
-        """
-        Classic BPF 字节码 (Ethernet II + IPv4 TCP dst port == port):
-        仅放行 TCP SYN 包与非应用层密文(非 0x1703)的握手载荷(完整兼容后量子 ML-KEM 分片 ClientHello)，
-        所有纯 ACK 与 TLS Application Data (0x1703) 业务流量均在内核态直接丢弃。
-        """
-        insns = [
-            (0x28, 0, 0, 12),        #  0: ldh [12] (EtherType)
-            (0x15, 0, 18, 0x0800),   #  1: if != IPv4 -> 20 (drop)
-            (0x30, 0, 0, 23),        #  2: ldb [23] (IPv4 proto)
-            (0x15, 0, 16, 6),        #  3: if != TCP -> 20 (drop)
-            (0x28, 0, 0, 20),        #  4: ldh [20] (frag offset)
-            (0x45, 14, 0, 0x1FFF),   #  5: if fragmented -> 20 (drop)
-            (0xB1, 0, 0, 14),        #  6: ldxb 4*([14]&0xf) (X = ihl)
-            (0x48, 0, 0, 16),        #  7: ldh [x + 16] (tcp.dst_port)
-            (0x15, 0, 11, port),     #  8: if != port -> 20 (drop)
-            (0x50, 0, 0, 27),        #  9: ldb [x + 27] (tcp.flags)
-            (0x54, 0, 0, 0x3F),      # 10: and #0x3f (兼容携带 ECN ECE/CWR 的 macOS/iOS SYN)
-            (0x15, 7, 0, 0x02),      # 11: if SYN (ACK=0) -> 19 (accept)
-            (0x50, 0, 0, 26),        # 12: ldb [x + 26] (tcp data offset)
-            (0x74, 0, 0, 2),         # 13: rsh #2
-            (0x54, 0, 0, 0x3C),      # 14: and #0x3c (A = tcp_hdr_len)
-            (0x0C, 0, 0, 0),         # 15: add x (A = ihl + tcp_hdr_len)
-            (0x07, 0, 0, 0),         # 16: tax
-            (0x48, 0, 0, 14),        # 17: ldh [x + 14] (payload[0:2], 无载荷包越界自动丢弃)
-            (0x15, 1, 0, 0x1703),    # 18: if TLS AppData (0x1703) -> 20 (drop)
-            (0x06, 0, 0, 4096),      # 19: ret #4096 (accept)
-            (0x06, 0, 0, 0),         # 20: ret #0 (drop)
-        ]
-        bpf_buf = b"".join(struct.pack("HBBI", code, jt, jf, k) for code, jt, jf, k in insns)
         import ctypes
 
+        insns = cls._bpf_instructions(port)
+        bpf_buf = b"".join(struct.pack("HBBI", *insn) for insn in insns)
         c_buf = ctypes.create_string_buffer(bpf_buf)
         fprog = struct.pack("@HP", len(insns), ctypes.addressof(c_buf))
         sock.setsockopt(socket.SOL_SOCKET, cls.SO_ATTACH_FILTER, fprog)
 
-    def _loop(self, sock: socket.socket) -> None:
-        frag_cache = TTLCache(maxsize=1024, ttl_sec=5.0)
-        syn_cache = TTLCache(maxsize=4096, ttl_sec=10.0)
-        while True:
-            try:
-                pkt = sock.recv(4096)
-                now_mono = time.monotonic()
-                if len(pkt) < 54:
-                    continue
-                eth_proto = struct.unpack("!H", pkt[12:14])[0]
-                if eth_proto != 0x0800:
-                    continue
-                ip_tot_len = struct.unpack("!H", pkt[16:18])[0]
-                ihl = (pkt[14] & 0x0F) * 4
-                if ihl < 20 or len(pkt) < 14 + ihl + 20:
-                    continue
-                frame_end = min(len(pkt), 14 + ip_tot_len)
-                ip_tos = pkt[14 + 1]
-                ip_id = struct.unpack("!H", pkt[14 + 4 : 14 + 6])[0]
-                ip_flags_frag = struct.unpack("!H", pkt[14 + 6 : 14 + 8])[0]
-                df_flag = bool(ip_flags_frag & 0x4000)
-                ttl = pkt[14 + 8]
-                proto = pkt[14 + 9]
-                if proto != 6:
-                    continue
-                src_ip = socket.inet_ntoa(pkt[14 + 12 : 14 + 16])
-                if is_private_or_loopback(src_ip):
-                    continue
-
-                tcp_start = 14 + ihl
-                src_port, dst_port, tcp_seq = struct.unpack("!HHI", pkt[tcp_start : tcp_start + 8])
-                if dst_port != self.port:
-                    continue
-                data_offset = (pkt[tcp_start + 12] >> 4) * 4
-                flags = pkt[tcp_start + 13]
-                window = struct.unpack("!H", pkt[tcp_start + 14 : tcp_start + 16])[0]
-                if data_offset < 20 or frame_end < tcp_start + data_offset:
-                    continue
-
-                conn_key = f"{src_ip}:{src_port}"
-                existing = PACKET_CACHE.get(src_ip)
-                rec = dict(existing) if isinstance(existing, dict) else {}
-                prev_tcp = rec.get("tcp") if isinstance(rec.get("tcp"), dict) else {}
-
-                # 1) 纯 TCP SYN 包 (SYN=1, ACK=0，支持携带 ECN ECE/CWR)
-                if (flags & 0x3F) == 0x02:
-                    opts_raw = pkt[tcp_start + 20 : tcp_start + data_offset]
-                    opts, mss, wscale = parse_tcp_options(opts_raw)
-                    syn_tsval = extract_tcp_tsval(opts_raw)
-                    prev_syn = syn_cache.get(conn_key)
-                    if (
-                        isinstance(prev_syn, tuple)
-                        and len(prev_syn) == 6
-                        and prev_syn[1] == tcp_seq
-                    ):
-                        # 同一连接发生 TCP SYN 重传：保留首次 SYN 时间并标记重传，防止重传 SYN 刷新时间造成虚假极小握手 RTT
-                        syn_cache.set(conn_key, (prev_syn[0], tcp_seq, ttl, syn_tsval, "ts" in opts, True), ttl_sec=10.0)
-                    else:
-                        syn_cache.set(conn_key, (now_mono, tcp_seq, ttl, syn_tsval, "ts" in opts, False), ttl_sec=10.0)
-                    init_ttl = infer_initial_ttl(ttl)
-                    os_guess, os_family = guess_tcp_os(init_ttl, window, opts)
-                    prev_mono = prev_tcp.get("_rttMono")
-                    is_fresh_rtt = isinstance(prev_mono, (int, float)) and 0.0 <= (now_mono - float(prev_mono)) <= 12.0
-                    rec["tcp"] = {
-                        "observedTtl": ttl,
-                        "initialTtl": init_ttl,
-                        "hops": max(0, init_ttl - ttl),
-                        "window": window,
-                        "mss": mss,
-                        "mtu": (mss + 40) if mss else None,
-                        "tunnelGuess": infer_tunnel_from_mss(mss, ipv6=False),
-                        "wscale": wscale,
-                        "options": opts,
-                        "ja4t": build_ja4t(window, opts, mss, wscale),
-                        "osGuess": os_guess,
-                        "osFamily": os_family,
-                        "df": df_flag,
-                        "synIpId": ip_id,
-                        "helloIpId": prev_tcp.get("helloIpId"),
-                        "tos": ip_tos,
-                        "ecn": bool(flags & 0xC0) or ((ip_tos & 0x03) != 0),
-                        "synTsval": syn_tsval,
-                        "tsHz": prev_tcp.get("tsHz"),
-                        "tsNote": prev_tcp.get("tsNote"),
-                        "synSpoofSuspect": False,
-                        "handshakeRttMs": prev_tcp.get("handshakeRttMs") if is_fresh_rtt else None,
-                        "minHandshakeRttMs": prev_tcp.get("minHandshakeRttMs") if is_fresh_rtt else None,
-                        "_rttSamples": prev_tcp.get("_rttSamples") if is_fresh_rtt else [],
-                        "_rttMono": prev_mono if is_fresh_rtt else None,
-                        "capturedAt": round(time.time(), 2),
-                    }
-                    PACKET_CACHE.set(src_ip, rec)
-                    continue
-
-                # 2) TLS ClientHello 首包或后量子分片重组
-                payload = pkt[tcp_start + data_offset : frame_end]
-                if not payload:
-                    continue
-                if len(payload) >= 6 and payload[0] == 0x16 and payload[1] == 0x03 and payload[5] == 0x01:
-                    # SYN -> ClientHello 首包时间差即服务端到客户端/代理节点的真实 TCP 往返握手 RTT；
-                    # 必须校验 tcp_seq == (syn_seq + 1) & 0xFFFFFFFF 且未发生 SYN 重传，避免重传计时偏小与 5G CGNAT 跨用户串扰
-                    hello_tsval = extract_tcp_tsval(pkt[tcp_start + 20 : tcp_start + data_offset])
-                    syn_entry = syn_cache.get(conn_key)
-                    if (
-                        isinstance(syn_entry, tuple)
-                        and len(syn_entry) == 6
-                        and tcp_seq == ((syn_entry[1] + 1) & 0xFFFFFFFF)
-                    ):
-                        syn_t, _syn_seq, syn_ttl, syn_tsval, syn_had_ts, syn_retrans = syn_entry
-                        syn_cache.set(conn_key, None, ttl_sec=0.0)
-                        dt_sec = now_mono - syn_t
-                        rtt_ms = round(dt_sec * 1000.0, 1)
-                        if not syn_retrans and 0.2 <= rtt_ms <= 4000.0 and isinstance(rec.get("tcp"), dict):
-                            tcp_obj = dict(rec["tcp"])
-                            tcp_obj["handshakeRttMs"] = rtt_ms
-                            samples_win, med_rtt = update_handshake_rtt_window(
-                                tcp_obj.get("_rttSamples"), now_mono, rtt_ms, window_sec=12.0
-                            )
-                            tcp_obj["_rttSamples"] = samples_win
-                            tcp_obj["_rttMono"] = now_mono
-                            tcp_obj["minHandshakeRttMs"] = med_rtt
-                            tcp_obj["helloIpId"] = ip_id
-                            ts_hz, spoof_suspect, ts_note = evaluate_tcp_continuity(
-                                syn_ttl=syn_ttl,
-                                hello_ttl=ttl,
-                                syn_had_ts=syn_had_ts,
-                                syn_tsval=syn_tsval,
-                                hello_tsval=hello_tsval,
-                                dt_sec=dt_sec,
-                            )
-                            tcp_obj["tsHz"] = ts_hz
-                            tcp_obj["tsNote"] = ts_note
-                            tcp_obj["synSpoofSuspect"] = spoof_suspect
-                            rec["tcp"] = tcp_obj
-                            PACKET_CACHE.set(src_ip, rec)
-
-                    rec_len = struct.unpack("!H", payload[3:5])[0]
-                    if len(payload) >= 5 + rec_len:
-                        tls_info = parse_tls_client_hello(payload)
-                        if tls_info:
-                            rec["tlsClientHello"] = tls_info
-                            rec["tlsPermutation"] = record_tls_hello_sample(src_ip, tls_info)
-                            PACKET_CACHE.set(src_ip, rec)
-                    elif rec_len <= 8192:
-                        frag_cache.set(conn_key, (rec_len, payload), ttl_sec=4.0)
+    def ingest_frame(self, frame: bytes, now_mono: float | None = None) -> None:
+        capture = _parse_tcp_frame(frame, self.port)
+        if capture is None:
+            return
+        (key, version, limit, traffic, df, ip_id, seq, flags, window, opts_raw, payload, complete) = capture
+        now = time.monotonic() if now_mono is None else now_mono
+        with _WIRE_LOCK:
+            existing = PACKET_CACHE.get(key)
+            rec = dict(existing) if isinstance(existing, dict) else {}
+            syn = rec.get("_syn")
+            if (flags & 0x3F) == 0x02:
+                if (syn and syn[1] == seq and 0.0 <= now - syn[0] <= _SYN_HELLO_SEC
+                        and not rec.get("_passiveHello") and "_bridge" not in rec):
+                    if not syn[2]:
+                        # 重传不刷新首次时间或用别的 SYN 覆盖指纹。
+                        rec["_syn"] = (syn[0], seq, True)
+                        PACKET_CACHE.set(key, rec)
+                    return
+                self._fragments.discard(key)
+                opts, mss, wscale = parse_tcp_options(opts_raw)
+                initial_limit = infer_initial_ttl(limit)
+                os_guess, os_family = guess_tcp_os(initial_limit, window, opts)
+                tcp = {
+                    "ipVersion": version,
+                    "observedTtl": limit,  # 兼容旧读取方，v6 语义为 Hop Limit
+                    "initialTtl": initial_limit,
+                    "hops": max(0, initial_limit - limit),
+                    "window": window,
+                    "mss": mss,
+                    "mtu": (mss + (60 if version == 6 else 40)) if mss else None,
+                    "tunnelGuess": infer_tunnel_from_mss(mss, ipv6=(version == 6)),
+                    "wscale": wscale,
+                    "options": opts,
+                    "ja4t": build_ja4t(window, opts, mss, wscale),
+                    "osGuess": os_guess,
+                    "osFamily": os_family,
+                    "ecn": bool(flags & 0xC0) or bool(traffic & 0x03),
+                    "synTsval": extract_tcp_tsval(opts_raw),
+                    "tsHz": None,
+                    "tsNote": None,
+                    "synSpoofSuspect": False,
+                    "handshakeRttMs": None,
+                    "minHandshakeRttMs": None,
+                    "capturedAt": round(time.time(), 2),
+                }
+                if version == 4:
+                    tcp.update(df=df, synIpId=ip_id, helloIpId=None, tos=traffic)
                 else:
-                    prev = frag_cache.get(conn_key)
-                    if isinstance(prev, tuple):
-                        rec_len, buf = prev
-                        merged = buf + payload
-                        if len(merged) >= 5 + rec_len:
-                            frag_cache.set(conn_key, None, ttl_sec=0.0)
-                            tls_info = parse_tls_client_hello(merged)
-                            if tls_info:
-                                rec["tlsClientHello"] = tls_info
-                                rec["tlsPermutation"] = record_tls_hello_sample(src_ip, tls_info)
-                                PACKET_CACHE.set(src_ip, rec)
-                        elif len(merged) <= 8192:
-                            frag_cache.set(conn_key, (rec_len, merged), ttl_sec=4.0)
-            except Exception:
-                continue
+                    tcp.update(hopLimit=limit, initialHopLimit=initial_limit, trafficClass=traffic)
+                # 新 SYN 一定开启新一代，清除同四元组的旧 TLS、H2、协商元数据。
+                PACKET_CACHE.set(key, {"tcp": tcp, "_syn": (now, seq, False)})
+                return
+
+            if not (payload and (flags & 0x17) == 0x10 and syn and 0.0 <= now - syn[0] <= _SYN_HELLO_SEC):
+                return
+            if rec.get("_passiveHello"):
+                return
+            if seq == (syn[1] + 1) & _TCP_SEQUENCE_MASK:
+                if not payload.startswith(b"\x16\x03"):
+                    return
+                pref = b""
+                timing = (now, limit, ip_id, extract_tcp_tsval(opts_raw))
+            else:
+                pending = self._fragments.get(key)
+                if not isinstance(pending, tuple) or pending[0] != seq:
+                    return  # 不拼接错序、重复或有缺口的片段
+                _, pref, timing = pending
+            merged = pref + payload[:_MAX_HELLO_BYTES - len(pref)]
+            if len(merged) >= 6:
+                record_size = 5 + struct.unpack_from("!H", merged, 3)[0]
+                if merged[5] != 1 or not (43 <= record_size <= _MAX_HELLO_BYTES):
+                    self._fragments.discard(key)
+                    return
+                if len(merged) >= record_size:
+                    self._fragments.discard(key)
+                    tls = parse_tls_client_hello(merged)
+                    if tls is not None:
+                        self._store_hello(key, rec, tls, timing)
+                    return
+            if complete:
+                self._fragments.set(key, ((seq + len(payload)) & _TCP_SEQUENCE_MASK, merged, timing))
+            else:  # 抓包截短而不是正常 TCP 分段，缺失字节不可跨段补齐
+                self._fragments.discard(key)
+
+    @staticmethod
+    def _store_hello(key: TcpConnection, rec: dict, tls: dict, timing: tuple) -> None:
+        current = rec.get("tlsClientHello")
+        if isinstance(current, dict) and current.get("helloId") != tls["helloId"]:
+            return  # 已成功终止的 TLS 桥是更强的来源，不混合冲突的包观测
+        rec["tlsClientHello"] = tls
+        rec["_passiveHello"] = True
+        syn_t, _seq, retransmitted = rec["_syn"]
+        hello_t, limit, ip_id, hello_tsval = timing
+        dt_sec = hello_t - syn_t
+        rtt_ms = round(dt_sec * 1000.0, 1)
+        if not retransmitted and 0.2 <= rtt_ms <= 4000.0:
+            tcp = dict(rec["tcp"])
+            ts_hz, spoof_suspect, ts_note = evaluate_tcp_continuity(
+                syn_ttl=tcp["observedTtl"], hello_ttl=limit, syn_had_ts="ts" in tcp["options"],
+                syn_tsval=tcp["synTsval"], hello_tsval=hello_tsval, dt_sec=dt_sec,
+            )
+            tcp.update(handshakeRttMs=rtt_ms, minHandshakeRttMs=rtt_ms, tsHz=ts_hz,
+                       tsNote=ts_note, synSpoofSuspect=spoof_suspect)
+            if tcp["ipVersion"] == 4:
+                tcp["helloIpId"] = ip_id
+            rec["tcp"] = tcp
+        PACKET_CACHE.set(key, rec)
+
+    def _loop(self, sock: socket.socket) -> None:
+        try:
+            while self.active:
+                self.ingest_frame(sock.recv(_CAPTURE_BYTES))
+        except Exception as exc:
+            self.error = str(exc)
+        finally:
+            self.active = False
+            sock.close()
 
 
 SNIFFER: LinuxPacketSniffer | None = None
@@ -1329,7 +1507,7 @@ def guess_quic_stack(tls_info: dict, tp: dict) -> tuple[str, str]:
 
 
 class QUICInitialCollector:
-    """只读监听 UDP 端口（如 443），重组并解密浏览器 WebTransport / HTTP/3 QUIC Initial 首包。"""
+    """独立 UDP 监听器只解析 QUIC Initial，不完成 H3，也不关联到 HTTP 请求。"""
 
     def __init__(self, port: int = 443) -> None:
         self.port = port
@@ -1359,14 +1537,14 @@ class QUICInitialCollector:
             self.error = str(exc)
             self.active = False
 
-    def ingest_datagram(self, raw: bytes, client_ip: str) -> dict | None:
+    def ingest_datagram(self, raw: bytes, peer: tuple) -> dict | None:
         dec = decrypt_quic_initial_packet(raw)
         if dec is None:
             return None
         dcid, ver, new_segs = dec
         if not new_segs:
             return None
-        fkey = f"{client_ip}:{dcid.hex()}"
+        fkey = (peer, ver, dcid)
         prev = self._frag_cache.get(fkey)
         all_segs: list[tuple[int, bytes]] = list(prev) if isinstance(prev, list) else []
         all_segs.extend(new_segs)
@@ -1387,7 +1565,9 @@ class QUICInitialCollector:
             self._frag_cache.set(fkey, all_segs[:24], ttl_sec=5.0)
             return None
 
-        self._frag_cache.set(fkey, None, ttl_sec=0.0)
+        self._frag_cache.discard(fkey)
+        if hs_len + 4 > 0xFFFF:
+            return None
         hs_bytes = bytes(assembled[: 4 + hs_len])
         tls_rec = b"\x16\x03\x01" + struct.pack("!H", len(hs_bytes)) + hs_bytes
         tls_info = parse_tls_client_hello(tls_rec, transport_prefix="q")
@@ -1407,17 +1587,13 @@ class QUICInitialCollector:
             "paramOrder": tp.get("order") or [],
             "hasGreaseParam": bool(tp.get("hasGreaseParam")),
         }
-        QUIC_CACHE.set(client_ip, out)
         return out
 
     def _loop(self, sock: socket.socket) -> None:
         while self.active:
             try:
                 data, addr = sock.recvfrom(2048)
-                raw_ip = str(addr[0])
-                if raw_ip.startswith("::ffff:"):
-                    raw_ip = raw_ip[7:]
-                self.ingest_datagram(data, raw_ip)
+                self.ingest_datagram(data, addr)
             except Exception:
                 continue
 
@@ -1729,38 +1905,75 @@ def parse_h2_client_preface(data: bytes) -> dict | None:
     }
 
 
-def _read_proxy_protocol_v1(conn: socket.socket) -> tuple[str | None, bytes]:
-    """用 MSG_PEEK 无损读取可选的 PROXY protocol v1 首行，绝不误吞后续 TLS ClientHello 字节。"""
+def _socket_connection_key(conn: socket.socket, peer: tuple) -> TcpConnection | None:
     try:
-        peek = conn.recv(108, socket.MSG_PEEK)
+        local = conn.getsockname()
     except OSError:
-        return None, b""
-    if not peek.startswith(b"PROXY "):
-        return None, b""
-    nl = peek.find(b"\r\n")
-    if nl == -1:
-        # 再给一次短等待凑齐首行
-        time.sleep(0.01)
-        try:
-            peek = conn.recv(108, socket.MSG_PEEK)
-        except OSError:
-            return None, b""
-        nl = peek.find(b"\r\n")
-        if nl == -1:
-            return None, b""
-    line = b""
-    remain = nl + 2
-    while remain > 0:
-        chunk = conn.recv(remain)
-        if not chunk:
-            break
-        line += chunk
-        remain -= len(chunk)
-    parts = line.decode("ascii", errors="ignore").strip().split()
-    # PROXY TCP4 <src_ip> <dst_ip> <sport> <dport>
-    if len(parts) >= 6 and parts[1] in ("TCP4", "TCP6"):
-        return parts[2], line
-    return None, line
+        return None
+    if len(peer) < 2 or not isinstance(local, tuple) or len(local) < 2:
+        return None
+    return _tcp_connection_key(peer[0], peer[1], local[0], local[1])
+
+
+def _read_proxy_protocol_v1(conn: socket.socket, *, trusted_peer: bool) -> TcpConnection | None:
+    """读取受信 PROXY v1 的原始 TCP 四元组；无头或 UNKNOWN 不推断端点。"""
+    peek = conn.recv(108, socket.MSG_PEEK)
+    if not peek.startswith(b"P"):
+        return None
+    if not trusted_peer:
+        raise ValueError("untrusted PROXY preface")
+    # 已缓冲的完整行只读一次；分段时逐字节读并遵守同一个 deadline，不吞 TLS 数据。
+    end = peek.find(b"\r\n")
+    first_read = end + 2 if end >= 0 else len(peek)
+    line = bytearray()
+    timeout = conn.gettimeout()
+    deadline = time.monotonic() + (timeout or 8.0)
+    try:
+        while len(line) < 108 and not line.endswith(b"\r\n"):
+            remain = deadline - time.monotonic()
+            if remain <= 0:
+                raise TimeoutError("incomplete PROXY line")
+            conn.settimeout(remain)
+            chunk = conn.recv(max(1, first_read - len(line)))
+            if not chunk:
+                break
+            line.extend(chunk)
+    finally:
+        conn.settimeout(timeout)
+    if not line.endswith(b"\r\n"):
+        raise ValueError("incomplete PROXY line")
+    parts = line[:-2].decode("ascii").split(" ")
+    if len(parts) >= 2 and parts[:2] == ["PROXY", "UNKNOWN"]:
+        return None
+    if len(parts) != 6 or parts[0] != "PROXY" or parts[1] not in ("TCP4", "TCP6"):
+        raise ValueError("invalid PROXY TCP line")
+    _, family, peer_ip, local_ip, peer_port, local_port = parts
+    peer, local = _ip_literal(peer_ip), _ip_literal(local_ip)
+    version = int(family[-1])
+    if peer is None or local is None or peer.version != version or local.version != version:
+        raise ValueError("invalid PROXY address family")
+    key = _tcp_connection_key(peer_ip, peer_port, local_ip, local_port)
+    if key is None:
+        raise ValueError("invalid PROXY TCP endpoints")
+    return key
+
+
+def _proxy_v1_line(key: TcpConnection | None) -> bytes:
+    if key is None:
+        return b"PROXY UNKNOWN\r\n"
+    peer, sport, local, dport = key
+    family = "TCP6" if ":" in peer else "TCP4"
+    return f"PROXY {family} {peer} {local} {sport} {dport}\r\n".encode("ascii")
+
+
+def _socket_tls_meta(ssock: ssl.SSLSocket) -> dict:
+    cipher = ssock.cipher()
+    return {
+        "tlsProtocol": ssock.version() or "",
+        "tlsCipher": cipher[0] if cipher else "",
+        "tlsAlpn": ssock.selected_alpn_protocol() or "",
+        "tlsSessionReused": "r" if ssock.session_reused else ".",
+    }
 
 
 class TLSBridgeServer:
@@ -1808,7 +2021,8 @@ class TLSBridgeServer:
 
     def start(self) -> None:
         try:
-            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            family = socket.AF_INET6 if ":" in self.listen_host else socket.AF_INET
+            srv = socket.socket(family, socket.SOCK_STREAM)
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             srv.bind((self.listen_host, self.listen_port))
             srv.listen(256)
@@ -1842,56 +2056,39 @@ class TLSBridgeServer:
         conn.settimeout(8.0)
         ssock: ssl.SSLSocket | None = None
         up: socket.socket | None = None
+        key = None
+        owner = object()
         try:
-            pp_ip, pp_line = _read_proxy_protocol_v1(conn)
-            client_ip = pp_ip or str(addr[0])
-            if not pp_line and self.upstream_proxy_protocol:
-                if ":" in client_ip:
-                    pp_line = f"PROXY TCP6 {client_ip} ::1 {addr[1]} {self.listen_port}\r\n".encode("ascii")
-                else:
-                    pp_line = f"PROXY TCP4 {client_ip} 127.0.0.1 {addr[1]} {self.listen_port}\r\n".encode("ascii")
+            trusted = _is_trusted_edge_ip(addr[0])
+            key = _read_proxy_protocol_v1(conn, trusted_peer=trusted)
+            if not trusted:
+                key = _socket_connection_key(conn, addr)
 
-            # 在 wrap_socket 消费前无损窥探明文 TLS ClientHello，用于跨连接扩展洗牌验真与容器环境兜底
-            try:
-                ch_peek = conn.recv(4096, socket.MSG_PEEK)
+            # 先无损窥探，TLS 成功前不发布任何观测；缺原始端点时仍正常转发。
+            ti = None
+            if key is not None:
+                ch_peek = conn.recv(_CAPTURE_BYTES, socket.MSG_PEEK)
                 if len(ch_peek) >= 5 and ch_peek[0] == 0x16:
-                    need = 5 + struct.unpack("!H", ch_peek[3:5])[0]
-                    if len(ch_peek) < need and need <= 4096:
+                    need = 5 + struct.unpack_from("!H", ch_peek, 3)[0]
+                    if len(ch_peek) < need <= _CAPTURE_BYTES:
                         time.sleep(0.012)
-                        ch_peek = conn.recv(4096, socket.MSG_PEEK)
+                        ch_peek = conn.recv(_CAPTURE_BYTES, socket.MSG_PEEK)
                     ti = parse_tls_client_hello(ch_peek)
-                    if ti:
-                        prev_pkt = PACKET_CACHE.get(client_ip)
-                        rec_pkt = dict(prev_pkt) if isinstance(prev_pkt, dict) else {}
-                        rec_pkt["tlsClientHello"] = ti
-                        rec_pkt["tlsPermutation"] = record_tls_hello_sample(client_ip, ti)
-                        PACKET_CACHE.set(client_ip, rec_pkt)
-            except Exception:
-                pass
 
             ssock = self._ctx.wrap_socket(conn, server_side=True)
-            alpn = ssock.selected_alpn_protocol() or "http/1.1"
-            ciph = ssock.cipher()
-            existing_h2 = H2_CACHE.get(client_ip)
-            has_valid_h2 = isinstance(existing_h2, dict) and existing_h2.get("h2Used") is True
-            if alpn == "h2" or not has_valid_h2:
-                TLS_META_CACHE.set(
-                    client_ip,
-                    {
-                        "httpVersion": "HTTP/2.0" if alpn == "h2" else "HTTP/1.1",
-                        "tlsProtocol": ssock.version() or "",
-                        "tlsCipher": ciph[0] if ciph else "",
-                        "tlsAlpn": alpn,
-                        "tlsSessionReused": "r" if getattr(ssock, "session_reused", False) else ".",
-                    },
-                )
-            if alpn != "h2" and not has_valid_h2:
-                H2_CACHE.set(client_ip, {"h2Used": False, "alpn": alpn})
+            meta = _socket_tls_meta(ssock)
+            alpn = meta["tlsAlpn"]
+            if alpn == "h2":
+                meta["httpVersion"] = "HTTP/2.0"
+            elif alpn == "http/1.1":
+                meta["httpVersion"] = "HTTP/1.1"
+            if key is not None:
+                self._publish_handshake(key, owner, meta, ti)
 
             target = self.h2c_backend if alpn == "h2" else self.h1_backend
             up = socket.create_connection(target, timeout=5.0)
-            if self.upstream_proxy_protocol and pp_line:
-                up.sendall(pp_line)
+            if self.upstream_proxy_protocol:
+                up.sendall(_proxy_v1_line(key))
 
             ssock.settimeout(65.0)
             up.settimeout(65.0)
@@ -1915,23 +2112,24 @@ class TLSBridgeServer:
             t_rev.start()
 
             preface_buf = bytearray()
-            done_h2 = alpn != "h2"
+            done_h2 = alpn != "h2" or key is None
             while True:
                 chunk = ssock.recv(16384)
                 if not chunk:
                     break
-                if not done_h2:
+                if not done_h2 and key is not None:
                     take = min(len(chunk), 8192 - len(preface_buf))
                     if take > 0:
                         preface_buf.extend(chunk[:take])
                     parsed = parse_h2_client_preface(bytes(preface_buf))
                     if parsed is not None:
-                        # 必须在转发给 Nginx 之前写入缓存，确保首个 /api/who/me 请求零竞态读到指纹
-                        H2_CACHE.set(client_ip, parsed)
+                        # 在转发首个 HTTP 请求前发布，且旧桥任务不能改写新连接。
+                        self._publish_h2(key, owner, parsed)
                         if parsed.get("pseudoOrder"):
                             done_h2 = True
-                    if len(preface_buf) >= 8192:
+                    if done_h2 or len(preface_buf) >= 8192:
                         done_h2 = True
+                        preface_buf.clear()
                 up.sendall(chunk)
             try:
                 up.shutdown(socket.SHUT_WR)
@@ -1941,12 +2139,42 @@ class TLSBridgeServer:
         except Exception:
             pass
         finally:
+            if key is not None:
+                with _WIRE_LOCK:
+                    rec = PACKET_CACHE.get(key)
+                    if isinstance(rec, dict) and rec.get("_bridge") is owner:
+                        PACKET_CACHE.discard(key)
             for s in (up, ssock, conn):
                 if s is not None:
                     try:
                         s.close()
                     except Exception:
                         pass
+
+    @staticmethod
+    def _publish_handshake(key: TcpConnection, owner: object, meta: dict, tls: dict | None) -> None:
+        with _WIRE_LOCK:
+            previous = PACKET_CACHE.get(key)
+            rec = dict(previous) if isinstance(previous, dict) else {}
+            syn = rec.get("_syn")
+            captured_hello = rec.get("tlsClientHello")
+            if ("_bridge" in rec or not syn or not (0.0 <= time.monotonic() - syn[0] <= _SYN_HELLO_SEC)
+                    or (tls and captured_hello and tls["helloId"] != captured_hello["helloId"])):
+                # 相同四元组可能被复用；只有本次新 SYN / 一致的旁路 ClientHello 可保留。
+                rec = {}
+            rec.update(_bridge=owner, connection=meta)
+            if tls is not None:
+                rec["tlsClientHello"] = tls
+            if meta["tlsAlpn"] != "h2":
+                rec["http2"] = {"h2Used": False, "alpn": meta["tlsAlpn"]}
+            PACKET_CACHE.set(key, rec)
+
+    @staticmethod
+    def _publish_h2(key: TcpConnection, owner: object, h2: dict) -> None:
+        with _WIRE_LOCK:
+            rec = PACKET_CACHE.get(key)
+            if isinstance(rec, dict) and rec.get("_bridge") is owner:
+                PACKET_CACHE.set(key, {**rec, "http2": h2})
 
 
 # 浏览器原生从不发送、只会由中间层（HTTPS 解密代理 / 企业网关 / 杀软 Web 防护 / CDN Worker 反代）注入的转发头
@@ -2037,26 +2265,87 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             extra_headers=extra_headers,
         )
 
+    def _single_header(self, name: str) -> str:
+        values = self.headers.get_all(name, ())
+        if len(values) != 1 or len(values[0]) > 1024 or "\n" in values[0] or "\r" in values[0]:
+            return ""
+        return values[0].strip()
+
+    def _is_trusted_edge(self) -> bool:
+        """只检查实际后端 TCP peer，绝不用请求头校验其自身来源。"""
+        return _is_trusted_edge_ip(self.client_address[0])
+
+    def _observed_wire_key(self) -> TcpConnection | None:
+        """返回访客到观测入口的 (peer IP, peer port, local IP, local port)，仅内部使用。"""
+        if self._is_trusted_edge():
+            return _tcp_connection_key(*(self._single_header(header) for header in EDGE_WIRE_HEADERS))
+        return _socket_connection_key(self.connection, self.client_address)
+
+    def _trusted_real_ip(self) -> str:
+        if not self._is_trusted_edge():
+            return ""
+        key = self._observed_wire_key()
+        if key is not None:
+            return key[0]
+        addr = _normalized_ip(self._single_header("X-Real-IP"))
+        return str(addr) if addr is not None and not (addr.is_unspecified or addr.is_multicast) else ""
+
     def _origin_and_base(self, mounted_under_who: bool) -> tuple[str, str]:
-        proto = (self.headers.get("X-Forwarded-Proto") or "http").split(",")[0].strip() or "http"
+        connection_proto = "https" if isinstance(self.connection, ssl.SSLSocket) else "http"
+        forwarded = self._single_header("X-Forwarded-Proto") if self._is_trusted_edge() else ""
+        proto = forwarded if forwarded in ("http", "https") else connection_proto
         host = (self.headers.get("Host") or "localhost").strip()
         base_href = "/who/" if mounted_under_who else "/"
         origin_prefix = f"{proto}://{host}{'/who' if mounted_under_who else ''}"
         return origin_prefix, base_href
 
     def _extract_client_ip(self) -> str:
-        xri = (self.headers.get("X-Real-IP") or "").strip()
-        cf_ip = (self.headers.get("CF-Connecting-IP") or "").strip()
-        if cf_ip and xri and is_cloudflare_edge_ip(xri):
-            norm_cf, _ = egress_intel.normalize_public_ip(cf_ip)
+        real_ip = self._trusted_real_ip()
+        if real_ip and is_cloudflare_edge_ip(real_ip):
+            norm_cf, _ = egress_intel.normalize_public_ip(self._single_header("CF-Connecting-IP"))
             if norm_cf:
                 return norm_cf
-        if xri:
-            return xri
-        xff = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        if xff:
-            return xff
-        return self.client_address[0]
+        addr = _normalized_ip(self.client_address[0])
+        return real_ip or (str(addr) if addr is not None else self.client_address[0])
+
+    def _observed_connection(self) -> tuple[dict, dict]:
+        """返回当前请求关联的连接协商与包观测；缺测为 null/空串，无 IP 回退。"""
+        trusted = self._is_trusted_edge()
+        key = self._observed_wire_key()
+        ingress_proto = self._single_header("X-HTTP-Version") if trusted else ""
+        ingress_alpn = self._single_header("X-TLS-ALPN") if trusted else ""
+        # TCP/UDP can reuse the same tuple. A CDN's connection to this origin
+        # also must not be reported as the forwarded browser's wire evidence.
+        browser_tcp = key is not None and not (ingress_proto.upper().startswith("HTTP/3") or ingress_alpn.startswith("h3"))
+        browser_tcp = browser_tcp and (not trusted or self._extract_client_ip() == key[0])
+        record = PACKET_CACHE.get(key) if browser_tcp else None
+        rec = record if isinstance(record, dict) else {}
+        conn = dict.fromkeys(EDGE_PROTOCOL_HEADERS, "")
+        conn["source"] = "unknown"
+        if key is not None and trusted:
+            conn["source"] = "trusted-edge"
+            bridge_meta = rec.get("connection") or {}
+            for field, header in EDGE_PROTOCOL_HEADERS.items():
+                conn[field] = bridge_meta[field] if field in bridge_meta else self._single_header(header)
+            conn["httpVersion"] = self._single_header("X-HTTP-Version") or conn["httpVersion"]
+        elif key is not None:
+            conn["source"] = "direct"
+            conn["httpVersion"] = self.request_version
+            if isinstance(self.connection, ssl.SSLSocket):
+                conn.update(_socket_tls_meta(self.connection))
+
+        tls_hello = rec.get("tlsClientHello")
+        return conn, {
+            "snifferActive": bool(SNIFFER and SNIFFER.active),
+            "tlsBridgeActive": bool(TLS_BRIDGE and TLS_BRIDGE.active),
+            "quicCollectorActive": bool(QUIC_COLLECTOR and QUIC_COLLECTOR.active),
+            "tcp": rec.get("tcp"),
+            "tlsClientHello": tls_hello,
+            "tlsPermutation": record_tls_hello_sample(tls_hello, self._single_header(WHO_RUN_TOKEN_HEADER), key)
+            if isinstance(tls_hello, dict) else None,
+            "http2": rec.get("http2"),
+            "quic": None,  # 独立 UDP Initial 解析没有 HTTP 请求归属
+        }
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
@@ -2072,6 +2361,9 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/who/"):
             path = path[4:]  # "/who/" -> "/", "/who/assets/..." -> "/assets/..."
+
+        if VISIBILITY_VIEW.handle_get(self, path, parsed):
+            return
 
         origin_prefix, base_href = self._origin_and_base(mounted_under_who)
 
@@ -2141,24 +2433,16 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/who/quic":
-            client_ip = self._extract_client_ip()
-            q_info = QUIC_CACHE.get(client_ip)
             self._send_json({
                 "ok": True,
                 "collectorActive": bool(QUIC_COLLECTOR and QUIC_COLLECTOR.active),
-                "quic": q_info if isinstance(q_info, dict) else None,
+                "quic": None,  # 旁路 UDP 监听不会完成 H3，无可验证的 HTTP 请求关联
             })
             return
 
         if path == "/api/who/tls2":
-            client_ip = self._extract_client_ip()
-            pkt_data = PACKET_CACHE.get(client_ip)
-            perm = pkt_data.get("tlsPermutation") if isinstance(pkt_data, dict) else None
-            if perm is None:
-                cur = TLS_PERM_CACHE.get(client_ip)
-                samples = list(cur) if isinstance(cur, list) else []
-                perm = {"samples": len(samples), "permuted": None, "pskSeen": any(s.get("psk") for s in samples), "distinctJa3": len({s.get("ja3") for s in samples})}
-            self._send_json({"ok": True, "tlsPermutation": perm})
+            _, packet = self._observed_connection()
+            self._send_json({"ok": True, "tlsPermutation": packet["tlsPermutation"]})
             return
 
         if path == "/api/who/ws-ping":
@@ -2230,15 +2514,19 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
 
         # 1b) 深度出口情报、BGP/ASN 租赁核验、同段脏邻居与 :443 Reality 反向验真接口
         if path == "/api/who/intel":
-            qs = urllib.parse.parse_qs(parsed.query)
+            qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             req_ip = (qs.get("ip") or [""])[0].strip()
-            target_ip = req_ip or self._extract_client_ip()
-            is_self_query = not bool(req_ip) or (target_ip == self._extract_client_ip())
-            # 端口回扫仅针对访客自身出口执行，杜绝把本站当作任意 IP 的端口扫描器
+            client_ip = self._extract_client_ip()
+            target_ip = req_ip or client_ip
+            target_public, _ = egress_intel.normalize_public_ip(target_ip)
+            client_public, _ = egress_intel.normalize_public_ip(client_ip)
+            is_self_query = not req_ip or (target_public is not None and target_public == client_public)
+            # 任意 ?ip（即使等于访客）只查被动情报；主动探测必须为双方显式同意的原始对端。
+            wire_key = self._observed_wire_key() if ENABLE_ACTIVE_443 and "ip" not in qs else None
+            active = bool(not self._head_only and wire_key and target_public == wire_key[0]
+                          and self._single_header(ACTIVE_PROBE_HEADER) == "1")
             intel_payload = egress_intel.inspect_ip_intelligence(
-                target_ip,
-                enable_active_443=ENABLE_ACTIVE_443,
-                enable_port_scan=ENABLE_ACTIVE_443 and is_self_query,
+                target_ip, enable_active_443=active, enable_port_scan=active,
             )
             intel_payload["isSelfEgress"] = is_self_query
             self._send_json(intel_payload)
@@ -2297,43 +2585,23 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         # 3) 主服务端观测接口
         if path in ("/api/who/me", "/api/inspect"):
             client_ip = self._extract_client_ip()
-            xri_peer = (self.headers.get("X-Real-IP") or "").strip()
+            xri_peer = self._trusted_real_ip()
+            trusted_cf = bool(xri_peer and is_cloudflare_edge_ip(xri_peer))
             internal_hdrs = {
-                "x-real-ip", "x-forwarded-for", "x-forwarded-proto",
-                "x-tls-protocol", "x-tls-cipher", "x-tls-curves",
-                "x-tls-alpn", "x-tls-reused", "x-http-version", "connection",
+                "x-real-ip", "x-forwarded-for", "x-forwarded-proto", "connection",
+                WHO_RUN_TOKEN_HEADER.lower(), ACTIVE_PROBE_HEADER.lower(),
+                *(name.lower() for name in EDGE_WIRE_HEADERS),
+                *(name.lower() for name in EDGE_PROTOCOL_HEADERS.values()),
             }
-            if xri_peer and is_cloudflare_edge_ip(xri_peer):
+            if trusted_cf:
                 internal_hdrs.update({"cf-connecting-ip", "cf-ray", "cf-ipcountry", "cf-visitor", "cdn-loop"})
             header_order = [
                 k for k, _ in self.headers.items() if k.lower() not in internal_hdrs
             ]
-            visible_headers = {
-                k.lower(): v
-                for k, v in self.headers.items()
-                if k.lower() not in internal_hdrs and k.lower() != "cookie"
-            }
+            visible_headers = visibility.legacy_header_values(self.headers, exclude=internal_hdrs)
 
-            tls_meta = TLS_META_CACHE.get(client_ip)
-            tm = tls_meta if isinstance(tls_meta, dict) else {}
-            nginx_conn = {
-                "httpVersion": self.headers.get("X-HTTP-Version") or tm.get("httpVersion") or self.request_version,
-                "tlsProtocol": self.headers.get("X-TLS-Protocol") or tm.get("tlsProtocol") or "",
-                "tlsCipher": self.headers.get("X-TLS-Cipher") or tm.get("tlsCipher") or "",
-                "tlsCurves": self.headers.get("X-TLS-Curves") or "",
-                "tlsAlpn": self.headers.get("X-TLS-ALPN") or tm.get("tlsAlpn") or "",
-                "tlsSessionReused": self.headers.get("X-TLS-Reused") or tm.get("tlsSessionReused") or "",
-            }
-
-            pkt_data = PACKET_CACHE.get(client_ip)
-            low_level = pkt_data if isinstance(pkt_data, dict) else {}
-            h2_data = H2_CACHE.get(client_ip)
-            h2_info = h2_data if isinstance(h2_data, dict) else None
-            proxy_hdrs = detect_proxy_headers(
-                self.headers,
-                real_ip=xri_peer,
-                trusted_cf=bool(xri_peer and is_cloudflare_edge_ip(xri_peer)),
-            )
+            connection, packet = self._observed_connection()
+            proxy_hdrs = detect_proxy_headers(self.headers, real_ip=xri_peer, trusted_cf=trusted_cf)
 
             geo = lookup_ip_geo(client_ip)
             self._send_json({
@@ -2343,17 +2611,8 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 "clientIp": client_ip,
                 "ipVersion": 6 if ":" in client_ip else 4,
                 "geo": geo,
-                "connection": nginx_conn,
-                "packet": {
-                    "snifferActive": bool(SNIFFER and SNIFFER.active),
-                    "tlsBridgeActive": bool(TLS_BRIDGE and TLS_BRIDGE.active),
-                    "quicCollectorActive": bool(QUIC_COLLECTOR and QUIC_COLLECTOR.active),
-                    "tcp": low_level.get("tcp"),
-                    "tlsClientHello": low_level.get("tlsClientHello"),
-                    "tlsPermutation": low_level.get("tlsPermutation"),
-                    "http2": h2_info,
-                    "quic": QUIC_CACHE.get(client_ip),
-                },
+                "connection": connection,
+                "packet": packet,
                 "headerOrder": header_order,
                 "headers": visible_headers,
                 "proxyHeaders": proxy_hdrs,
@@ -2377,6 +2636,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                     base_href=base_href,
                     origin_prefix=origin_prefix,
                 )
+                body = visibility.inject_receipt(body, VISIBILITY_VIEW.receipt(self, parsed, kind="navigation"))
                 self._send_bytes(
                     body,
                     "text/html; charset=utf-8",
@@ -2420,6 +2680,9 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         mounted_under_who = path.startswith("/who/")
         if mounted_under_who:
             path = path[4:]
+
+        if VISIBILITY_VIEW.handle_post(self, path):
+            return
 
         if path != "/api/who/share":
             self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
@@ -2509,8 +2772,6 @@ def run_self_test() -> None:
     summ = egress_intel._summarize_ports(two_open, 17, 5.0)
     assert summ["proxyOpen"] == [1080] and summ["remoteOpen"] == [22] and summ["synProxyLikely"] is False
     assert "198.51.100.7" not in egress_intel._clean_banner(b"SSH-2.0-OpenSSH_9.6 198.51.100.7\r\n")
-    lo_scan = egress_intel.probe_exit_ports("127.0.0.1", timeout=0.3, banner_wait=0.05)
-    assert lo_scan["probed"] is True and lo_scan["scanned"] == len(egress_intel.PROXY_SCAN_PORTS)
 
     # 1d) 校验 HTTP/2 Akamai 原始帧解析器（模拟真实 Chrome、Firefox 与 Go H2 握手首包）
     chrome_settings = struct.pack("!HIHIHIHI", 1, 65536, 2, 0, 4, 6291456, 6, 262144)
@@ -2538,23 +2799,62 @@ def run_self_test() -> None:
     csec_rfc = _hkdf_expand_label(isec_rfc, b"client in", 32)
     assert _hkdf_expand_label(csec_rfc, b"quic key", 16).hex() == "1f369613dd76d5467730efcbe3b1a22d"
     assert _hkdf_expand_label(csec_rfc, b"quic hp", 16).hex() == "9f50449e04a0e810283a1e9933adedd2"
-    p_s1 = record_tls_hello_sample("198.51.100.1", {"helloId": "aa11", "extOrder": [0, 10, 11, 13, 16, 43, 51], "pskPresent": False, "ja3": "h1"})
+    run = secrets.token_hex(16)
+    c1 = ("198.51.100.1", 50123, "203.0.113.10", 443)
+    c2 = ("198.51.100.1", 50124, "203.0.113.10", 443)
+    hello1 = {"helloId": "aa11", "extOrder": [0, 10, 11, 13, 16, 43, 51], "ja3": "h1"}
+    hello2 = {"helloId": "bb22", "extOrder": [0, 16, 51, 10, 43, 13, 11], "pskPresent": True, "ja3": "h2"}
+    p_s1 = record_tls_hello_sample(hello1, run, c1)
     assert p_s1["samples"] == 1 and p_s1["permuted"] is None
-    # 相同 helloId 重复上报（如 BPF 与 TLS 桥同时捕获同一连接）必须自动去重
-    p_dup = record_tls_hello_sample("198.51.100.1", {"helloId": "aa11", "extOrder": [0, 10, 11, 13, 16, 43, 51], "pskPresent": False, "ja3": "h1"})
-    assert p_dup["samples"] == 1
-    p_s2 = record_tls_hello_sample("198.51.100.1", {"helloId": "bb22", "extOrder": [0, 16, 51, 10, 43, 13, 11], "pskPresent": True, "ja3": "h2"})
+    assert record_tls_hello_sample(hello1, run, c1)["samples"] == 1
+    p_s2 = record_tls_hello_sample(hello2, run, c2)
     assert p_s2["samples"] == 2 and p_s2["permuted"] is True and p_s2["pskSeen"] is True
 
-    # 2) 启动临时 HTTP 服务验证所有路由（含隐私脱敏分享系统）
+    # 2) 内存中的 HTTP 请求/响应，验证路由与隐私脱敏，不监听、不连网。
+    from http.client import HTTPResponse
+    from io import BytesIO
+    from unittest.mock import patch
+
+    class MemorySocket:
+        def __init__(self, data: bytes) -> None:
+            self.incoming = BytesIO(data)
+            self.outgoing = BytesIO()
+
+        def makefile(self, _mode: str, _buffering: int = -1) -> BytesIO:
+            return self.incoming
+
+        def sendall(self, data: bytes) -> None:
+            self.outgoing.write(data)
+
+        def getsockname(self) -> tuple[str, int]:
+            return "127.0.0.1", port
+
+    port = 8899  # 虚拟端口，未绑定真实 socket
+
+    def offline_open(req: str | urllib.request.Request, **_kwargs) -> HTTPResponse:
+        if isinstance(req, str):
+            req = urllib.request.Request(req)
+        assert req.type == "http" and req.host == f"127.0.0.1:{port}", f"unexpected self-test URL: {req.full_url}"
+        method = req.get_method()
+        headers = dict(req.header_items())
+        headers.setdefault("Host", req.host)
+        if req.data is not None:
+            headers["Content-Length"] = str(len(req.data))
+        message = f"{method} {req.selector} HTTP/1.1\r\n"
+        message += "".join(f"{name}: {value}\r\n" for name, value in headers.items()) + "\r\n"
+        sock = MemorySocket(message.encode("ascii") + (req.data or b""))
+        WhoProbeHandler(sock, ("127.0.0.1", 50123), None)
+        response = HTTPResponse(MemorySocket(sock.outgoing.getvalue()), method=method)
+        response.begin()
+        return response
+
     with tempfile.TemporaryDirectory(prefix="whoprobe_test_") as tmp_dir:
-        global SHARE_STORE
-        SHARE_STORE = share_store.ShareStore(data_dir=tmp_dir)
-        server = ThreadingHTTPServer(("127.0.0.1", 0), WhoProbeHandler)
-        port = server.server_address[1]
-        t = threading.Thread(target=server.serve_forever, daemon=True)
-        t.start()
-        try:
+        with (
+            patch.object(urllib.request, "urlopen", offline_open),
+            patch(f"{__name__}.SHARE_STORE", share_store.ShareStore(data_dir=tmp_dir)),
+            patch(f"{__name__}.lookup_ip_geo", side_effect=lambda ip: {"ok": False, "ip": ip}),
+            patch(f"{__name__}.get_server_coarse_coords", return_value=None),
+        ):
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3) as r1:
                 html_doc = r1.read().decode("utf-8")
                 assert r1.status == 200 and len(html_doc) > 500
@@ -2691,15 +2991,7 @@ def run_self_test() -> None:
             assert evaluate_tcp_continuity(
                 syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=0, hello_tsval=2_850_000_000, dt_sec=0.050
             )[1] is True
-            w1, med1 = update_handshake_rtt_window([(10.0, 43.0)], 30.0, 182.0, window_sec=12.0)
-            assert len(w1) == 1 and med1 == 182.0
-            w2, med2 = update_handshake_rtt_window([(30.0, 43.0), (31.0, 179.0)], 32.0, 185.0, window_sec=12.0)
-            assert med2 == 179.0
-
-            print(f"SELF-TEST OK on 127.0.0.1:{port} | ja4t={ja4t} | etag={et1['etagId']} | share={sid}")
-        finally:
-            server.shutdown()
-            server.server_close()
+            print(f"SELF-TEST OK (offline) | ja4t={ja4t} | etag={et1['etagId']} | share={sid}")
 
 
 def _parse_host_port(spec: str, default_port: int) -> tuple[str, int]:
@@ -2708,13 +3000,17 @@ def _parse_host_port(spec: str, default_port: int) -> tuple[str, int]:
 
 
 def main() -> None:
-    global SNIFFER, TLS_BRIDGE, QUIC_COLLECTOR, ENABLE_ACTIVE_443
-    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.7)")
+    global SNIFFER, TLS_BRIDGE, QUIC_COLLECTOR, ENABLE_ACTIVE_443, TRUSTED_EDGES, VISIBILITY_VIEW
+    parser = argparse.ArgumentParser(description="WhoProbe v7.8：网站可见性、协议与出口诊断")
+    visibility.add_arguments(parser)
+    visibility_dns.add_arguments(parser)
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8899, help="监听端口 (默认 8899)")
+    parser.add_argument("--trusted-edge", action="append", type=_parse_trusted_edge, metavar="IP_OR_CIDR",
+                        help="受信即时代理来源，可重复；显式列表替代默认 127.0.0.0/8、::1")
     parser.add_argument("--sniff-iface", default="", help="可选 Linux 网卡名(如 ens5)，开启旁路 TCP SYN/JA4 抓包")
     parser.add_argument("--sniff-port", type=int, default=443, help="旁路抓包目标端口 (默认 443)")
-    parser.add_argument("--quic-port", type=int, default=0, help="可选 UDP 监听端口(如 443)，开启 RFC 9001 QUIC Initial 解密指纹")
+    parser.add_argument("--quic-port", type=int, default=0, help="可选 UDP QUIC Initial 旁路解析端口，不提供 H3 服务")
     parser.add_argument("--tls-bridge-port", type=int, default=0, help="可选本地回环 TLS+H2 帧嗅探桥端口 (如 18449)")
     parser.add_argument("--tls-cert", default="", help="TLS 桥默认证书路径 (或读取 CREDENTIALS_DIRECTORY/tls_cert)")
     parser.add_argument("--tls-key", default="", help="TLS 桥默认私钥路径 (或读取 CREDENTIALS_DIRECTORY/tls_key)")
@@ -2722,8 +3018,13 @@ def main() -> None:
     parser.add_argument("--h2c-backend", default="127.0.0.1:10082", help="解密后 HTTP/2 (h2c) 转发目标 (默认 127.0.0.1:10082)")
     parser.add_argument("--h1-backend", default="127.0.0.1:10081", help="解密后 HTTP/1.1 转发目标 (默认 127.0.0.1:10081)")
     parser.add_argument("--data-dir", default="", help="可选分享快照 SQLite 目录 (默认使用 STATE_DIRECTORY 或 ./data)")
-    parser.add_argument("--no-active-probe", action="store_true", help="禁用针对来访公网 IP 的反向 :443 TLS/Reality 验真与代理端口回扫")
-    parser.add_argument("--self-test", action="store_true", help="运行自动化自检后退出")
+    active = parser.add_mutually_exclusive_group()
+    active.add_argument("--active-probe", action="store_true",
+                        help="允许访客经 X-Who-Active-Probe: 1 同意对自身原始公网对端做回探（默认禁用）")
+    active.add_argument("--no-active-probe", dest="active_probe", action="store_false",
+                        help="禁用反向 :443 TLS/Reality 验真与代理端口回探（默认）")
+    parser.set_defaults(active_probe=False)
+    parser.add_argument("--self-test", action="store_true", help="运行离线自检后退出")
     args = parser.parse_args()
 
     if args.self_test:
@@ -2735,7 +3036,14 @@ def main() -> None:
     else:
         get_share_store()
 
-    ENABLE_ACTIVE_443 = not args.no_active_probe
+    try:
+        settings = visibility.Settings.from_args(args)
+        dns = visibility_dns.start_from_args(args)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+    VISIBILITY_VIEW = visibility.View(settings, dns)
+    ENABLE_ACTIVE_443 = args.active_probe
+    TRUSTED_EDGES = tuple(args.trusted_edge) if args.trusted_edge is not None else DEFAULT_TRUSTED_EDGES
     start_server_geo_prewarmer()
     egress_intel.start_cidr_prewarmer()
 
@@ -2745,7 +3053,7 @@ def main() -> None:
         if SNIFFER.active:
             print(f"[sniffer] 已挂载只读 BPF 探针: iface={args.sniff_iface} tcp dst port {args.sniff_port}")
         else:
-            print(f"[sniffer] 未启用旁路抓包 ({SNIFFER.error})，自动回退至 Nginx TLS 头模式")
+            print(f"[sniffer] 未启用旁路抓包 ({SNIFFER.error})；包级观测可能缺测")
 
     if args.quic_port > 0:
         QUIC_COLLECTOR = QUICInitialCollector(args.quic_port)
@@ -2793,6 +3101,10 @@ def main() -> None:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n[who-probe] 已停止。")
+    finally:
+        server.server_close()
+        if dns is not None:
+            dns.close()
 
 
 if __name__ == "__main__":

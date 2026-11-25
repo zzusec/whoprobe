@@ -24,14 +24,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Verify Python syntax & run built-in self-test suite
-        run: |
-          python3 -m py_compile probe.py egress_intel.py share_store.py
-          python3 probe.py --self-test
+      - name: Run offline backend and frontend tests
+        run: npm test
 
-      - name: Verify frontend JavaScript syntax & probe catalog integrity
+      - name: Verify frontend probe catalog integrity
         run: |
-          node --check static/app.js
           python3 -c '
           from pathlib import Path
           import re
@@ -39,7 +36,7 @@ jobs:
           m = re.search(r"const SNIFFERS = \[(.*?)\n  \];", js, re.S)
           assert m, "SNIFFERS catalog not found"
           entries = re.findall(r"^\s*\[\"[a-z0-9_]+\",\s*\"[a-z]+\"", m.group(1), re.M)
-          assert len(entries) == 148, f"Expected 148 probes, got {len(entries)}"
+          assert len(entries) == 191, f"Expected 191 probes, got {len(entries)}"
           c = re.search(r"const CORE_CHECKS = \[(.*?)\n  \];", js, re.S)
           assert c, "CORE_CHECKS catalog not found"
           checks = re.findall(r"^\s*\[\"[a-z0-9_]+\"", c.group(1), re.M)

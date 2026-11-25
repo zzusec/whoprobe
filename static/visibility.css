@@ -1,0 +1,71 @@
+/* One receipt, separated by where the evidence was gathered. */
+@media (max-width: 639px) {
+  #workspaceTabs.visibility-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #workspaceTabs.visibility-tabs .ws-tab { white-space: nowrap; }
+  #workspaceTabs.visibility-tabs :is(#tabChecksBadge, #tabRoutesBadge, #probeCountBadge) { display: none; }
+}
+#tabVisibility[hidden] { display: none; }
+#panelVisibility {
+  --wp-v-ink: #172536;
+  --wp-v-paper: #fbfdff;
+  --wp-v-line: #dce5ed;
+  --wp-v-signal: #245882;
+  --wp-v-muted: #526378;
+  --wp-v-band: #eaf4fb;
+  color: var(--wp-v-ink);
+  background: var(--wp-v-paper);
+  border: 1px solid var(--wp-v-line);
+}
+.dark #panelVisibility {
+  --wp-v-ink: #e6edf4;
+  --wp-v-paper: #141b24;
+  --wp-v-line: #334254;
+  --wp-v-signal: #a4d4f9;
+  --wp-v-muted: #b4c2d3;
+  --wp-v-band: #203348;
+}
+.visibility-intro, .visibility-section { padding: 1rem clamp(1rem, 2.5vw, 1.75rem); }
+.visibility-intro { border-block-start: 4px solid var(--wp-v-signal); }
+.visibility-intro h2 { font-size: clamp(1.15rem, 2.4vw, 1.55rem); font-weight: 680; }
+.visibility-intro p, .visibility-section p { max-width: 72ch; margin-block: .35rem; color: var(--wp-v-muted); font-size: .83rem; line-height: 1.55; }
+.visibility-section { border-top: 1px solid var(--wp-v-line); }
+.visibility-section h3 { font-size: .98rem; font-weight: 660; }
+.visibility-section h4 { font-size: .86rem; font-weight: 650; }
+.visibility-intro-top, .visibility-test-title { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; justify-content: space-between; }
+.visibility-intro-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.visibility-split { display: grid; gap: 1.25rem; }
+@media (min-width: 840px) {
+  .visibility-split { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.visibility-list { margin: .4rem 0 0; }
+.visibility-row {
+  display: grid;
+  grid-template-columns: minmax(6.75rem, 34%) minmax(0, 1fr);
+  gap: .4rem .85rem;
+  border-bottom: 1px solid var(--wp-v-line);
+  align-items: baseline;
+  padding: .35rem 0;
+  font-size: .8rem;
+}
+.visibility-row dt, .visibility-row dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.visibility-row dt { color: var(--wp-v-muted); }
+.visibility-headers dd { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .74rem; }
+.visibility-details { margin-top: 1rem; }
+.visibility-details summary { cursor: pointer; width: fit-content; color: var(--wp-v-signal); font-weight: 620; font-size: .85rem; }
+.visibility-test { border-block-end: 1px solid var(--wp-v-line); padding: .82rem 0; }
+.visibility-test:last-child { padding-bottom: 0; border-bottom: 0; }
+.visibility-button, .visibility-credentials input {
+  padding: .34rem .68rem;
+  border: 1px solid var(--wp-v-line);
+  border-radius: 6px;
+  background: var(--wp-v-band);
+  color: var(--wp-v-ink);
+  font-size: .8rem;
+}
+.visibility-button:not(:disabled) { cursor: pointer; }
+.visibility-button:disabled { background: transparent; color: var(--wp-v-muted); cursor: default; }
+.visibility-button:focus-visible, .visibility-details summary:focus-visible, .visibility-credentials input:focus-visible { outline: 2px solid var(--wp-v-signal); outline-offset: 3px; }
+.visibility-credentials:not([hidden]) { display: flex; flex-wrap: wrap; gap: .45rem 1rem; margin-top: .55rem; }
+.visibility-credentials label { flex: 1 1 13rem; min-width: 0; color: var(--wp-v-muted); font-size: .8rem; }
+.visibility-credentials input { display: block; margin-top: .2rem; width: 100%; background: transparent; }
+.visibility-boundary { border-inline-start: 3px solid var(--wp-v-signal); padding-inline-start: .7rem; }

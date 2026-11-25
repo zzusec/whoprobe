@@ -1,5 +1,23 @@
 # Changelog
 
+## [v7.7.0] - 2026-11-25
+
+### Added — 9 项协议栈深水区、五界沙箱、GPU ALU 尾数与行为生物动力学探针（182 → 191 项）
+将 Cloudflare Enterprise Bot Management、Akamai `sensor_data`、TikTok `webmssdk` 与 CreepJS 最底层的传输层加密首包解密、跨连接洗牌验真及多界线程对比全量零依赖落地：
+- **RFC 9001 QUIC v1/v2 Initial 无私钥解密与 `JA4Q` 传输参数指纹 (`quicpar` · `probe.py` + `static/app.js`)**：
+  - 服务端纯 Python 标准库实现 AES-128-ECB 头部保护脱壳、AES-128-GCM 认证解密、HKDF-Expand-Label 初始密钥派生与跨 UDP 包乱序 `CRYPTO` 帧重组（完整兼容 Chrome 后量子 `X25519MLKEM768` 双包分片 `ClientHello`）。
+  - 提取 `JA4Q` (`q13...`) 与 `0x0039 quic_transport_parameters`（流控窗口、`active_connection_id_limit`、`version_information` 与 `31*N+27` GREASE 参数），精准区分 Chromium `quiche`、Firefox `neqo`、Apple `nw_quic` 与代理客户端 `quic-go`（Sing-box / Mihomo / Hysteria2 代发 UDP 时直接计入 `conn` 协议穿帮）。
+- **跨连接 TLS `ClientHello` 扩展随机洗牌与 PSK 会话恢复验真 (`tlsperm`)**：按 `ClientHello.random` 去重比对同一访客连续多次独立 TLS 握手的扩展排列顺序；自称现代 Chromium（110+ 默认每次连接随机打乱扩展顺序）却连续呈现 100% 静态雷同顺序时，直接识破静态 `JA3` / `uTLS` 模板伪造。
+- **服务端主动 RFC 6455 WebSocket `Ping → Pong` 控制帧测距 (`wsping`)**：`/api/who/ws-ping` 在握手完成后由服务端主动连发两轮 `0x89 Ping` 控制帧，测量浏览器底层 C++ 网络进程直接回传 `0x8A Pong` 的纯传输耗时（绕过后台标签页或插件对页面 JS 主线程的节流干扰），与 `HTTP RTT` 及 `TCP SYN RTT` 四维互校。
+- **WebRTC SDP `ice-ufrag` 长度与 `o=` Origin 引擎互证 (`ufrag`)**：核对 SDP Offer 的 `o=` 行（Firefox 必含 `THIS_IS_SDPARTA`，Chromium/WebKit 为 `o=-`）与 `a=ice-ufrag` 随机串长度（`libwebrtc` 恒为 4 字符，Firefox `nICEr` 恒为 8 字符），专杀跨内核套壳伪装。
+- **JS 引擎 JIT 编译预热加速曲线 (`jitwarm`)**：对比 24 组冷态解释器函数与 25,000+ 次迭代后 Maglev / TurboFan / FTL 机器码的等效执行加速倍数，结合 `WebAssembly` 可用性识别 iOS 锁定模式（Lockdown Mode）或 `--jitless` 容器沙箱。
+- **WebGL `highp` 着色器 ALU 尾数与压缩纹理硬件架构核验 (`gpufp`)**：运行自定义片元着色器提取 GPU 超越函数（`sin` / `exp2` / `atan` / `inversesqrt`）硬件舍入尾数哈希，并交叉核验压缩纹理硬件格式（Apple M/A 系必含 `ASTC`，桌面 NVIDIA/AMD 含 `S3TC`/`BPTC` 不含 `ASTC`），拆穿仅 Hook `UNMASKED_RENDERER_WEBGL` 字符串的显卡改名插件。
+- **第 4 界 `SharedWorker` 与第 5 界 `ServiceWorker` 跨界核验 (`swrealm`)**：新增同源 `/sw-probe.js`，在独立作用域 `./__wp_sw_probe__/` 即采即销（`MessageChannel` 采样后立即 `unregister()`，零页面拦截残留），比对主线程与共享/服务线程的 `UA`、`platform`、核数、时区、语言与显卡。
+- **精细行为生物动力学 (`biodyn`)**：被动统计扫描期鼠标移动速度变异系数（CV，区分真人加减速与脚本恒速线性插值）、触控板连续像素流 vs 物理滚轮 100/120px 离散步进，以及按键 `keydown→keyup` 驻留时间（`<1.5ms` 实锤脚本瞬时派发按键）。
+- **本机代理与指纹浏览器控制端口手动自检 (`localport`)**：仅在用户手动点击按钮时探测 `127.0.0.1` 常见代理口（7890/7891/9090 Clash、10808 v2rayN、1080 SOCKS、2080 Sing-box）与指纹浏览器 API 口（50325 AdsPower、54345 比特浏览器、35000 Multilogin、9222 Chrome CDP），保持首屏零本地网络权限弹窗。
+
+---
+
 ## [v7.6.0] - 2026-11-25
 
 ### Added — 攻克 HTTP/2 Akamai 原始帧指纹与无打扰启动参数副作用检测（174 → 182 项）

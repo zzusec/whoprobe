@@ -1,4 +1,4 @@
-/* WhoProbe v7.6.0 — 182-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.7.0 — 191-Probe L3–L7 Forensic, QUIC Initial JA4Q, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -41,9 +41,9 @@
   };
 
   /* ---------- Passive input-event trust recorder (armed at script load, summarized at the end of each scan) ---------- */
-  const INPUT_LOG = { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, cdpCoord: 0, ptrEvents: 0, pts: [] };
+  const INPUT_LOG = { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, cdpCoord: 0, ptrEvents: 0, pts: [], wheelDeltas: [], dwells: [], downAt: new Map() };
   function resetInputLog() {
-    Object.assign(INPUT_LOG, { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, cdpCoord: 0, ptrEvents: 0, pts: [] });
+    Object.assign(INPUT_LOG, { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, cdpCoord: 0, ptrEvents: 0, pts: [], wheelDeltas: [], dwells: [], downAt: new Map() });
   }
   (function armInputRecorder() {
     const opt = { capture: true, passive: true };
@@ -54,21 +54,37 @@
         INPUT_LOG.ptrEvents++;
         if (e.screenX === e.pageX && e.screenY === e.pageY && window.outerHeight - window.innerHeight > 1) INPUT_LOG.cdpCoord++;
       }
+      const now = performance.now();
       switch (e.type) {
         case "mousemove": {
           INPUT_LOG.moves++;
           const last = INPUT_LOG.pts[INPUT_LOG.pts.length - 1];
           if (last && (last.x !== e.clientX || last.y !== e.clientY) && e.movementX === 0 && e.movementY === 0) INPUT_LOG.zeroMove++;
-          if (INPUT_LOG.pts.length < 800) INPUT_LOG.pts.push({ x: e.clientX, y: e.clientY });
+          if (INPUT_LOG.pts.length < 800) INPUT_LOG.pts.push({ x: e.clientX, y: e.clientY, t: now });
           break;
         }
-        case "keydown": INPUT_LOG.keys++; break;
+        case "keydown":
+          INPUT_LOG.keys++;
+          if (!e.repeat && INPUT_LOG.downAt.size < 32) INPUT_LOG.downAt.set(e.code || e.key || "_", now);
+          break;
+        case "keyup": {
+          const k = e.code || e.key || "_";
+          const t0 = INPUT_LOG.downAt.get(k);
+          if (t0 != null) {
+            INPUT_LOG.downAt.delete(k);
+            if (INPUT_LOG.dwells.length < 120) INPUT_LOG.dwells.push(Math.max(0, now - t0));
+          }
+          break;
+        }
         case "mousedown": INPUT_LOG.clicks++; break;
         case "touchstart": INPUT_LOG.touches++; break;
-        case "wheel": INPUT_LOG.wheels++; break;
+        case "wheel":
+          INPUT_LOG.wheels++;
+          if (INPUT_LOG.wheelDeltas.length < 120) INPUT_LOG.wheelDeltas.push({ dy: Math.abs(e.deltaY || 0), mode: e.deltaMode || 0 });
+          break;
       }
     };
-    try { ["mousemove", "keydown", "mousedown", "touchstart", "wheel"].forEach(t => window.addEventListener(t, rec, opt)); } catch (e) {}
+    try { ["mousemove", "keydown", "keyup", "mousedown", "touchstart", "wheel"].forEach(t => window.addEventListener(t, rec, opt)); } catch (e) {}
   })();
 
   /* ---------- Complete IANA Timezone -> ISO Country Map ---------- */
@@ -163,7 +179,7 @@
   const getText = (url, ms = 5500) =>
     fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(ms) }).then(r => r.ok ? r.text() : Promise.reject(new Error(r.status)));
 
-  /* ---------- 8 Groups & 182 Genuine Probes Catalog ---------- */
+  /* ---------- 8 Groups & 191 Genuine Probes Catalog ---------- */
   const GROUPS = [
     ["net", "服务端与协议栈透视", "由服务端网卡 AF_PACKET 旁路抓包、主动 :443 反向握手与微脉冲时序直接读取，JS 插件无法伪造"],
     ["rep", "出口信誉、BGP 路由与黑名单情报", "融合 8 源欺诈库加权几率投票、RDAP 租赁/广播核验、12 项 DNSBL、15 项威胁段与同 /24 脏邻居连坐"],
@@ -175,7 +191,7 @@
     ["fp", "跨站指纹与无痕留痕追踪", "综合指纹、跨浏览器物理硬件码、无状态 ETag 缓存追踪与亚像素渲染哈希"]
   ];
 
-  // [id, group, title, maskSensitive, whyDesc] — Exactly 182 probes
+  // [id, group, title, maskSensitive, whyDesc] — Exactly 191 probes
   const SNIFFERS = [
     // Group 1: net (29)
     ["ip", "net", "当前连接出口 IP", true, "服务端 TCP Socket 与反向代理直接看到的客户端公网地址及 IP 协议版本。"],
@@ -186,6 +202,7 @@
     ["tzip", "net", "出口 IP 所属时区", false, "出口 IP 所在地理区域对应的标准 IANA 时区与当前 UTC 偏移量。"],
     ["ptr", "net", "反向 DNS 解析 (PTR)", true, "对出口 IP 进行反向域名解析得到的主机名，家宽常含 dynamic/broadband，机房常含 cloud/vps。"],
     ["tcprtt", "net", "服务端 TCP 握手 vs 浏览器 RTT", false, "服务端旁路抓包实测 SYN→ClientHello 物理握手延迟，与浏览器 HTTP 往返对比可抓出代理中转多绕的路程。"],
+    ["wsping", "net", "服务端主动控制帧 Ping 测距", false, "服务端在 WebSocket 通道主动连发 RFC 6455 Ping 控制帧，测量浏览器底层 C++ 网络进程自动回传 Pong 的纯传输耗时（绕过页面 JS 主线程节流），与 HTTP fetch 及 TCP 握手交叉核验。"],
     ["muxjitter", "net", "微脉冲粘包与多路复用抖动", false, "连续发射微间隔并发 HTTP 脉冲，对比服务端微秒级到达间隔压缩比与 RTT 抖动标准差，识别 smux/yamux/h2mux 隧道合并特征。"],
     ["clock", "net", "本机时钟与服务端偏差", false, "利用往返中点校准法测量浏览器系统时间与服务端标准时间的快慢误差。"],
     ["proto", "net", "HTTP 与 TLS 协商套件", false, "当前页面连接实际协商的 HTTP 版本、TLS 协议版本与对称加密套件。"],
@@ -195,6 +212,7 @@
     ["tunnel", "net", "链路 MTU 与 VPN 隧道特征", false, "由 TCP MSS 反推路径 MTU：1500 为标准以太网，1492 为 PPPoE，1420/1280 常为 WireGuard/TUN 隧道，>1500 为云内网巨型帧。"],
     ["ja4", "net", "TLS ClientHello 指纹 (JA4)", false, "从原始 TLS 握手首包提取加密套件、扩展与签名算法计算的行业标准 JA4 指纹。"],
     ["ja3", "net", "TLS JA3 哈希与 GREASE", false, "经典 MD5 格式 JA3 TLS 指纹，以及是否包含浏览器特有的 RFC 8701 GREASE 随机注入值。"],
+    ["tlsperm", "net", "TLS 扩展随机重排与 PSK 验真", false, "按 ClientHello.random 比对同一访客连续两次独立 TLS 握手的扩展序列：Chrome 110+ 每次连接随机洗牌扩展顺序，若连续两次扩展排列 100% 死板雷同，即暴露静态 JA3 / uTLS 伪造模板。"],
     ["tlsext", "net", "TLS 浏览器专属扩展特征", false, "检查 ALPS 应用层设置扩展与 Brotli 证书压缩扩展，真浏览器具备而 curl/Go/Python 脚本通常缺失。"],
     ["pqkex", "net", "后量子密钥交换 (PQ-KEM)", false, "检查 TLS ClientHello KeyShare 是否启用抗量子计算破解的 X25519MLKEM768 混合密钥交换。"],
     ["ech", "net", "加密 ClientHello (ECH)", false, "检查 TLS 握手是否携带 0xfe0d ECH 扩展以加密保护目标域名 SNI。"],
@@ -203,10 +221,12 @@
     ["h2fp", "net", "HTTP 请求头序签名", false, "不同浏览器内核发送请求头的先后顺序各自固定，改 UA 插件无法改变底层发包头顺序。"],
     ["h2akamai", "net", "HTTP/2 Akamai 原始帧指纹", false, "服务端在 TLS 解密首包无损解析 HTTP/2 SETTINGS 参数顺序与值、连接级 WINDOW_UPDATE 增量、流优先级与 HPACK 伪头部排列顺序（如 Chrome 为 m,a,s,p，Firefox 为 m,p,a,s，Safari 为 m,s,p,a），专抓改 UA 与 Go/Python/curl 协议库伪装。"],
     ["quicfp", "net", "HTTP/3 (QUIC / UDP 443) 探测", false, "结合边缘协商与 ResourceTiming 检测当前网络及代理链路是否放行基于 UDP 443 的 QUIC 协议。"],
+    ["quicpar", "net", "QUIC Initial 解密与传输参数 (JA4Q)", false, "触发原生 WebTransport QUIC v1 握手，服务端利用 RFC 9001 公开初始盐无私钥解密多包 CRYPTO 帧，提取 JA4Q 与 quic_transport_parameters（流控窗口、GREASE 位等），识别 Chromium quiche、Firefox neqo、Apple nw_quic 与代理 quic-go。"],
     ["dns", "net", "递归 DNS 解析器出口", true, "生成随机一次性子域名触发真实递归查询，定位替你解析域名的上游 DNS 服务器国家与运营商。"],
     ["ecs", "net", "多路递归 DNS 集群与 ECS 归属", true, "并发探测上游 DNS 集群节点并核验 EDNS Client Subnet (ECS) 子网透传及运营商同源性（本网 ISP / 公共 Anycast / 跨境泄漏）。"],
     ["webrtc", "net", "WebRTC STUN 公网地址", true, "通过 STUN 协议在 UDP 通道探测本机反射出的真实公网 IPv4/IPv6 地址，未开 TUN 的代理常在此漏底。"],
     ["rtcsdp", "net", "WebRTC SDP 协议栈与 SCTP 模板", false, "纯本地生成 RTCPeerConnection Offer SDP（不连外网），提取 ice-options、DTLS 指纹哈希算法、SCTP max-message-size 与 RTP 扩展模板签名，区分 libwebrtc、WebKit 与 Gecko 真实媒体栈。"],
+    ["ufrag", "net", "SDP ice-ufrag 长度与 Origin 引擎互证", false, "核验 SDP Offer 的 o= Origin 签名（Firefox 必含 THIS_IS_SDPARTA）与 a=ice-ufrag 随机串长度（Chromium libwebrtc 恒为 4 字符，Firefox nICEr 为 8 字符），专杀 Chromium 套壳伪装 Firefox 或 Camoufox 伪装 Chrome。"],
     ["udprtt", "net", "WebRTC UDP 握手 vs TCP 往返差", false, "对比浏览器直接发起的 STUN UDP 候选返回耗时与 HTTP TCP 热连接往返耗时，识别仅代理 TCP 或高开销 UDP-over-TCP 封装。"],
     ["lan", "net", "WebRTC 局域网地址与 mDNS", true, "读取 ICE Host 候选：现代浏览器通常用随机 .local (mDNS) 隐藏内网 IP，旧环境或特殊设置会直接暴露。"],
     ["v6mac", "net", "IPv6 物理网卡 MAC 泄露", true, "扫描所有观测到的 IPv6 地址后 64 位是否含 ff:fe (EUI-64)，一旦命中即永久暴露物理网卡 MAC。"],
@@ -273,6 +293,7 @@
     ["arch", "dev", "CPU 指令集架构与位数", false, "处理器底层架构（arm / x86）与 64/32 位运行环境。"],
     ["cpu", "dev", "CPU 逻辑核心线程数", false, "navigator.hardwareConcurrency 暴露的处理器逻辑线程数量。"],
     ["cpubench", "dev", "WASM SIMD 指令集与虚拟化抢占抖动", false, "校验真实 WebAssembly 128-bit SIMD 字节码支持度，并采样 60 组微时间片算力延迟比 (p99/p50)，捕捉云服务器/虚拟机 Hypervisor CPU Steal 毛刺。"],
+    ["jitwarm", "dev", "JS 引擎 JIT 编译预热加速曲线", false, "对比同一纯算术热函数冷态（解释器）与 15,000 次迭代后（Maglev / TurboFan / FTL 机器码）的单轮执行加速倍数，识别 iOS 锁定模式、容器禁用 JIT (W^X) 或跨架构 QEMU 转译。"],
     ["mem", "dev", "物理内存档位 (deviceMemory)", false, "Chromium 浏览器按分档上报的本机物理内存容量下限（最大封顶报 8 GB）。"],
     ["heap", "dev", "V8 单页 JS 堆内存上限", false, "performance.memory.jsHeapSizeLimit 暴露的单标签页最大可用内存（64 位桌面通常约 4.0 GB）。"],
     ["screen", "dev", "屏幕真实物理像素分辨率", false, "结合 CSS 像素与 devicePixelRatio 反算显示器面板原生物理像素（如 Mac Retina 2940×1912）。"],
@@ -286,6 +307,7 @@
     ["fontrast", "dev", "跨系统字体光栅化引擎签名", false, "分析斜线与曲线字形边缘的 RGB 彩边离差与灰阶 Gamma 分布，识破在 Linux/Windows 容器强装苹果 PingFang 字体伪装 Mac 的行为。"],
     ["gpu", "dev", "显卡真实型号与双显卡探测", false, "同时请求默认与 high-performance 上下文，挖掘核显笔记本背后隐藏的独立显卡型号及虚拟机软件渲染特征。"],
     ["glx", "dev", "WebGL 版本与纹理能力上限", false, "WebGL 1/2 支持状态、最大纹理像素尺寸及显卡驱动暴露的扩展总数。"],
+    ["gpufp", "dev", "GPU 着色器尾数与压缩纹理架构核验", false, "运行 highp 片元着色器提取 GPU ALU 超越函数硬件舍入尾数，并核对压缩纹理硬件格式（Apple M 系必含 ASTC，桌面 NVIDIA/AMD 含 S3TC/BPTC 不含 ASTC），识破仅篡改显卡名称字符串的伪装。"],
     ["webgpu", "dev", "WebGPU 高性能/低功耗双适配器", false, "读取新一代 WebGPU API 的高性能与低功耗双 Adapter 厂商、微架构与设备描述。"],
     ["gpulim", "dev", "WebGPU 硬件 Limits 特征哈希", false, "汇总 GPUAdapter 全部硬件缓冲区/计算管线上限参数与支持特性列表生成的驱动级指纹。"],
     ["audiohw", "dev", "声卡原生采样率与声道数", false, "创建静音 AudioContext 读取声卡硬件默认采样率（如 48 kHz / 44.1 kHz）与最大输出声道。"],
@@ -331,6 +353,7 @@
     ["winchrome", "brw", "窗口外框与无头渲染尺寸", false, "对比 outerWidth/outerHeight 与视口尺寸：无头 Chrome 外框为 0 或与视口完全相同，开发者工具停靠会产生异常巨大的外框差（已排除页面缩放与全屏干扰）。"],
     ["incog", "brw", "无痕 / 隐私浏览窗口识别", false, "Chromium 依据临时存储配额与 JS 堆上限比值、Safari 依据 OPFS getDirectory 异常、Firefox 依据存储 SecurityError 判断当前是否处于无痕窗口。"],
     ["input", "brw", "交互事件可信度与轨迹", false, "捕获检测期间全部鼠标 / 触摸 / 键盘事件：isTrusted=false 的合成事件直接实锤脚本操控，并统计鼠标轨迹机械直线占比（检测期间未操作属正常）。"],
+    ["biodyn", "brw", "精细行为生物动力学 (加加速度/滚轮/键驻留)", false, "分析鼠标速度变异系数与加加速度 (Jerk) 熵、区分触控板连续惯性流与机械滚轮 100/120px 离散步进，并统计按键 keydown→keyup 驻留时间（Akamai sensor_data 同款行为维度）。"],
     ["autokeys", "brw", "自动化 / 爬虫框架全局标记全量扫描", false, "扫描 Selenium / ChromeDriver($cdc_) / Watir / PhantomJS / Nightmare / Cypress / TestCafe / WebdriverIO / Playwright / Puppeteer exposeFunction / CEF / CefSharp / Awesomium / Sequentum 等 60 余个全局变量与 document 标记（BotD、PerimeterX、Akamai、TikTok 风控同款清单）。"],
     ["jsenv", "brw", "宿主运行时（Node / Electron / jsdom / WebView）", false, "检测 process / Buffer / require / global 等 Node 全局、Electron 与 NW.js、jsdom UA，以及 WKWebView / React Native / Flutter / 微信 JSBridge 等应用内容器——TikTok webmssdk 会据此区分真实浏览器与脚本宿主。"],
     ["headless", "brw", "无头浏览器渲染特征", false, "HeadlessChrome 品牌、破损图片 0×0（旧版无头）、plugins 与 PDF 查看器矛盾、connection.rtt=0、语音引擎为空、软件 GPU 与 800×600 / 1280×720 默认视口（CreepJS、Sannysoft、BotD 同款；ActiveText 系统色仅记录，现代 Chrome 已不再区分）。"],
@@ -344,10 +367,12 @@
     ["ext", "brw", "页面注入痕迹识别扩展", false, "检测加密钱包全局对象（MetaMask/OKX/Phantom/Rabby）、DevTools 钩子与翻译/暗色插件 DOM 标记。"],
     ["extwar", "brw", "Chrome 扩展公开资源扫描", false, "并发探测 36 款主流代理、改指纹、脚本管理器、钱包与密码管理扩展暴露的 chrome-extension:// 静态资源。"],
     ["worker", "brw", "Web Worker 线程交叉核验", false, "启动独立 Worker 线程读取 navigator 与时区，与主线程逐项对比，专抓只改主页面的防关联插件。"],
+    ["swrealm", "brw", "SharedWorker 与 ServiceWorker 核验", false, "并发拉起第 4 界 SharedWorker 与第 5 界 ServiceWorker（采完即注销零残留），交叉比对 UA、平台、核数、语言、时区与显卡，抓捕漏改共享/服务线程的指纹浏览器。"],
     ["iframe", "brw", "洁净 iframe 沙箱交叉核验", false, "动态创建空白同源 iframe 对照 navigator、screen 与时区读数，识别页面级浅层注入。"],
     ["lies", "brw", "52 项原生接口谎言检测", false, "利用洁净 iframe 的 Function.toString、prototype 属性检查与非法调用异常测试，抓捕被重写过的原生 API。"],
     ["shield", "brw", "防指纹护盾品牌归因", false, "根据加噪方式与特征识别 Brave Farbling、Firefox RFP、Safari 高级防追踪或第三方改指纹扩展。"],
     ["trackers", "brw", "7 大追踪器拦截实测（手动）", false, "点击按钮后向 Google Analytics、DoubleClick、Meta、Bing、TikTok、百度统计、Hotjar 发起无 Cookie 测试请求。"],
+    ["localport", "brw", "本机代理与指纹浏览器端口自检（手动）", false, "仅在手动点击时探测 127.0.0.1 上的 Clash/Mihomo (7890/7891/9090)、v2rayN (10808)、AdsPower (50325)、比特浏览器 (54345)、Multilogin (35000) 与 Chrome 调试口 (9222)，绝不自动弹窗打扰正常访客。"],
 
     // Group 8: fp (23)
     ["fpid", "fp", "跨站综合浏览器指纹 ID", false, "汇总 Canvas、WebGL、音频、字体、屏幕、时区与硬件参数生成的与 IP 无关的跨站追踪 ID。"],
@@ -1100,7 +1125,7 @@
     }
     $$("[data-ck]").forEach(el => { CHECK_EL[el.dataset.ck] = el; });
 
-    // 4. Category Tabs & 182 Sniffer Explorer Rows
+    // 4. Category Tabs & 191 Sniffer Explorer Rows
     const tabsBox = $("#groupTabs");
     if (tabsBox) {
       const counts = {};
@@ -5104,10 +5129,14 @@
     });
   }
 
-  // (17) Local-only WebRTC SDP Offer stack & DTLS/SCTP template fingerprint (zero external STUN)
+  // (17) Local-only WebRTC SDP Offer stack, DTLS/SCTP template & ice-ufrag / Origin engine cross-check
   async function probeRtcSdp() {
     const PC = window.RTCPeerConnection || window.webkitRTCPeerConnection;
-    if (typeof PC !== "function") return setNA("rtcsdp", "WebRTC 已禁用或不可用");
+    R.ufragConflict = "";
+    if (typeof PC !== "function") {
+      setNA("ufrag", "WebRTC 已禁用或不可用");
+      return setNA("rtcsdp", "WebRTC 已禁用或不可用");
+    }
     let pc = null;
     try {
       pc = new PC({ iceServers: [] });
@@ -5115,7 +5144,10 @@
       if (typeof pc.addTransceiver === "function") pc.addTransceiver("audio", { direction: "recvonly" });
       const offer = await within(pc.createOffer(), 1800, null);
       const sdp = String(offer?.sdp || "");
-      if (!sdp) return setNA("rtcsdp", "SDP Offer 为空");
+      if (!sdp) {
+        setNA("ufrag", "SDP Offer 为空");
+        return setNA("rtcsdp", "SDP Offer 为空");
+      }
       const iceOpt = ((/^a=ice-options:(.+)$/m.exec(sdp) || [])[1] || "").trim();
       const dtlsHash = ((/^a=fingerprint:(\S+)/m.exec(sdp) || [])[1] || "").trim();
       const maxMsg = ((/^a=max-message-size:(\d+)/m.exec(sdp) || [])[1] || "").trim();
@@ -5126,8 +5158,27 @@
       setProbe("rtcsdp", `${sig} · DTLS ${dtlsHash || "-"} · SCTP ${maxMsg ? Math.round(+maxMsg / 1024) + "KB" : "-"} · ${codecs.slice(0, 3).join("/")} (${extUris.length} 扩展)`, {
         why: `ice-options: ${iceOpt || "无"}\ncodecs: ${codecs.join(", ")}\nextmap: ${extUris.length} 项`
       });
+
+      const oLine = ((/^o=(.+)$/m.exec(sdp) || [])[1] || "").trim();
+      const ufragVal = ((/^a=ice-ufrag:([^\r\n]+)/m.exec(sdp) || [])[1] || "").trim();
+      const sdpMoz = /THIS_IS_SDPARTA/i.test(oLine);
+      const ulen = ufragVal.length;
+      const cb = claimedBrowser();
+      let uConflict = "";
+      if (cb === "Firefox" && (!sdpMoz || ulen === 4)) {
+        uConflict = `自称 Firefox，但 SDP 呈现 libwebrtc 特征 (Origin=${sdpMoz ? "SDPARTA" : "o=-"}, ufrag=${ulen}字符)`;
+      } else if ((cb === "Chrome" || cb === "Edge" || cb === "Opera" || cb === "Safari" || cb === "iOSWebKit") && (sdpMoz || ulen === 8)) {
+        uConflict = `自称 ${cb}，但 SDP 暴露 Firefox nICEr 媒体栈特征 (${sdpMoz ? "THIS_IS_SDPARTA" : `ufrag=${ulen}字符`})`;
+      }
+      R.ufragConflict = uConflict;
+      const engGuess = sdpMoz || ulen === 8 ? "Firefox nICEr (8字符)" : ulen === 4 ? "libwebrtc (4字符)" : `ufrag=${ulen}字符`;
+      setProbe("ufrag", uConflict ? `引擎穿帮：${uConflict}` : `${engGuess} · Origin=${sdpMoz ? "THIS_IS_SDPARTA" : "o=-"} · 与 ${cb || "当前内核"} 吻合`, {
+        tone: uConflict ? "bad" : "ok",
+        why: `o=${oLine.slice(0, 72)}\na=ice-ufrag:${ufragVal} (长度 ${ulen})`
+      });
     } catch (e) {
       setNA("rtcsdp", "SDP 协商受限");
+      setNA("ufrag", "SDP 协商受限");
     } finally {
       try { pc && pc.close(); } catch (e) {}
     }
@@ -5177,6 +5228,404 @@
     setProbe("stackfmt", conflict || `堆栈语法为 ${stackEng} 格式 · captureStackTrace=${hasCapture ? "支持" : "无"}`, {
       tone: conflict ? "bad" : "ok"
     });
+  }
+
+  /* ---------- v7.7 Deep Protocol, QUIC Initial JA4Q, GPU ALU & Multi-Worker Probes ---------- */
+
+  // (20) Server-initiated RFC 6455 WebSocket 0x89 Ping -> 0x8A Pong control-frame RTT
+  async function probeWsPing() {
+    if (typeof WebSocket !== "function") {
+      R.wsPingRtt = null;
+      return setNA("wsping", "WebSocket 不可用");
+    }
+    const wsUrl = new URL("./api/who/ws-ping", location.href);
+    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+    wsUrl.searchParams.set("t", String(Date.now()));
+    let data = null;
+    try {
+      data = await new Promise(resolve => {
+        let settled = false;
+        const done = v => { if (!settled) { settled = true; clearTimeout(tm); resolve(v); } };
+        const ws = new WebSocket(wsUrl.href);
+        const tm = setTimeout(() => { try { ws.close(); } catch (e) {} done(null); }, 4200);
+        ws.onmessage = ev => {
+          try { done(JSON.parse(ev.data)); } catch (e) { done(null); }
+          try { ws.close(); } catch (e) {}
+        };
+        ws.onerror = () => done(null);
+        ws.onclose = () => done(null);
+      });
+    } catch (e) {}
+    const rtt = data?.wsPingRttMs;
+    if (rtt == null) {
+      R.wsPingRtt = null;
+      return setNA("wsping", "网关未透传 WebSocket Upgrade 或连接受限");
+    }
+    const wsMs = Math.max(1, Math.round(rtt));
+    R.wsPingRtt = wsMs;
+    const cmpParts = [`控制帧 Pong ${wsMs} ms`];
+    let tone = "ok";
+    if (R.httpRtt != null) {
+      const gap = Math.round(R.httpRtt - wsMs);
+      cmpParts.push(`HTTP ${R.httpRtt} ms`);
+      if (gap >= 85) {
+        cmpParts.push(`JS 主线程延迟 +${gap} ms`);
+        tone = "warn";
+      }
+    }
+    if (R.srvTcpRtt != null) {
+      const relay = wsMs - R.srvTcpRtt;
+      cmpParts.push(`TCP 握手 ${R.srvTcpRtt} ms`);
+      if (relay >= 95) {
+        cmpParts.push(`代理多绕 +${relay} ms`);
+        tone = "bad";
+      } else if (relay >= 45 && tone === "ok") {
+        tone = "warn";
+      }
+    }
+    setProbe("wsping", cmpParts.join(" · "), {
+      tone,
+      why: `服务端 RFC 6455 0x89 Ping → 0x8A Pong 两轮实测: ${(data.samples || []).map(x => x + "ms").join(", ")}`
+    });
+  }
+
+  // (21) Cross-connection TLS ClientHello extension permutation & PSK resumption check
+  async function probeTlsPerm() {
+    R.tlsStaticPerm = false;
+    let perm = R.srv?.packet?.tlsPermutation || null;
+    if (!perm || (perm.samples || 0) < 2) {
+      const r2 = await getJSON(`./api/who/tls2?t=${Date.now()}`, 3500, "include").catch(() => null);
+      if (r2?.tlsPermutation) perm = r2.tlsPermutation;
+    }
+    const cnt = perm?.samples || 0;
+    if (!perm || cnt === 0) {
+      return setNA("tlsperm", location.protocol === "https:" ? "连接复用未捕获新 ClientHello" : "明文 HTTP 未经 TLS 握手（线上 HTTPS 自动核验）");
+    }
+    if (cnt < 2 || perm.permuted == null) {
+      return setProbe("tlsperm", `已捕获 1 次握手${perm.pskSeen ? " (含 PSK 会话票据)" : ""} · 点击「重新检测」比对二次扩展洗牌`, { tone: "neutral" });
+    }
+    const claimedChrome = +((/Chrome\/(\d+)/.exec(navigator.userAgent) || [])[1] || 0);
+    const shouldPermute = R.engine === "V8" && claimedChrome >= 112;
+    const staticAnomaly = shouldPermute && perm.permuted === false;
+    R.tlsStaticPerm = staticAnomaly;
+    const pskTxt = perm.pskSeen ? "PSK 会话恢复正常" : "无 PSK 票据";
+    if (staticAnomaly) {
+      setProbe("tlsperm", `静态模板异常：连续 ${cnt} 次独立握手扩展排列 100% 雷同（Chrome 110+ 必随机洗牌）`, {
+        tone: "bad",
+        why: `独立握手数: ${cnt} · 不同 JA3 哈希数: ${perm.distinctJa3 || 1} · ${pskTxt}`
+      });
+    } else if (perm.permuted) {
+      setProbe("tlsperm", `扩展随机洗牌已验证（${cnt} 次握手产生 ${perm.distinctJa3 || 2} 种 JA3 · ${pskTxt}）`, { tone: "ok" });
+    } else {
+      setProbe("tlsperm", `${cnt} 次握手扩展顺序固定（符合 ${claimedBrowser() || "非 Chromium"} 栈特征 · ${pskTxt}）`, { tone: "ok" });
+    }
+  }
+
+  // (22) QUIC v1/v2 Initial decryption, JA4Q & 0x0039 transport parameters stack attribution
+  async function probeQuicParams() {
+    R.quicStackMismatch = "";
+    R.quicFp = null;
+    if (location.protocol !== "https:") {
+      return setNA("quicpar", "仅 HTTPS 环境可触发 UDP 443 QUIC Initial 采集");
+    }
+    if (typeof WebTransport === "function") {
+      try {
+        const wt = new WebTransport(`https://${location.host}/api/who/quic-wt?t=${Date.now()}`);
+        wt.ready.catch(() => {});
+        wt.closed.catch(() => {});
+        await new Promise(r => setTimeout(r, 320));
+        try { wt.close(); } catch (e) {}
+      } catch (e) {}
+    }
+    const qRes = await getJSON(`./api/who/quic?t=${Date.now()}`, 3000, "omit").catch(() => null);
+    const q = qRes?.quic || R.srv?.packet?.quic || null;
+    if (!q) {
+      if (typeof WebTransport !== "function") {
+        return setNA("quicpar", "当前内核不支持 WebTransport 主动触发（未捕获 UDP 443 首包）");
+      }
+      if (qRes && qRes.collectorActive === false) {
+        return setNA("quicpar", "服务端未启用 UDP 443 QUIC 嗅探器");
+      }
+      return setProbe("quicpar", "UDP 443 QUIC 首包未达服务端（代理仅转发 TCP 或防火墙拦截 UDP）", { tone: "neutral" });
+    }
+    R.quicFp = q;
+    const cb = claimedBrowser();
+    const fam = q.stackFamily || "";
+    let mismatch = "";
+    if (fam === "quic-go") {
+      mismatch = `QUIC 传输参数暴露代理库 ${q.stackGuess}（代理客户端代发了 UDP QUIC）`;
+    } else if ((cb === "Chrome" || cb === "Edge" || cb === "Opera") && (fam === "neqo" || fam === "nw_quic")) {
+      mismatch = `UA 自称 ${cb}，但 QUIC Initial 却是 ${q.stackGuess}`;
+    } else if (cb === "Firefox" && (fam === "quiche" || fam === "nw_quic")) {
+      mismatch = `UA 自称 Firefox，但 QUIC Initial 却是 ${q.stackGuess}`;
+    } else if ((cb === "Safari" || cb === "iOSWebKit") && (fam === "quiche" || fam === "neqo")) {
+      mismatch = `UA 自称 Safari/WebKit，但 QUIC Initial 却是 ${q.stackGuess}`;
+    }
+    R.quicStackMismatch = mismatch;
+    const tp = q.transportParams || {};
+    const winKb = tp.initial_max_data ? `${Math.round(tp.initial_max_data / 1024)}KB` : "-";
+    const idleMs = tp.max_idle_timeout ? `${tp.max_idle_timeout}ms` : "-";
+    setProbe("quicpar", mismatch ? `协议穿帮：${mismatch}` : `${q.stackGuess} · ${q.ja4q} · 窗口 ${winKb}`, {
+      tone: mismatch ? "bad" : "ok",
+      why: `JA4Q: ${q.ja4q}\nQUIC ${q.quicVersion}${q.pqGroup ? " · PQ: " + q.pqGroup : ""}\nmax_idle_timeout: ${idleMs} · GREASE参数: ${q.hasGreaseParam ? "有" : "无"}\n参数序: ${(q.paramOrder || []).join(",")}`
+    });
+  }
+
+  // (23) JS Engine JIT warm-up speedup ratio (cold interpreter vs Maglev/TurboFan/FTL machine code)
+  function probeJitWarm() {
+    const wasmOk = typeof WebAssembly === "object" && typeof WebAssembly.compile === "function";
+    try {
+      const makeKernel = salt => {
+        try {
+          return new Function("n", "seed", `
+            var x = (seed ^ ${salt}) | 0, f = (seed & 255) * 0.125 + 1.0;
+            var a0 = 1, a1 = 2, a2 = 3, a3 = 5;
+            for (var i = 0; i < n; i++) {
+              x = (Math.imul(x, 1664525) + 1013904223 + i) | 0;
+              f = f * 0.9999847412109375 + ((x & 1023) * 0.0009765625);
+              var t = (a0 + a1 + (x & 7)) | 0;
+              a0 = a1; a1 = a2; a2 = a3; a3 = t;
+            }
+            return (x ^ a3 ^ (f | 0)) | 0;
+          `);
+        } catch (e) {
+          return (n, seed) => {
+            let x = (seed ^ salt) | 0, f = (seed & 255) * 0.125 + 1.0, a0 = 1, a1 = 2, a2 = 3, a3 = 5;
+            for (let i = 0; i < n; i++) {
+              x = (Math.imul(x, 1664525) + 1013904223 + i) | 0;
+              f = f * 0.9999847412109375 + ((x & 1023) * 0.0009765625);
+              const t = (a0 + a1 + (x & 7)) | 0;
+              a0 = a1; a1 = a2; a2 = a3; a3 = t;
+            }
+            return (x ^ a3 ^ (f | 0)) | 0;
+          };
+        }
+      };
+      const coldFns = Array.from({ length: 24 }, (_, k) => makeKernel(0x9e3779b9 ^ (k * 7919)));
+      let sink = 0;
+      const t0 = performance.now();
+      for (let k = 0; k < 24; k++) sink ^= coldFns[k](160, k + 1);
+      const coldMs = Math.max(0.02, performance.now() - t0);
+
+      const hotFn = coldFns[0];
+      for (let w = 0; w < 140; w++) sink ^= hotFn(180, w);
+
+      const t1 = performance.now();
+      for (let h = 0; h < 240; h++) sink ^= hotFn(160, h + (sink & 3));
+      const hotRawMs = Math.max(0.02, performance.now() - t1);
+      const hotNormMs = hotRawMs / 10;
+      const ratio = +(coldMs / Math.max(0.005, hotNormMs)).toFixed(2);
+      R.jitWarm = { ratio, coldMs: +coldMs.toFixed(2), hotNormMs: +hotNormMs.toFixed(3), wasmOk, sink };
+
+      if (!wasmOk) {
+        setProbe("jitwarm", `JIT / WebAssembly 已被强制禁用（加速比 ${ratio}x · 锁定模式或 --jitless 沙箱）`, { tone: "warn" });
+      } else if (R.coarseTimer && hotRawMs <= 1.2) {
+        setProbe("jitwarm", `JIT 机器码正常 · WASM 就绪（防指纹粗化时钟限制微秒级加速比读数）`, { tone: "ok" });
+      } else {
+        const jitNote = ratio >= 1.8 ? "多级 JIT 编译加速正常" : "冷热耗时接近（极速核或轻量解释）";
+        setProbe("jitwarm", `加速比 ${ratio}x（冷态 ${coldMs.toFixed(2)}ms → 热态等效 ${hotNormMs.toFixed(2)}ms · ${jitNote}）`, {
+          tone: ratio >= 1.5 ? "ok" : "neutral"
+        });
+      }
+    } catch (e) {
+      setNA("jitwarm", "JIT 基准测试受限");
+    }
+  }
+
+  // (24) WebGL highp shader ALU mantissa fingerprint & hardware compressed-texture cross-check
+  async function probeGpuFp() {
+    R.gpuTexConflict = "";
+    let gl = null, lose = null;
+    try {
+      const c = document.createElement("canvas");
+      c.width = 16;
+      c.height = 16;
+      gl = c.getContext("webgl2", { antialias: false, depth: false }) || c.getContext("webgl", { antialias: false, depth: false });
+      if (!gl) return setNA("gpufp", "WebGL 不可用");
+      lose = gl.getExtension("WEBGL_lose_context");
+
+      const vs = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vs, "attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}");
+      gl.compileShader(vs);
+      const fs = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fs, `precision highp float;
+        void main(){
+          float u = gl_FragCoord.x * 0.137 + gl_FragCoord.y * 0.293;
+          float a = fract(sin(u * 12.9898) * 43758.5453);
+          float b = fract(exp2(u * 0.731) * 19.19);
+          float c = fract(atan(u + 0.123, 0.777) * 31.4159);
+          float d = fract(inversesqrt(u + 1.01) * 65537.0);
+          gl_FragColor = vec4(a, b, c, d);
+        }`);
+      gl.compileShader(fs);
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      gl.useProgram(prog);
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, "p");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      const px = new Uint8Array(16 * 16 * 4);
+      gl.readPixels(0, 0, 16, 16, gl.RGBA, gl.UNSIGNED_BYTE, px);
+
+      const exts = gl.getSupportedExtensions() || [];
+      const hasAstc = exts.some(e => /compressed_texture_astc/i.test(e));
+      const hasS3tc = exts.some(e => /compressed_texture_s3tc\b/i.test(e));
+      const hasBptc = exts.some(e => /texture_compression_bptc/i.test(e));
+      const hasEtc = exts.some(e => /compressed_texture_etc\b/i.test(e));
+      const hasRgtc = exts.some(e => /texture_compression_rgtc/i.test(e));
+      const hasPvrtc = exts.some(e => /compressed_texture_pvrtc/i.test(e));
+      const prec = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+      const texTags = [hasAstc && "ASTC", hasS3tc && "S3TC", hasBptc && "BPTC", hasEtc && "ETC2", hasRgtc && "RGTC", hasPvrtc && "PVRTC"].filter(Boolean);
+
+      const aluHash = shortHash(await sha256(Array.from(px).join(",")));
+      const gpuStr = `${R.gpuDiscrete || ""} ${R.gpuRaw || ""}`;
+      let conflict = "";
+      if (!R.gpuSoft && /Apple M\d|Apple A\d+|Apple GPU/i.test(gpuStr) && !hasAstc) {
+        conflict = "自报 Apple 自研芯片 GPU，但缺失硬件必有的 ASTC 压缩纹理支持（疑似 x86 桌面显卡改名伪装）";
+      } else if (!R.gpuSoft && /NVIDIA GeForce|Quadro|Radeon RX/i.test(gpuStr) && hasAstc && !hasS3tc) {
+        conflict = `自报桌面独显 (${cleanGpuName(R.gpuRaw)})，但仅支持移动端 ASTC 却无 S3TC 纹理（疑似 ARM/移动容器改名伪装）`;
+      }
+      R.gpuTexConflict = conflict;
+      R.gpuAluHash = aluHash;
+      setProbe("gpufp", conflict ? `架构穿帮：${conflict}` : `ALU 尾数 ${aluHash} · 硬件纹理 [${texTags.join("/") || "无"}]`, {
+        tone: conflict ? "bad" : "ok",
+        why: `highp float 精度: 2^-${prec?.precision ?? "?"} (范围 -2^${prec?.rangeMin ?? "?"}..2^${prec?.rangeMax ?? "?"})\n压缩纹理族: ${texTags.join(", ") || "无"}`
+      });
+    } catch (e) {
+      setNA("gpufp", "GPU 着色器采样受限");
+    } finally {
+      try { lose && lose.loseContext(); } catch (e) {}
+    }
+  }
+
+  // (25) 4th & 5th Execution Realms: SharedWorker & ServiceWorker cross-verification
+  async function probeSwRealm() {
+    R.swRealmDiff = [];
+    const swUrl = new URL("./sw-probe.js", location.href).href;
+    const norm = s => String(s || "").replace(/\s+/g, " ").trim();
+
+    const pShared = (async () => {
+      if (typeof SharedWorker !== "function") return null;
+      try {
+        const sw = new SharedWorker(swUrl);
+        sw.port.start();
+        const res = await within(new Promise(r => {
+          sw.port.onmessage = ev => r(ev.data);
+          sw.onerror = () => r(null);
+          sw.port.postMessage("snap");
+        }), 1800, null);
+        try { sw.port.close(); } catch (e) {}
+        return res ? ["SharedWorker", res] : null;
+      } catch (e) { return null; }
+    })();
+
+    const pService = (async () => {
+      if (!window.isSecureContext || !navigator.serviceWorker?.register) return null;
+      let reg = null;
+      try {
+        reg = await within(navigator.serviceWorker.register(swUrl, { scope: "./__wp_sw_probe__/" }), 1800, null);
+        if (!reg) return null;
+        const worker = reg.installing || reg.waiting || reg.active;
+        if (!worker) return null;
+        const res = await within(new Promise(r => {
+          const mc = new MessageChannel();
+          mc.port1.onmessage = ev => r(ev.data);
+          try { worker.postMessage("snap", [mc.port2]); } catch (e) { r(null); }
+        }), 1600, null);
+        return res ? ["ServiceWorker", res] : null;
+      } catch (e) {
+        return null;
+      } finally {
+        try { if (reg) await reg.unregister(); } catch (e) {}
+      }
+    })();
+
+    const realms = (await Promise.all([pShared, pService])).filter(Boolean);
+    if (!realms.length) {
+      return setNA("swrealm", "当前容器未启用 SharedWorker / ServiceWorker");
+    }
+
+    const diffs = [];
+    const mainLang = (navigator.language || "").split("-")[0].toLowerCase();
+    const mainGpu = norm(R.gpuRaw || "");
+    for (const [rName, d] of realms) {
+      if (d.ua && d.ua !== navigator.userAgent) diffs.push(`${rName}.UA`);
+      if (d.plat && d.plat !== navigator.platform) diffs.push(`${rName}.platform`);
+      if (d.hc && navigator.hardwareConcurrency && d.hc !== navigator.hardwareConcurrency) diffs.push(`${rName}.CPU核数(${d.hc}≠${navigator.hardwareConcurrency})`);
+      if (d.tz && R.tz && d.tz !== R.tz) diffs.push(`${rName}.时区(${d.tz}≠${R.tz})`);
+      if (d.lang && mainLang && d.lang.split("-")[0].toLowerCase() !== mainLang) diffs.push(`${rName}.语言(${d.lang})`);
+      if (d.gpu && mainGpu && norm(d.gpu) !== mainGpu) diffs.push(`${rName}.GPU`);
+    }
+    R.swRealmDiff = diffs;
+    const names = realms.map(([n]) => n).join(" + ");
+    setProbe("swrealm", diffs.length
+      ? `跨线程穿帮：${diffs.join("、")} 与主线程不一致`
+      : `${names} 与主线程全量核对一致（已即采即销零残留）`,
+    {
+      tone: diffs.length ? "bad" : "ok",
+      why: realms.map(([n, d]) => `${n}: plat=${d.plat} · hc=${d.hc} · tz=${d.tz} · lang=${d.lang}`).join("\n")
+    });
+  }
+
+  // (26) Behavioral Biometrics Dynamics: Mouse velocity CV & jerk, trackpad vs discrete wheel, keystroke dwell
+  function probeBioDyn() {
+    R.bioSynthKey = false;
+    R.bioConstVel = false;
+    const pts = INPUT_LOG.pts || [];
+    const wheels = INPUT_LOG.wheelDeltas || [];
+    const dwells = INPUT_LOG.dwells || [];
+    const parts = [];
+    let tone = "neutral";
+
+    if (pts.length >= 8) {
+      const vels = [];
+      for (let i = 1; i < pts.length; i++) {
+        const dt = pts[i].t - pts[i - 1].t;
+        if (dt >= 2 && dt <= 250) {
+          vels.push(Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) / dt);
+        }
+      }
+      if (vels.length >= 6) {
+        const meanV = vels.reduce((a, b) => a + b, 0) / vels.length;
+        const stdV = Math.sqrt(vels.reduce((s, v) => s + (v - meanV) ** 2, 0) / vels.length);
+        const cv = meanV > 0.01 ? +(stdV / meanV).toFixed(2) : 0;
+        const constVel = meanV > 0.15 && cv < 0.08 && vels.length >= 12;
+        R.bioConstVel = constVel;
+        parts.push(constVel ? `鼠标匀速机械插值 (速度CV=${cv})` : `鼠标速度变异 CV=${cv} (真人加减速)`);
+        tone = constVel ? "warn" : "ok";
+      }
+    }
+
+    if (wheels.length >= 2) {
+      const fine = wheels.some(w => w.mode === 0 && w.dy > 0 && (w.dy < 40 || !Number.isInteger(w.dy)));
+      const discrete = wheels.every(w => w.mode === 1 || (w.dy >= 80 && (Math.round(w.dy) % 100 === 0 || Math.round(w.dy) % 120 === 0)));
+      parts.push(fine ? "触控板连续像素流" : discrete ? "物理滚轮离散步进" : `滚轮采样 ${wheels.length} 次`);
+      if (tone === "neutral") tone = "ok";
+    }
+
+    if (dwells.length >= 1) {
+      const meanDw = dwells.reduce((a, b) => a + b, 0) / dwells.length;
+      if (dwells.length >= 3 && meanDw < 1.5) {
+        R.bioSynthKey = true;
+        parts.push(`异常按键驻留 ${meanDw.toFixed(2)}ms (瞬时脚本注入！)`);
+        tone = "bad";
+      } else {
+        parts.push(`键驻留均值 ${Math.round(meanDw)}ms (${dwells.length} 键)`);
+        if (tone === "neutral") tone = "ok";
+      }
+    }
+
+    if (!parts.length) {
+      setProbe("biodyn", "扫描期无交互输入（移动鼠标/滚动/按键后重测可采动力学特征）", { tone: "neutral" });
+    } else {
+      setProbe("biodyn", parts.join(" · "), { tone });
+    }
   }
 
   function initInteractiveProbes() {
@@ -5275,6 +5724,53 @@
           setProbe("sensors", `采样率 ${hz} Hz · 零偏指纹 ${shortHash(sig)}`);
         };
       }
+    }
+
+    // 4. Manual Localhost Proxy & Anti-Detect Browser Control Port Self-Test (zero unsolicited LNA prompt)
+    const LOCAL_PORTS = [
+      [7890, "Clash / Mihomo 混合口"],
+      [7891, "Clash SOCKS/HTTP"],
+      [9090, "Clash / Mihomo API"],
+      [10808, "v2rayN / Xray 代理口"],
+      [1080, "SOCKS5 本地口"],
+      [2080, "Sing-box / NekoBox"],
+      [50325, "AdsPower 本地 API"],
+      [54345, "比特浏览器 API"],
+      [35000, "Multilogin 控制口"],
+      [9222, "Chrome CDP 调试口"]
+    ];
+    setProbe("localport", `<button type="button" id="btnRunLocalPort" class="py-0.5 px-2 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-sans font-medium text-[11px] dark:bg-blue-500/15 dark:text-blue-400">点击自检 10 个本机代理/指纹口</button>`, {
+      html: true, rawText: "未触发手动本机端口自检"
+    });
+    const btnLp = $("#btnRunLocalPort");
+    if (btnLp) {
+      btnLp.onclick = async ev => {
+        ev.stopPropagation();
+        btnLp.disabled = true;
+        btnLp.textContent = "正在探测 127.0.0.1 常用端口…";
+        const hits = await Promise.all(LOCAL_PORTS.map(async ([port, label]) => {
+          try {
+            await fetch(`http://127.0.0.1:${port}/`, {
+              mode: "no-cors",
+              cache: "no-store",
+              credentials: "omit",
+              referrerPolicy: "no-referrer",
+              signal: AbortSignal.timeout(1100)
+            });
+            return `${port} (${label})`;
+          } catch (e) {
+            return null;
+          }
+        }));
+        const openList = hits.filter(Boolean);
+        setProbe("localport", openList.length
+          ? `检出 ${openList.length} 个本机开放服务：${openList.join("、")}`
+          : `10 个常见代理/指纹浏览器端口均未对网页暴露（或已被浏览器本地网络策略拦截）`,
+        {
+          tone: openList.length ? "warn" : "ok",
+          why: `检测范围: ${LOCAL_PORTS.map(([p, l]) => `${p}/${l}`).join(" · ")}`
+        });
+      };
     }
   }
 
@@ -5543,9 +6039,13 @@
       }
     }
 
-    // 6b. conn overlay: HTTP/2 Akamai raw frame mismatch or HTTPS middlebox-injected forwarding headers
+    // 6b. conn overlay: HTTP/2 Akamai raw frame, QUIC Initial JA4Q, TLS static extension order, or HTTPS middlebox headers
     if (R.h2Mismatch && out.conn?.level !== "bad") {
       out.conn = { level: "bad", summary: `HTTP/2 原始帧穿帮：${R.h2Mismatch}（仅靠改 UA 或 TLS 无法伪造 HTTP/2 SETTINGS 与伪头部顺序）` };
+    } else if (R.quicStackMismatch && out.conn?.level !== "bad") {
+      out.conn = { level: "bad", summary: `QUIC Initial 协议穿帮：${R.quicStackMismatch}` };
+    } else if (R.tlsStaticPerm && out.conn?.level !== "bad") {
+      out.conn = { level: "bad", summary: `TLS 扩展排列死板：自称现代 Chromium，但连续独立握手的扩展顺序 100% 静态不变（典型 uTLS / 静态指纹模板特征）` };
     } else if ((R.proxyHdrHits || []).length && out.conn?.level !== "bad") {
       out.conn = { level: "warn", summary: `TLS 握手后的 HTTP 请求被中间层注入代理转发头（${R.proxyHdrHits.join(" · ")}），疑似 HTTPS 解密代理 / 企业网关 / 杀软 Web 防护 / CF Worker 反代` };
     }
@@ -5650,11 +6150,13 @@
       }
     }
 
-    // 9b. rtt overlay: multi-region speed-of-light violation (traffic to that region bypassed the egress, or broadcast IP)
+    // 9b. rtt overlay: multi-region speed-of-light violation or WebSocket Pong control-frame relay gap
     const geoRtt = analyzeRttGeo();
     if (geoRtt?.violation && out.rtt?.level !== "bad") {
       const v = geoRtt.violation;
       out.rtt = { level: "bad", summary: `光速违例：到 ${v.name} 往返仅 ${v.ms} ms，但出口 IP 登记地距其 ${v.km.toLocaleString()} km（光纤物理下限≈${v.floorMs} ms），该路流量未经出口或出口为跨洲广播 IP` };
+    } else if (R.wsPingRtt != null && R.srvTcpRtt != null && (R.wsPingRtt - R.srvTcpRtt) >= 95 && out.rtt?.level !== "bad") {
+      out.rtt = { level: "bad", summary: `底层控制帧测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但 WebSocket Pong 控制帧需 ${R.wsPingRtt} ms（多绕 +${R.wsPingRtt - R.srvTcpRtt} ms 代理路程）` };
     } else if (geoRtt?.best && out.rtt?.level === "ok") {
       out.rtt = { ...out.rtt, summary: `${out.rtt.summary} · 全球测距最近 ${geoRtt.best.name} ${geoRtt.best.ms} ms` };
     }
@@ -5891,6 +6393,9 @@
     if (R.cpuArchConflict) fpbHits.push(`CPU 架构矛盾：${R.cpuArchConflict}`);
     if (R.sysFontConflict) fpbHits.push(R.sysFontConflict);
     if (R.glWorkerMismatch) fpbHits.push(`WebGL 跨线程穿帮：${R.glWorkerMismatch}`);
+    if ((R.swRealmDiff || []).length) fpbHits.push(`Shared/ServiceWorker 跨界矛盾 (${R.swRealmDiff.join(", ")})`);
+    if (R.ufragConflict) fpbHits.push(`WebRTC SDP 引擎矛盾：${R.ufragConflict}`);
+    if (R.gpuTexConflict) fpbHits.push(`GPU 压缩纹理架构穿帮：${R.gpuTexConflict}`);
     if (R.stackFmtConflict) fpbHits.push(`调用栈引擎矛盾：${R.stackFmtConflict}`);
     if (R.gpuSoft) fpbHits.push("使用 SwiftShader / Basic Render 软件虚拟显卡");
 
@@ -5923,12 +6428,14 @@
     if (R.inputCdpCoord) botBad.push(`${R.inputCdpCoord} 个鼠标事件坐标呈 CDP 派发特征`);
     if ((R.stealthHits || []).length) botBad.push(`隐身补丁残留 ${R.stealthHits.length} 处（${R.stealthHits[0]}）`);
     if ((R.jsEnvBad || []).length) botBad.push(`非浏览器宿主 ${R.jsEnvBad.join("/")}`);
+    if (R.bioSynthKey) botBad.push("按键驻留 <1.5ms（脚本瞬时派发按键特征）");
     const botWarn = [];
     if ((R.headlessSoft || []).length && !(R.headlessHits || []).length) botWarn.push(`无头弱信号：${R.headlessSoft[0]}`);
     if (R.cdpHit) botWarn.push("CDP Runtime 调试协议已附着（开发者工具打开或被 Puppeteer / Playwright 控制）");
     if (R.popupDisabled) botWarn.push("无手势弹窗拦截已关闭 (--disable-popup-blocking 或站点放行)");
     if (R.winHeadless) botWarn.push("无头窗口尺寸特征（浏览器外框为 0 或窗口大于屏幕）");
     if (R.inputStraight != null && R.inputStraight >= 0.9) botWarn.push(`鼠标轨迹 ${Math.round(R.inputStraight * 100)}% 为机械直线`);
+    if (R.bioConstVel) botWarn.push("鼠标移动呈恒定匀速插值（缺少真人加减速动力学特征）");
     out.bot = botBad.length
       ? { level: "bad", summary: `检出自动化控制框架特征：${[...botBad, ...botWarn].join(" · ")}` }
       : botWarn.length
@@ -6074,6 +6581,8 @@
       }
       case "conn":
         if (/HTTP\/2 原始帧/.test(res?.summary || "")) return { left: claimedBrowser() || "UA", op: "≠", right: R.h2Fp?.clientGuess || "H2 帧异常" };
+        if (/QUIC Initial/.test(res?.summary || "")) return { left: claimedBrowser() || "UA", op: "≠", right: R.quicFp?.stackGuess || "QUIC 栈异常" };
+        if (/TLS 扩展排列/.test(res?.summary || "")) return { single: "TLS 扩展未随机洗牌" };
         if (/代理转发头/.test(res?.summary || "")) return { single: "中间层注入代理头" };
         return (tcp && tcpHuman && tcpHuman.toLowerCase() !== uaOs.toLowerCase() && !(/^(iOS|iPadOS)$/.test(uaOs) && tcpHuman === "macOS"))
           ? { left: uaOs, op: "≠", right: `${tcpHuman} SYN` }
@@ -6124,6 +6633,9 @@
         return { single: `${(R.lies || []).length || 1} 处接口/头矛盾` };
       case "fpb":
         if ((R.workerDiff || []).length) return { left: "主线程", op: "≠", right: "Worker 线程" };
+        if ((R.swRealmDiff || []).length) return { left: "主线程", op: "≠", right: "Shared/SW 线程" };
+        if (R.ufragConflict) return { left: claimedBrowser() || "UA", op: "≠", right: "SDP 媒体栈" };
+        if (R.gpuTexConflict) return { left: "自报 GPU", op: "≠", right: "纹理硬件架构" };
         if (R.gpuSoft) return { single: "SwiftShader 软卡" };
         if (R.hi?.platformVersion && parseInt(R.hi.platformVersion, 10) <= 10) {
           return { left: "Apple M系", op: "≠", right: `macOS ${R.hi.platformVersion}` };
@@ -7263,10 +7775,10 @@
       syslang: [probeFonts, probeVoices, probeKeyboard],
       dns: [probeDns],
       split: [probeServer, probeQuicAndExits],
-      conn: [probeServer],
+      conn: [probeServer, probeTlsPerm, probeQuicParams],
       synspoof: [probeServer, probeLatency],
       reality: [probeIntel],
-      rtt: [probeServer, probeLatency, probeWebrtc],
+      rtt: [probeServer, probeLatency, probeWsPing, probeWebrtc],
       webrtc: [probeWebrtc, probeV6Mac],
       dc: [probeServer, probeIntel],
       lease: [probeIntel],
@@ -7410,7 +7922,7 @@
       if (R.isSharedView) {
         const shareUrl = location.href;
         const lines = [
-          `【WhoProbe v7.6 · 公开脱敏体检快照 #${R.shareId || "-"}】`,
+          `【WhoProbe v7.7 · 公开脱敏体检快照 #${R.shareId || "-"}】`,
           `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
           `脱敏链接: ${shareUrl}`,
           ``,
@@ -7428,13 +7940,13 @@
       const masked = document.body.classList.contains("is-masked");
       const pur = R.intel?.purity;
       const lines = [
-        `【WhoProbe v7.6 · 182项全栈指纹与出口信誉体检报告】`,
+        `【WhoProbe v7.7 · 191项全栈指纹与出口信誉体检报告】`,
         `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
         `出口纯净度: ${pur ? `${pur.score}/100 (${pur.grade} 级)` : "--"} · 脏邻居: ${R.intel?.cidr?.neighbours?.dirtyCount ?? 0} 个`,
         `推断设备: ${R.osLabel || "-"} · ${R.browserLabel || "-"} · 屏幕 ${R.physScreen || "-"} @ ${R.hz || 60}Hz`,
         `显卡渲染: ${R.gpuDiscrete ? R.gpuDiscrete + " + " + R.gpuClean : (R.gpuClean || "-")}`,
         `网络出口: ${masked ? "[已隐藏]" : (R.ip || "-")} (${countryName(R.ipCC)} · ${masked ? "[运营商已隐藏]" : (R.org || "-")})`,
-        `三维测距: 浏览器 HTTP ${R.httpRtt ?? "-"}ms / 服务端 TCP 握手 ${R.srvTcpRtt ?? "-"}ms / STUN UDP ${R.stunRttMs ?? "-"}ms`,
+        `三维测距: 浏览器 HTTP ${R.httpRtt ?? "-"}ms / 控制帧 Pong ${R.wsPingRtt ?? "-"}ms / 服务端 TCP 握手 ${R.srvTcpRtt ?? "-"}ms / STUN UDP ${R.stunRttMs ?? "-"}ms`,
         `跨站指纹: ${masked ? "[已隐藏]" : (R.fpId || "-")} · 物理硬件码: ${masked ? "[已隐藏]" : (R.hwId || "-")}`,
         ``,
         `[异常与风险项]`
@@ -7451,7 +7963,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.2.0",
+        version: "7.7.0",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,
@@ -7460,7 +7972,7 @@
         scenarios: R.scenarios || null,
         inspectedIp: masked ? null : (R.extIntel?.targetIp || null),
         exit: masked ? { country: R.ipCC, netKind: R.netKind } : { ip: R.ip, country: R.ipCC, asn: R.asn, org: R.org, netKind: R.netKind },
-        rtt: { browserHttpMs: R.httpRtt, serverTcpHandshakeMs: R.srvTcpRtt, stunUdpMs: R.stunRttMs, muxBurst: R.muxBurst || null },
+        rtt: { browserHttpMs: R.httpRtt, wsPingPongMs: R.wsPingRtt, serverTcpHandshakeMs: R.srvTcpRtt, stunUdpMs: R.stunRttMs, muxBurst: R.muxBurst || null },
         packet: R.srv?.packet || null,
         tls443: R.intel?.tls443 || null,
         ids: { fingerprintId: R.fpId, hardwareId: R.hwId },
@@ -7469,7 +7981,7 @@
           ? Object.fromEntries(Object.entries(R.values || {}).map(([k, v]) => [k, SNIFFER_MAP[k]?.mask ? "[MASKED]" : v]))
           : R.values
       };
-      copyText(JSON.stringify(payload, null, 2), "已复制 182 项完整 JSON 数据");
+      copyText(JSON.stringify(payload, null, 2), "已复制 191 项完整 JSON 数据");
     });
 
     $("#btnCopyUrl")?.addEventListener("click", () => copyText(location.href, "已复制页面链接"));
@@ -7499,7 +8011,7 @@
       if (val) copyText(val, "已复制 Markdown 签名徽章代码");
     });
 
-    // Rerun all 182 probes (or navigate to live self-test if viewing a shared snapshot)
+    // Rerun all 191 probes (or navigate to live self-test if viewing a shared snapshot)
     $("#btnRerun")?.addEventListener("click", () => {
       if (R.isSharedView) {
         location.href = "./";
@@ -7696,7 +8208,7 @@
 
   async function openOrCreateShareModal() {
     if (!R.finished) {
-      showToast("请等待 182 项探针确认完成后再生成分享链接");
+      showToast("请等待 191 项探针确认完成后再生成分享链接");
       return;
     }
     if (R.shareResult) {
@@ -8252,6 +8764,7 @@
     probeAutoKeys();
     probeJsEnv();
     probeNavProps();
+    probeJitWarm();
     initInteractiveProbes();
 
     // Phase 2: Fonts, Graphics, Canvas & High-Entropy Hints (needed for composite IDs & portrait)
@@ -8261,6 +8774,7 @@
       probeCanvas(),
       probeSubpixelAndEngine()
     ]);
+    await probeGpuFp();
     await probeHighEntropyHints();
     probeMobileConsistency();
     probeWasmFeatures();
@@ -8303,6 +8817,8 @@
     });
     // 等待 pSrv 完成或最多 1.2s 后启动延迟与微脉冲探测，既保证 R.srvTcpRtt 就绪，又绝不被慢连接卡死
     const pLat = Promise.race([pSrv, new Promise(r => setTimeout(r, 1200))]).then(() => probeLatency());
+    // WebSocket 控制帧主动 Ping 与 TLS 扩展洗牌验真在 pLat 后衔接（wss:// 新连接同时为 TLS 扩展洗牌提供第 2+ 个握手样本）
+    const pWsAndTls = pLat.then(() => probeWsPing()).then(() => probeTlsPerm());
     // 多区域光速测距在微脉冲测速完成后再启动，避免并发请求干扰粘包/抖动时序
     const pGeo = pLat.then(() => probeRttGeo()).catch(() => setNA("rttgeo", "全球测距异常中止"));
 
@@ -8310,8 +8826,10 @@
       pSrv,
       pIntel,
       pLat,
+      pWsAndTls,
       pGeo,
       pExits,
+      probeQuicParams(),
       probeDns(),
       probeWebrtc(),
       probeAudioStack(),
@@ -8323,6 +8841,7 @@
       probeAdblock(),
       probeChromeExtWar(),
       probeWorkerRealm(),
+      probeSwRealm(),
       probeEtag(),
       probeTraces(),
       probeDomExtensions(),
@@ -8346,6 +8865,7 @@
     probeClockSrc();
     refreshRttGeoProbe();
     probeInputTrust();
+    probeBioDyn();
     await probeHeadless();
     probeChGrease();
     probeAiGeo();

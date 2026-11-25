@@ -12,10 +12,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import collections
 import concurrent.futures
 import gzip
 import hashlib
+import hmac
 import ipaddress
 import json
 import mimetypes
@@ -94,6 +96,8 @@ PTR_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
 PACKET_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
 H2_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
 TLS_META_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
+TLS_PERM_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
+QUIC_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
 SHARE_RATE_CACHE = TTLCache(maxsize=4096, ttl_sec=60.0)
 _GEO_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="geo")
 _SERVER_COORDS: list[float] | None = None
@@ -503,8 +507,76 @@ def build_ja4t(window: int, opts: list[str], mss: int | None, wscale: int | None
     return f"{window}_{codes}_{mss or 0}_{wscale if wscale is not None else 0}"
 
 
-def parse_tls_client_hello(payload: bytes) -> dict | None:
-    """解析单包 TLS Record 中的 ClientHello，计算 JA3 与 JA4。"""
+def _quic_varint(buf: bytes, pos: int) -> tuple[int, int] | None:
+    if pos >= len(buf):
+        return None
+    b0 = buf[pos]
+    n = 1 << (b0 >> 6)
+    if pos + n > len(buf):
+        return None
+    val = b0 & 0x3F
+    for i in range(1, n):
+        val = (val << 8) | buf[pos + i]
+    return val, pos + n
+
+
+QUIC_TP_NAMES: dict[int, str] = {
+    0x01: "max_idle_timeout",
+    0x03: "max_udp_payload_size",
+    0x04: "initial_max_data",
+    0x05: "initial_max_stream_data_bidi_local",
+    0x06: "initial_max_stream_data_bidi_remote",
+    0x07: "initial_max_stream_data_uni",
+    0x08: "initial_max_streams_bidi",
+    0x09: "initial_max_streams_uni",
+    0x0A: "ack_delay_exponent",
+    0x0B: "max_ack_delay",
+    0x0C: "disable_active_migration",
+    0x0E: "active_connection_id_limit",
+    0x0F: "initial_source_connection_id",
+    0x11: "version_information",
+    0x20: "max_datagram_frame_size",
+    0x2AB2: "grease_quic_bit",
+}
+
+
+def parse_quic_transport_params(edata: bytes) -> dict:
+    pos = 0
+    end = len(edata)
+    params: dict[str, int | bool | str] = {}
+    order: list[str] = []
+    has_grease_tp = False
+    while pos < end and len(order) < 32:
+        k_res = _quic_varint(edata, pos)
+        if k_res is None:
+            break
+        tp_id, pos = k_res
+        l_res = _quic_varint(edata, pos)
+        if l_res is None:
+            break
+        vlen, pos = l_res
+        if pos + vlen > end:
+            break
+        vbytes = edata[pos : pos + vlen]
+        pos += vlen
+        # RFC 9000 Section 18.1: 31 * N + 27 为 GREASE 传输参数
+        if tp_id >= 27 and (tp_id - 27) % 31 == 0:
+            has_grease_tp = True
+            continue
+        name = QUIC_TP_NAMES.get(tp_id, f"0x{tp_id:x}")
+        order.append(name)
+        if name == "initial_source_connection_id":
+            params[name] = len(vbytes)
+        elif vlen == 0:
+            params[name] = True
+        else:
+            iv = _quic_varint(vbytes, 0)
+            params[name] = iv[0] if (iv is not None and iv[1] == vlen) else vbytes.hex()[:24]
+    return {"params": params, "order": order, "hasGreaseParam": has_grease_tp}
+
+
+def parse_tls_client_hello(payload: bytes, transport_prefix: str = "t") -> dict | None:
+    """解析 TLS Record 中的 ClientHello，计算 JA3、JA4、扩展顺序与可选 QUIC 传输参数。"""
     # TLS Record Header: ContentType(1)=0x16, LegacyVersion(2)=0x0301/0x0303, Length(2)
     if len(payload) < 43 or payload[0] != 0x16 or payload[1] != 0x03:
         return None
@@ -514,11 +586,14 @@ def parse_tls_client_hello(payload: bytes) -> dict | None:
     if len(hs) < 38 or hs[0] != 0x01:
         return None
     hs_len = (hs[1] << 16) | (hs[2] << 8) | hs[3]
+    if len(hs) < 4 + hs_len:
+        return None
     body = hs[4 : 4 + hs_len]
     if len(body) < 34:
         return None
 
     client_version = struct.unpack("!H", body[0:2])[0]
+    hello_id = body[2:14].hex()  # ClientHello.random 前 12B，唯一标识单次 TLS 握手用于多源去重
     pos = 2 + 32  # skip client_version(2) + random(32)
     if pos >= len(body):
         return None
@@ -558,6 +633,7 @@ def parse_tls_client_hello(payload: bytes) -> dict | None:
     alpn_list: list[str] = []
     cert_comp_algs: list[int] = []
     sni_host = ""
+    quic_tp: dict | None = None
 
     if pos + 2 <= len(body):
         ext_total = struct.unpack("!H", body[pos : pos + 2])[0]
@@ -616,6 +692,8 @@ def parse_tls_client_hello(payload: bytes) -> dict | None:
                     v = struct.unpack("!H", edata[k : k + 2])[0]
                     if v not in GREASE_VALUES:
                         supported_versions.append(v)
+            elif etype == 0x0039 and len(edata) >= 2:  # quic_transport_parameters
+                quic_tp = parse_quic_transport_params(edata)
 
     # JA3: SSLVersion,Ciphers,Extensions,EllipticCurves,EllipticCurvePointFormats
     ja3_str = (
@@ -647,7 +725,7 @@ def parse_tls_client_hello(payload: bytes) -> dict | None:
     ja4_c_input = f"{ext_hex}_{sig_hex}" if sig_hex else ext_hex
     e_hash = hashlib.sha256(ja4_c_input.encode("ascii")).hexdigest()[:12] if ja4_c_input else "000000000000"
 
-    ja4 = f"t{ver_code}{sni_code}{c_cnt}{e_cnt}{alpn_code}_{c_hash}_{e_hash}"
+    ja4 = f"{transport_prefix}{ver_code}{sni_code}{c_cnt}{e_cnt}{alpn_code}_{c_hash}_{e_hash}"
 
     all_groups = set(groups) | set(key_share_groups)
     pq_name = (
@@ -684,7 +762,51 @@ def parse_tls_client_hello(payload: bytes) -> dict | None:
         "keyShareGroups": key_share_names,
         "echExtension": 0xFE0D in raw_exts,
         "alpsExtension": (0x4469 in raw_exts) or (0x44CD in raw_exts),
+        "pskPresent": 0x0029 in raw_exts,
+        "helloId": hello_id,
+        "extOrder": [e for e in raw_exts if e not in (0x0029, 0x0015)],
         "certCompression": [comp_map.get(a, str(a)) for a in cert_comp_algs],
+        "quicTransportParams": quic_tp,
+    }
+
+
+_TLS_PERM_LOCK = threading.Lock()
+
+
+def record_tls_hello_sample(src_ip: str, tls_info: dict) -> dict:
+    """按 ClientHello.random 去重记录同一客户端的多次独立 TLS 握手，检验扩展随机洗牌与 PSK 会话恢复。"""
+    hid = str(tls_info.get("helloId") or "")
+    ext_ord = tuple(tls_info.get("extOrder") or [])
+    psk = bool(tls_info.get("pskPresent"))
+    alpn0 = (tls_info.get("alpn") or [""])[0]
+    ja3 = str(tls_info.get("ja3") or "")
+    with _TLS_PERM_LOCK:
+        cur = TLS_PERM_CACHE.get(src_ip)
+        samples: list[dict] = list(cur) if isinstance(cur, list) else []
+        if hid and all(s.get("hid") != hid for s in samples):
+            samples.append({"hid": hid, "exts": ext_ord, "psk": psk, "alpn": alpn0, "ja3": ja3})
+            if len(samples) > 6:
+                samples = samples[-6:]
+            TLS_PERM_CACHE.set(src_ip, samples)
+    permuted: bool | None = None
+    if len(samples) >= 2:
+        permuted = False
+        for i in range(len(samples)):
+            for j in range(i + 1, len(samples)):
+                a, b = samples[i]["exts"], samples[j]["exts"]
+                sa, sb = set(a), set(b)
+                common_a = [x for x in a if x in sb]
+                common_b = [x for x in b if x in sa]
+                if len(common_a) >= 4 and common_a != common_b:
+                    permuted = True
+                    break
+            if permuted:
+                break
+    return {
+        "samples": len(samples),
+        "permuted": permuted,
+        "pskSeen": any(s["psk"] for s in samples),
+        "distinctJa3": len({s["ja3"] for s in samples if s["ja3"]}),
     }
 
 
@@ -873,6 +995,7 @@ class LinuxPacketSniffer:
                         tls_info = parse_tls_client_hello(payload)
                         if tls_info:
                             rec["tlsClientHello"] = tls_info
+                            rec["tlsPermutation"] = record_tls_hello_sample(src_ip, tls_info)
                             PACKET_CACHE.set(src_ip, rec)
                     elif rec_len <= 8192:
                         frag_cache.set(conn_key, (rec_len, payload), ttl_sec=4.0)
@@ -886,6 +1009,7 @@ class LinuxPacketSniffer:
                             tls_info = parse_tls_client_hello(merged)
                             if tls_info:
                                 rec["tlsClientHello"] = tls_info
+                                rec["tlsPermutation"] = record_tls_hello_sample(src_ip, tls_info)
                                 PACKET_CACHE.set(src_ip, rec)
                         elif len(merged) <= 8192:
                             frag_cache.set(conn_key, (rec_len, merged), ttl_sec=4.0)
@@ -895,6 +1019,320 @@ class LinuxPacketSniffer:
 
 SNIFFER: LinuxPacketSniffer | None = None
 TLS_BRIDGE: TLSBridgeServer | None = None
+QUIC_COLLECTOR: QUICInitialCollector | None = None
+
+# ---------------------------------------------------------------------------
+# 零依赖 RFC 9001 QUIC v1/v2 Initial 包解密与多包 CRYPTO ClientHello 重组器
+# ---------------------------------------------------------------------------
+
+_AES_SBOX = (
+    0x63,0x7C,0x77,0x7B,0xF2,0x6B,0x6F,0xC5,0x30,0x01,0x67,0x2B,0xFE,0xD7,0xAB,0x76,
+    0xCA,0x82,0xC9,0x7D,0xFA,0x59,0x47,0xF0,0xAD,0xD4,0xA2,0xAF,0x9C,0xA4,0x72,0xC0,
+    0xB7,0xFD,0x93,0x26,0x36,0x3F,0xF7,0xCC,0x34,0xA5,0xE5,0xF1,0x71,0xD8,0x31,0x15,
+    0x04,0xC7,0x23,0xC3,0x18,0x96,0x05,0x9A,0x07,0x12,0x80,0xE2,0xEB,0x27,0xB2,0x75,
+    0x09,0x83,0x2C,0x1A,0x1B,0x6E,0x5A,0xA0,0x52,0x3B,0xD6,0xB3,0x29,0xE3,0x2F,0x84,
+    0x53,0xD1,0x00,0xED,0x20,0xFC,0xB1,0x5B,0x6A,0xCB,0xBE,0x39,0x4A,0x4C,0x58,0xCF,
+    0xD0,0xEF,0xAA,0xFB,0x43,0x4D,0x33,0x85,0x45,0xF9,0x02,0x7F,0x50,0x3C,0x9F,0xA8,
+    0x51,0xA3,0x40,0x8F,0x92,0x9D,0x38,0xF5,0xBC,0xB6,0xDA,0x21,0x10,0xFF,0xF3,0xD2,
+    0xCD,0x0C,0x13,0xEC,0x5F,0x97,0x44,0x17,0xC4,0xA7,0x7E,0x3D,0x64,0x5D,0x19,0x73,
+    0x60,0x81,0x4F,0xDC,0x22,0x2A,0x90,0x88,0x46,0xEE,0xB8,0x14,0xDE,0x5E,0x0B,0xDB,
+    0xE0,0x32,0x3A,0x0A,0x49,0x06,0x24,0x5C,0xC2,0xD3,0xAC,0x62,0x91,0x95,0xE4,0x79,
+    0xE7,0xC8,0x37,0x6D,0x8D,0xD5,0x4E,0xA9,0x6C,0x56,0xF4,0xEA,0x65,0x7A,0xAE,0x08,
+    0xBA,0x78,0x25,0x2E,0x1C,0xA6,0xB4,0xC6,0xE8,0xDD,0x74,0x1F,0x4B,0xBD,0x8B,0x8A,
+    0x70,0x3E,0xB5,0x66,0x48,0x03,0xF6,0x0E,0x61,0x35,0x57,0xB9,0x86,0xC1,0x1D,0x9E,
+    0xE1,0xF8,0x98,0x11,0x69,0xD9,0x8E,0x94,0x9B,0x1E,0x87,0xE9,0xCE,0x55,0x28,0xDF,
+    0x8C,0xA1,0x89,0x0D,0xBF,0xE6,0x42,0x68,0x41,0x99,0x2D,0x0F,0xB0,0x54,0xBB,0x16,
+)
+_AES_XTIME = tuple(((i << 1) ^ 0x1B) & 0xFF if i & 0x80 else (i << 1) for i in range(256))
+
+
+def _aes128_expand(key: bytes) -> list[list[int]]:
+    w = [list(key[i : i + 4]) for i in range(0, 16, 4)]
+    rcon = 1
+    for i in range(4, 44):
+        t = w[i - 1][:]
+        if i % 4 == 0:
+            t = [_AES_SBOX[t[1]] ^ rcon, _AES_SBOX[t[2]], _AES_SBOX[t[3]], _AES_SBOX[t[0]]]
+            rcon = _AES_XTIME[rcon]
+        w.append([w[i - 4][j] ^ t[j] for j in range(4)])
+    return [[w[r * 4 + c][b] for c in range(4) for b in range(4)] for r in range(11)]
+
+
+def _aes128_enc(rk: list[list[int]], blk: bytes) -> bytes:
+    s = [blk[i] ^ rk[0][i] for i in range(16)]
+    for r in range(1, 10):
+        s = [
+            _AES_SBOX[s[0]], _AES_SBOX[s[5]], _AES_SBOX[s[10]], _AES_SBOX[s[15]],
+            _AES_SBOX[s[4]], _AES_SBOX[s[9]], _AES_SBOX[s[14]], _AES_SBOX[s[3]],
+            _AES_SBOX[s[8]], _AES_SBOX[s[13]], _AES_SBOX[s[2]], _AES_SBOX[s[7]],
+            _AES_SBOX[s[12]], _AES_SBOX[s[1]], _AES_SBOX[s[6]], _AES_SBOX[s[11]],
+        ]
+        ns = [0] * 16
+        for c in range(4):
+            i = c * 4
+            a0, a1, a2, a3 = s[i], s[i + 1], s[i + 2], s[i + 3]
+            x = a0 ^ a1 ^ a2 ^ a3
+            ns[i] = a0 ^ x ^ _AES_XTIME[a0 ^ a1] ^ rk[r][i]
+            ns[i + 1] = a1 ^ x ^ _AES_XTIME[a1 ^ a2] ^ rk[r][i + 1]
+            ns[i + 2] = a2 ^ x ^ _AES_XTIME[a2 ^ a3] ^ rk[r][i + 2]
+            ns[i + 3] = a3 ^ x ^ _AES_XTIME[a3 ^ a0] ^ rk[r][i + 3]
+        s = ns
+    s = [
+        _AES_SBOX[s[0]], _AES_SBOX[s[5]], _AES_SBOX[s[10]], _AES_SBOX[s[15]],
+        _AES_SBOX[s[4]], _AES_SBOX[s[9]], _AES_SBOX[s[14]], _AES_SBOX[s[3]],
+        _AES_SBOX[s[8]], _AES_SBOX[s[13]], _AES_SBOX[s[2]], _AES_SBOX[s[7]],
+        _AES_SBOX[s[12]], _AES_SBOX[s[1]], _AES_SBOX[s[6]], _AES_SBOX[s[11]],
+    ]
+    return bytes(s[i] ^ rk[10][i] for i in range(16))
+
+
+def _gf128_mul(x: int, y: int) -> int:
+    z = 0
+    for i in range(127, -1, -1):
+        if (x >> i) & 1:
+            z ^= y
+        y = ((y >> 1) ^ 0xE1000000000000000000000000000000) if (y & 1) else (y >> 1)
+    return z
+
+
+def _aes128_gcm_open(key: bytes, nonce: bytes, ct_and_tag: bytes, aad: bytes) -> bytes | None:
+    if len(ct_and_tag) < 16 or len(ct_and_tag) > 2048:
+        return None
+    ct, tag = ct_and_tag[:-16], ct_and_tag[-16:]
+    rk = _aes128_expand(key)
+    h_int = int.from_bytes(_aes128_enc(rk, b"\x00" * 16), "big")
+    y = 0
+    for seg in (
+        aad + b"\x00" * ((16 - len(aad) % 16) % 16),
+        ct + b"\x00" * ((16 - len(ct) % 16) % 16),
+        struct.pack("!QQ", len(aad) * 8, len(ct) * 8),
+    ):
+        for off in range(0, len(seg), 16):
+            y = _gf128_mul(y ^ int.from_bytes(seg[off : off + 16], "big"), h_int)
+    j0 = nonce + b"\x00\x00\x00\x01"
+    exp_tag = (y ^ int.from_bytes(_aes128_enc(rk, j0), "big")).to_bytes(16, "big")
+    if not hmac.compare_digest(exp_tag, tag):
+        return None
+    out = bytearray(len(ct))
+    ctr = int.from_bytes(j0, "big")
+    for off in range(0, len(ct), 16):
+        ctr = (ctr & ~0xFFFFFFFF) | ((ctr + 1) & 0xFFFFFFFF)
+        ks = _aes128_enc(rk, ctr.to_bytes(16, "big"))
+        blk = ct[off : off + 16]
+        for j in range(len(blk)):
+            out[off + j] = blk[j] ^ ks[j]
+    return bytes(out)
+
+
+def _hkdf_expand_label(secret: bytes, label: bytes, length: int) -> bytes:
+    full = b"tls13 " + label
+    info = struct.pack("!HB", length, len(full)) + full + b"\x00"
+    out = b""
+    prev = b""
+    counter = 1
+    while len(out) < length:
+        prev = hmac.new(secret, prev + info + bytes([counter]), hashlib.sha256).digest()
+        out += prev
+        counter += 1
+    return out[:length]
+
+
+def decrypt_quic_initial_packet(pkt: bytes) -> tuple[bytes, int, list[tuple[int, bytes]]] | None:
+    """解密单个 QUIC v1/v2 Client Initial 数据报，返回 (dcid, quic_version, [(crypto_offset, crypto_bytes), ...])。"""
+    if len(pkt) < 64 or len(pkt) > 2048 or (pkt[0] & 0xC0) != 0xC0:
+        return None
+    ver = struct.unpack("!I", pkt[1:5])[0]
+    if ver == 0x00000001:
+        salt = bytes.fromhex("38762cf7f55934b34d179ae6a4c80cadccbb7f0a")
+        lbl_k, lbl_iv, lbl_hp, init_type = b"quic key", b"quic iv", b"quic hp", 0
+    elif ver == 0x6B3343CF:
+        salt = bytes.fromhex("0dede3def700a6db819381be6e269dcbf9bd2ed9")
+        lbl_k, lbl_iv, lbl_hp, init_type = b"quicv2 key", b"quicv2 iv", b"quicv2 hp", 1
+    else:
+        return None
+    if ((pkt[0] & 0x30) >> 4) != init_type:
+        return None
+    pos = 5
+    dcid_len = pkt[pos]
+    pos += 1
+    if dcid_len > 20 or pos + dcid_len + 1 > len(pkt):
+        return None
+    dcid = pkt[pos : pos + dcid_len]
+    pos += dcid_len
+    scid_len = pkt[pos]
+    pos += 1 + scid_len
+    tok = _quic_varint(pkt, pos)
+    if tok is None:
+        return None
+    tok_len, pos = tok
+    pos += tok_len
+    rem = _quic_varint(pkt, pos)
+    if rem is None:
+        return None
+    rem_len, pn_off = rem
+    if pn_off + 20 > len(pkt) or pn_off + rem_len > len(pkt):
+        return None
+
+    isec = hmac.new(salt, dcid, hashlib.sha256).digest()
+    csec = _hkdf_expand_label(isec, b"client in", 32)
+    key = _hkdf_expand_label(csec, lbl_k, 16)
+    iv = _hkdf_expand_label(csec, lbl_iv, 12)
+    hp = _hkdf_expand_label(csec, lbl_hp, 16)
+
+    mask = _aes128_enc(_aes128_expand(hp), pkt[pn_off + 4 : pn_off + 20])
+    b0 = pkt[0] ^ (mask[0] & 0x0F)
+    pn_len = (b0 & 0x03) + 1
+    hdr = bytearray(pkt[: pn_off + pn_len])
+    hdr[0] = b0
+    pn = 0
+    for i in range(pn_len):
+        hdr[pn_off + i] ^= mask[1 + i]
+        pn = (pn << 8) | hdr[pn_off + i]
+    nonce = (int.from_bytes(iv, "big") ^ pn).to_bytes(12, "big")
+    pt = _aes128_gcm_open(key, nonce, pkt[pn_off + pn_len : pn_off + rem_len], bytes(hdr))
+    if pt is None:
+        return None
+
+    # 提取明文载荷中的 CRYPTO 帧 (0x06)，兼容 Chrome PADDING(0x00)/PING(0x01) 混淆与乱序分片
+    p = 0
+    end = len(pt)
+    segs: list[tuple[int, bytes]] = []
+    while p < end and len(segs) < 32:
+        ft = pt[p]
+        p += 1
+        if ft in (0x00, 0x01):
+            continue
+        if ft == 0x06:
+            r_off = _quic_varint(pt, p)
+            if r_off is None:
+                break
+            c_off, p = r_off
+            r_ln = _quic_varint(pt, p)
+            if r_ln is None:
+                break
+            c_ln, p = r_ln
+            if p + c_ln > end or c_off > 8192:
+                break
+            segs.append((c_off, pt[p : p + c_ln]))
+            p += c_ln
+        else:
+            break
+    return dcid, ver, segs
+
+
+def guess_quic_stack(tls_info: dict, tp: dict) -> tuple[str, str]:
+    params = tp.get("params") or {}
+    has_gr_tp = bool(tp.get("hasGreaseParam"))
+    has_gr_bit = bool(params.get("grease_quic_bit"))
+    init_data = params.get("initial_max_data")
+    bidi_loc = params.get("initial_max_stream_data_bidi_local")
+    dgram = params.get("max_datagram_frame_size")
+    alps = bool(tls_info.get("alpsExtension"))
+    cert_comp = tls_info.get("certCompression") or []
+
+    if dgram == 65536 and (has_gr_tp or has_gr_bit) and ("brotli" in cert_comp or alps):
+        return "quiche", "Chromium quiche 原生 QUIC 栈"
+    if params.get("active_connection_id_limit") == 8 and not alps:
+        return "neqo", "Firefox neqo 原生 QUIC 栈"
+    if init_data in (2097152, 4194304, 1048576) and not alps and not cert_comp and has_gr_bit:
+        return "nw_quic", "Apple WebKit / Network.framework QUIC 栈"
+    if not cert_comp and not alps and (params.get("max_udp_payload_size") in (1452, 1280) or bidi_loc == 524288):
+        return "quic-go", "Go quic-go 代理传输库 (Sing-box / Mihomo / Hysteria2)"
+    return "generic_quic", "标准 QUIC v1 客户端栈"
+
+
+class QUICInitialCollector:
+    """只读监听 UDP 端口（如 443），重组并解密浏览器 WebTransport / HTTP/3 QUIC Initial 首包。"""
+
+    def __init__(self, port: int = 443) -> None:
+        self.port = port
+        self.active = False
+        self.error: str | None = None
+        self._socks: list[socket.socket] = []
+        self._frag_cache = TTLCache(maxsize=1024, ttl_sec=8.0)
+
+    def start(self) -> None:
+        try:
+            s4 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s4.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s4.bind(("0.0.0.0", self.port))
+            self._socks.append(s4)
+            try:
+                s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+                s6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                s6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s6.bind(("::", self.port))
+                self._socks.append(s6)
+            except OSError:
+                pass
+            self.active = True
+            for sk in self._socks:
+                threading.Thread(target=self._loop, args=(sk,), name="quic-udp", daemon=True).start()
+        except Exception as exc:
+            self.error = str(exc)
+            self.active = False
+
+    def ingest_datagram(self, raw: bytes, client_ip: str) -> dict | None:
+        dec = decrypt_quic_initial_packet(raw)
+        if dec is None:
+            return None
+        dcid, ver, new_segs = dec
+        if not new_segs:
+            return None
+        fkey = f"{client_ip}:{dcid.hex()}"
+        prev = self._frag_cache.get(fkey)
+        all_segs: list[tuple[int, bytes]] = list(prev) if isinstance(prev, list) else []
+        all_segs.extend(new_segs)
+        all_segs.sort(key=lambda x: x[0])
+
+        assembled = bytearray()
+        for off, chunk in all_segs:
+            if off > len(assembled):
+                break
+            if off + len(chunk) > len(assembled):
+                assembled.extend(chunk[len(assembled) - off :])
+
+        if len(assembled) < 4 or assembled[0] != 0x01:
+            self._frag_cache.set(fkey, all_segs[:24], ttl_sec=5.0)
+            return None
+        hs_len = (assembled[1] << 16) | (assembled[2] << 8) | assembled[3]
+        if len(assembled) < 4 + hs_len:
+            self._frag_cache.set(fkey, all_segs[:24], ttl_sec=5.0)
+            return None
+
+        self._frag_cache.set(fkey, None, ttl_sec=0.0)
+        hs_bytes = bytes(assembled[: 4 + hs_len])
+        tls_rec = b"\x16\x03\x01" + struct.pack("!H", len(hs_bytes)) + hs_bytes
+        tls_info = parse_tls_client_hello(tls_rec, transport_prefix="q")
+        if not tls_info:
+            return None
+        tp = tls_info.get("quicTransportParams") or {"params": {}, "order": [], "hasGreaseParam": False}
+        fam, label = guess_quic_stack(tls_info, tp)
+        out = {
+            "quicVersion": "v2" if ver == 0x6B3343CF else "v1",
+            "ja4q": tls_info["ja4"],
+            "pqSupported": tls_info["pqSupported"],
+            "pqGroup": tls_info["pqGroup"],
+            "alpn": tls_info["alpn"],
+            "stackFamily": fam,
+            "stackGuess": label,
+            "transportParams": tp.get("params") or {},
+            "paramOrder": tp.get("order") or [],
+            "hasGreaseParam": bool(tp.get("hasGreaseParam")),
+        }
+        QUIC_CACHE.set(client_ip, out)
+        return out
+
+    def _loop(self, sock: socket.socket) -> None:
+        while self.active:
+            try:
+                data, addr = sock.recvfrom(2048)
+                raw_ip = str(addr[0])
+                if raw_ip.startswith("::ffff:"):
+                    raw_ip = raw_ip[7:]
+                self.ingest_datagram(data, raw_ip)
+            except Exception:
+                continue
 
 # ---------------------------------------------------------------------------
 # HTTP/2 Akamai 原始帧指纹解析器 (RFC 9113 / RFC 7541 HPACK) + 零侵入 TLS 嗅探桥
@@ -1326,20 +1764,41 @@ class TLSBridgeServer:
                 else:
                     pp_line = f"PROXY TCP4 {client_ip} 127.0.0.1 {addr[1]} {self.listen_port}\r\n".encode("ascii")
 
+            # 在 wrap_socket 消费前无损窥探明文 TLS ClientHello，用于跨连接扩展洗牌验真与容器环境兜底
+            try:
+                ch_peek = conn.recv(4096, socket.MSG_PEEK)
+                if len(ch_peek) >= 5 and ch_peek[0] == 0x16:
+                    need = 5 + struct.unpack("!H", ch_peek[3:5])[0]
+                    if len(ch_peek) < need and need <= 4096:
+                        time.sleep(0.012)
+                        ch_peek = conn.recv(4096, socket.MSG_PEEK)
+                    ti = parse_tls_client_hello(ch_peek)
+                    if ti:
+                        prev_pkt = PACKET_CACHE.get(client_ip)
+                        rec_pkt = dict(prev_pkt) if isinstance(prev_pkt, dict) else {}
+                        rec_pkt["tlsClientHello"] = ti
+                        rec_pkt["tlsPermutation"] = record_tls_hello_sample(client_ip, ti)
+                        PACKET_CACHE.set(client_ip, rec_pkt)
+            except Exception:
+                pass
+
             ssock = self._ctx.wrap_socket(conn, server_side=True)
             alpn = ssock.selected_alpn_protocol() or "http/1.1"
             ciph = ssock.cipher()
-            TLS_META_CACHE.set(
-                client_ip,
-                {
-                    "httpVersion": "HTTP/2.0" if alpn == "h2" else "HTTP/1.1",
-                    "tlsProtocol": ssock.version() or "",
-                    "tlsCipher": ciph[0] if ciph else "",
-                    "tlsAlpn": alpn,
-                    "tlsSessionReused": "r" if getattr(ssock, "session_reused", False) else ".",
-                },
-            )
-            if alpn != "h2":
+            existing_h2 = H2_CACHE.get(client_ip)
+            has_valid_h2 = isinstance(existing_h2, dict) and existing_h2.get("h2Used") is True
+            if alpn == "h2" or not has_valid_h2:
+                TLS_META_CACHE.set(
+                    client_ip,
+                    {
+                        "httpVersion": "HTTP/2.0" if alpn == "h2" else "HTTP/1.1",
+                        "tlsProtocol": ssock.version() or "",
+                        "tlsCipher": ciph[0] if ciph else "",
+                        "tlsAlpn": alpn,
+                        "tlsSessionReused": "r" if getattr(ssock, "session_reused", False) else ".",
+                    },
+                )
+            if alpn != "h2" and not has_valid_h2:
                 H2_CACHE.set(client_ip, {"h2Used": False, "alpn": alpn})
 
             target = self.h2c_backend if alpn == "h2" else self.h1_backend
@@ -1571,7 +2030,98 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-        # 1) 测速、微脉冲抖动测绘与时钟校准探针 + 同源空白探针页 (IPC Flood 测试)
+        # 1) 测速、微脉冲抖动测绘、WebSocket 控制帧主动 Ping、QUIC 采集读取与 Worker 探针脚本
+        if path == "/sw-probe.js":
+            sw_js = (
+                b"function snap(){var o={ua:navigator.userAgent||'',plat:navigator.platform||'',"
+                b"lang:navigator.language||'',langs:Array.from(navigator.languages||[]),"
+                b"hc:navigator.hardwareConcurrency||0,dm:navigator.deviceMemory||0,tz:'',gpu:''};"
+                b"try{o.tz=Intl.DateTimeFormat().resolvedOptions().timeZone||'';}catch(e){}"
+                b"try{if(typeof OffscreenCanvas==='function'){var c=new OffscreenCanvas(8,8),"
+                b"g=c.getContext('webgl2')||c.getContext('webgl');"
+                b"if(g){var d=g.getExtension('WEBGL_debug_renderer_info');"
+                b"o.gpu=String(d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)||'');}}}catch(e){}"
+                b"return o;}"
+                b"self.onconnect=function(e){var p=e.ports[0];p.onmessage=function(){p.postMessage(snap());};p.start();"
+                b"p.postMessage(snap());};"
+                b"self.addEventListener('install',function(){self.skipWaiting&&self.skipWaiting();});"
+                b"self.addEventListener('activate',function(e){e.waitUntil&&self.clients&&e.waitUntil(self.clients.claim());});"
+                b"self.addEventListener('message',function(e){var p=e.ports&&e.ports[0];"
+                b"if(p&&p.postMessage){p.postMessage(snap());return;}"
+                b"var t=e.source;if(t&&t.postMessage)t.postMessage(snap());});"
+            )
+            self._send_bytes(sw_js, "application/javascript; charset=utf-8", cache_control="no-store")
+            return
+
+        if path == "/api/who/quic":
+            client_ip = self._extract_client_ip()
+            q_info = QUIC_CACHE.get(client_ip)
+            self._send_json({
+                "ok": True,
+                "collectorActive": bool(QUIC_COLLECTOR and QUIC_COLLECTOR.active),
+                "quic": q_info if isinstance(q_info, dict) else None,
+            })
+            return
+
+        if path == "/api/who/tls2":
+            client_ip = self._extract_client_ip()
+            pkt_data = PACKET_CACHE.get(client_ip)
+            perm = pkt_data.get("tlsPermutation") if isinstance(pkt_data, dict) else None
+            if perm is None:
+                cur = TLS_PERM_CACHE.get(client_ip)
+                samples = list(cur) if isinstance(cur, list) else []
+                perm = {"samples": len(samples), "permuted": None, "pskSeen": any(s.get("psk") for s in samples), "distinctJa3": len({s.get("ja3") for s in samples})}
+            self._send_json({"ok": True, "tlsPermutation": perm})
+            return
+
+        if path == "/api/who/ws-ping":
+            ws_key = (self.headers.get("Sec-WebSocket-Key") or "").strip()
+            if not ws_key or "websocket" not in (self.headers.get("Upgrade") or "").lower():
+                self._send_json({"ok": False, "error": "upgrade_required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            accept_val = base64.b64encode(
+                hashlib.sha1((ws_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()
+            ).decode("ascii")
+            self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept_val)
+            self.end_headers()
+            self.connection.settimeout(3.5)
+            rtts: list[float] = []
+            try:
+                for _ in range(2):
+                    tok = secrets.token_bytes(8)
+                    t_p0 = time.perf_counter()
+                    self.wfile.write(b"\x89\x08" + tok)
+                    self.wfile.flush()
+                    fhdr = self.rfile.read(2)
+                    if len(fhdr) < 2:
+                        break
+                    opcode = fhdr[0] & 0x0F
+                    masked = (fhdr[1] & 0x80) != 0
+                    plen = fhdr[1] & 0x7F
+                    mask_key = self.rfile.read(4) if masked else b""
+                    pdata = bytearray(self.rfile.read(plen)) if plen else bytearray()
+                    if masked and len(mask_key) == 4:
+                        for idx in range(len(pdata)):
+                            pdata[idx] ^= mask_key[idx % 4]
+                    if opcode == 0x0A and bytes(pdata) == tok:
+                        rtts.append(round((time.perf_counter() - t_p0) * 1000.0, 2))
+                res_bytes = json.dumps({
+                    "ok": True,
+                    "wsPingRttMs": min(rtts) if rtts else None,
+                    "samples": rtts,
+                }).encode("utf-8")
+                ln = len(res_bytes)
+                hdr_out = bytes([0x81, ln]) if ln < 126 else struct.pack("!BBH", 0x81, 126, ln)
+                self.wfile.write(hdr_out + res_bytes + b"\x88\x00")
+                self.wfile.flush()
+            except Exception:
+                pass
+            self.close_connection = True
+            return
+
         if path == "/api/who/blank":
             self._send_bytes(
                 b"<!doctype html><meta charset='utf-8'><title>.</title>",
@@ -1710,9 +2260,12 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 "packet": {
                     "snifferActive": bool(SNIFFER and SNIFFER.active),
                     "tlsBridgeActive": bool(TLS_BRIDGE and TLS_BRIDGE.active),
+                    "quicCollectorActive": bool(QUIC_COLLECTOR and QUIC_COLLECTOR.active),
                     "tcp": low_level.get("tcp"),
                     "tlsClientHello": low_level.get("tlsClientHello"),
+                    "tlsPermutation": low_level.get("tlsPermutation"),
                     "http2": h2_info,
+                    "quic": QUIC_CACHE.get(client_ip),
                 },
                 "headerOrder": header_order,
                 "headers": visible_headers,
@@ -1892,6 +2445,20 @@ def run_self_test() -> None:
     h2_ff = parse_h2_client_preface(H2_CLIENT_PREFACE + f_ff_set + f_ff_wu + f_ff_hdr)
     assert h2_ff is not None and h2_ff["pseudoOrder"] == ["m", "p", "a", "s"] and h2_ff["clientFamily"] == "firefox"
 
+    # 1e) 校验 RFC 9001 Appendix A.1 密钥派生与 TLS 扩展洗牌去重判定
+    dcid_rfc = bytes.fromhex("8394c8f03e515708")
+    isec_rfc = hmac.new(bytes.fromhex("38762cf7f55934b34d179ae6a4c80cadccbb7f0a"), dcid_rfc, hashlib.sha256).digest()
+    csec_rfc = _hkdf_expand_label(isec_rfc, b"client in", 32)
+    assert _hkdf_expand_label(csec_rfc, b"quic key", 16).hex() == "1f369613dd76d5467730efcbe3b1a22d"
+    assert _hkdf_expand_label(csec_rfc, b"quic hp", 16).hex() == "9f50449e04a0e810283a1e9933adedd2"
+    p_s1 = record_tls_hello_sample("198.51.100.1", {"helloId": "aa11", "extOrder": [0, 10, 11, 13, 16, 43, 51], "pskPresent": False, "ja3": "h1"})
+    assert p_s1["samples"] == 1 and p_s1["permuted"] is None
+    # 相同 helloId 重复上报（如 BPF 与 TLS 桥同时捕获同一连接）必须自动去重
+    p_dup = record_tls_hello_sample("198.51.100.1", {"helloId": "aa11", "extOrder": [0, 10, 11, 13, 16, 43, 51], "pskPresent": False, "ja3": "h1"})
+    assert p_dup["samples"] == 1
+    p_s2 = record_tls_hello_sample("198.51.100.1", {"helloId": "bb22", "extOrder": [0, 16, 51, 10, 43, 13, 11], "pskPresent": True, "ja3": "h2"})
+    assert p_s2["samples"] == 2 and p_s2["permuted"] is True and p_s2["pskSeen"] is True
+
     # 2) 启动临时 HTTP 服务验证所有路由（含隐私脱敏分享系统）
     with tempfile.TemporaryDirectory(prefix="whoprobe_test_") as tmp_dir:
         global SHARE_STORE
@@ -2028,12 +2595,13 @@ def _parse_host_port(spec: str, default_port: int) -> tuple[str, int]:
 
 
 def main() -> None:
-    global SNIFFER, TLS_BRIDGE, ENABLE_ACTIVE_443
-    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.6)")
+    global SNIFFER, TLS_BRIDGE, QUIC_COLLECTOR, ENABLE_ACTIVE_443
+    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.7)")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8899, help="监听端口 (默认 8899)")
     parser.add_argument("--sniff-iface", default="", help="可选 Linux 网卡名(如 ens5)，开启旁路 TCP SYN/JA4 抓包")
     parser.add_argument("--sniff-port", type=int, default=443, help="旁路抓包目标端口 (默认 443)")
+    parser.add_argument("--quic-port", type=int, default=0, help="可选 UDP 监听端口(如 443)，开启 RFC 9001 QUIC Initial 解密指纹")
     parser.add_argument("--tls-bridge-port", type=int, default=0, help="可选本地回环 TLS+H2 帧嗅探桥端口 (如 18449)")
     parser.add_argument("--tls-cert", default="", help="TLS 桥默认证书路径 (或读取 CREDENTIALS_DIRECTORY/tls_cert)")
     parser.add_argument("--tls-key", default="", help="TLS 桥默认私钥路径 (或读取 CREDENTIALS_DIRECTORY/tls_key)")
@@ -2065,6 +2633,14 @@ def main() -> None:
             print(f"[sniffer] 已挂载只读 BPF 探针: iface={args.sniff_iface} tcp dst port {args.sniff_port}")
         else:
             print(f"[sniffer] 未启用旁路抓包 ({SNIFFER.error})，自动回退至 Nginx TLS 头模式")
+
+    if args.quic_port > 0:
+        QUIC_COLLECTOR = QUICInitialCollector(args.quic_port)
+        QUIC_COLLECTOR.start()
+        if QUIC_COLLECTOR.active:
+            print(f"[quic] 已挂载只读 QUIC Initial 解密采集器: udp port {args.quic_port}")
+        else:
+            print(f"[quic] 未启用 QUIC UDP 采集 ({QUIC_COLLECTOR.error})")
 
     if args.tls_bridge_port > 0:
         cred_dir = os.environ.get("CREDENTIALS_DIRECTORY", "")

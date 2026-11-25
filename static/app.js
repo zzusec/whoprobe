@@ -1,4 +1,4 @@
-/* WhoProbe v7.7.1 — 191-Probe L3–L7 Forensic, QUIC Initial JA4Q, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.7.2 — 191-Probe L3–L7 Forensic, QUIC Initial JA4Q, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -4343,19 +4343,19 @@
   // (10) Input-event trust & mechanical straight-line ratio (passively recorded during the scan)
   function inputStraightRatio(pts) {
     let wins = 0, straight = 0;
-    for (let i = 0; i + 8 < pts.length; i += 4) {
-      const a = pts[i], b = pts[i + 8];
+    for (let i = 0; i + 16 < pts.length; i += 8) {
+      const a = pts[i], b = pts[i + 16];
       const len = Math.hypot(b.x - a.x, b.y - a.y);
-      if (len < 40) continue;
+      if (len < 80) continue;
       wins++;
       let maxDev = 0;
-      for (let j = i + 1; j < i + 8; j++) {
+      for (let j = i + 1; j < i + 16; j++) {
         const p = pts[j];
         maxDev = Math.max(maxDev, Math.abs((b.x - a.x) * (a.y - p.y) - (a.x - p.x) * (b.y - a.y)) / len);
       }
-      if (maxDev < 1.0) straight++;
+      if (maxDev < 0.75) straight++;
     }
-    return wins >= 10 ? straight / wins : null;
+    return wins >= 16 ? straight / wins : null;
   }
   function probeInputTrust() {
     const L = INPUT_LOG;
@@ -6436,12 +6436,12 @@
     if ((R.jsEnvBad || []).length) botBad.push(`非浏览器宿主 ${R.jsEnvBad.join("/")}`);
     if (R.bioSynthKey) botBad.push("按键驻留 <1.5ms（脚本瞬时派发按键特征）");
     const botWarn = [];
-    if ((R.headlessSoft || []).length && !(R.headlessHits || []).length) botWarn.push(`无头弱信号：${R.headlessSoft[0]}`);
+    if ((R.headlessSoft || []).length >= 2 && !(R.headlessHits || []).length) botWarn.push(`无头弱信号：${R.headlessSoft.slice(0, 2).join("；")}`);
     if (R.cdpHit) botWarn.push("CDP Runtime 调试协议已附着（开发者工具打开或被 Puppeteer / Playwright 控制）");
     if (R.popupDisabled) botWarn.push("无手势弹窗拦截已关闭 (--disable-popup-blocking 或站点放行)");
     if (R.winHeadless) botWarn.push("无头窗口尺寸特征（浏览器外框为 0 或窗口大于屏幕）");
-    if (R.inputStraight != null && R.inputStraight >= 0.9) botWarn.push(`鼠标轨迹 ${Math.round(R.inputStraight * 100)}% 为机械直线`);
-    if (R.bioConstVel) botWarn.push("鼠标移动呈恒定匀速插值（缺少真人加减速动力学特征）");
+    if (R.inputStraight != null && R.inputStraight >= 0.95 && R.bioConstVel) botWarn.push(`鼠标轨迹 ${Math.round(R.inputStraight * 100)}% 为匀速机械直线`);
+    else if (R.bioConstVel) botWarn.push("鼠标移动呈恒定匀速插值（缺少真人加减速动力学特征）");
     out.bot = botBad.length
       ? { level: "bad", summary: `检出自动化控制框架特征：${[...botBad, ...botWarn].join(" · ")}` }
       : botWarn.length
@@ -6651,12 +6651,24 @@
         return (R.mobileHits || []).length >= 2 ? { single: "移动端仿真矛盾" } : { left: "ClientHints", op: "≠", right: uaOs };
       case "bot":
         return res?.level === "warn"
-          ? { single: R.cdpHit ? "CDP 调试附着" : R.winHeadless ? "无头窗口尺寸" : "机械轨迹" }
+          ? {
+              single: R.cdpHit
+                ? "CDP 调试附着"
+                : R.winHeadless
+                ? "无头窗口尺寸"
+                : R.popupDisabled
+                ? "弹窗拦截关闭"
+                : (R.headlessSoft || []).length >= 2
+                ? "无头弱信号"
+                : "匀速机械轨迹"
+            }
           : { single: (R.inputUntrusted || 0) > 0 && !(R.botHits || []).length ? "合成输入事件" : "暴露自动化特征" };
       case "fp":
-        return R.etag?.seen
+        return R.cacheResurrected && R.etag?.seen
           ? { left: "清空存储", op: "≠", right: "ETag 命中" }
-          : { single: "跨站指纹固定" };
+          : R.cacheResurrected
+          ? { left: "清空存储", op: "≠", right: "残留复活" }
+          : { single: R.etag?.seen ? "ETag/存储跨会话锁定" : "跨站指纹固定" };
       default:
         return { single: lv === "bad" ? "高危冲突" : "可疑" };
     }
@@ -6806,7 +6818,14 @@
     if (fIssues) fIssues.textContent = R.finished || badCnt + warnCnt ? `仅看异常 ${badCnt + warnCnt}` : "仅看异常";
     if (fOk) fOk.textContent = R.finished || okCnt ? `已通过 ${okCnt}` : "已通过";
 
-    $("#sceneBadge").textContent = currentScene === "privacy" ? "防追踪视角" : "伪装自检";
+    const isPriv = currentScene === "privacy";
+    $("#sceneBadge").textContent = isPriv ? "防追踪视角" : "伪装自检";
+    const sCardTitle = $("#scoreCardTitle");
+    if (sCardTitle) sCardTitle.textContent = isPriv ? "防追踪隐私度" : "抗风控健康度";
+    const pHeadTitle = $("#priorityHeading");
+    if (pHeadTitle) pHeadTitle.textContent = isPriv ? "隐私暴露项（点按查看防护方法）" : "头号穿帮项（点按查看改法）";
+    const iUnit = $("#issueUnit");
+    if (iUnit) iUnit.textContent = isPriv ? "项追踪暴露" : "处暴露破绽";
 
     // Gate composite score, grade, ring gauge & priority list until all probes confirm (R.finished === true)
     if (!R.finished) {
@@ -6879,7 +6898,9 @@
     $("#scoreSub").textContent = totalIssues === 0 && unverifiedCnt > 0
       ? `${unverifiedCnt} 项网络探针超时，已按不确定性降级`
       : totalIssues === 0
-      ? "协议栈、出口信誉与硬件指纹全项自洽"
+      ? (isPriv ? "已启用防指纹与网络隔离保护，跨站难以锁定你" : "协议栈、出口信誉与硬件指纹全项自洽")
+      : isPriv
+      ? "常规浏览器未开防指纹加噪 · 网站可免 Cookie 跨站认出回访"
       : badCnt > 0
       ? `${badCnt} 项高危冲突 · 易触发验证码或风控拦截`
       : `${warnCnt} 项细节可疑 · 无致命协议冲突`;
@@ -6977,27 +6998,37 @@
 
     renderScenarios();
 
-    // Run-over-run comparison
+    // Run-over-run comparison (isolated per scene so switching 伪装自检 <-> 防追踪 never cross-compares)
+    let prevMap = {};
+    try {
+      const parsed = JSON.parse(store.get(SK.prevChecks) || "{}");
+      if (parsed && typeof parsed === "object" && !("issues" in parsed)) prevMap = parsed;
+    } catch (e) {}
     if (recordHistory) {
-      let prev = null;
-      try { prev = JSON.parse(store.get(SK.prevChecks) || "null"); } catch (e) {}
-      store.set(SK.prevChecks, JSON.stringify({ at: Date.now(), issues: totalIssues, score }));
-      const cmpEl = $("#cmpBadge");
-      if (cmpEl && prev && typeof prev.issues === "number") {
-        const d = totalIssues - prev.issues;
-        cmpEl.hidden = false;
-        cmpEl.textContent = d === 0 ? "与上次持平" : d < 0 ? `比上次少 ${Math.abs(d)} 处 ↓` : `比上次多 ${d} 处 ↑`;
-        cmpEl.className = "text-[11px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap " + (
-          d < 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-            : d > 0 ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
-            : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-        );
-      }
+      R.prevByScene = { ...prevMap };
+      const nextMap = { ...prevMap, [currentScene]: { at: Date.now(), issues: totalIssues, score } };
+      store.set(SK.prevChecks, JSON.stringify(nextMap));
 
       let hist = [];
       try { hist = JSON.parse(store.get(SK.history) || "[]"); } catch (e) {}
       hist = [...(Array.isArray(hist) ? hist : []), { t: Date.now(), s: score }].slice(-10);
       store.set(SK.history, JSON.stringify(hist));
+    }
+    const basePrev = (R.prevByScene || prevMap)?.[currentScene];
+    const cmpEl = $("#cmpBadge");
+    if (cmpEl) {
+      if (basePrev && typeof basePrev.issues === "number") {
+        const d = totalIssues - basePrev.issues;
+        cmpEl.hidden = false;
+        cmpEl.textContent = d === 0 ? "与上次持平" : d < 0 ? `比上次少 ${Math.abs(d)} 处 ↓` : `比上次多 ${d} 处 ↑`;
+        cmpEl.className = "text-[11px] font-medium px-2 py-0.5 rounded-md whitespace-nowrap shrink-0 " + (
+          d < 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+            : d > 0 ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+            : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+        );
+      } else {
+        cmpEl.hidden = true;
+      }
     }
   }
 
@@ -7969,7 +8000,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.7.1",
+        version: "7.7.2",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,

@@ -1,5 +1,17 @@
 # Changelog
 
+## [v7.7.2] - 2026-11-25
+
+### Fixed — 修复 Mac 触控板快速划动「机械轨迹」误报与「防追踪」视角胶囊/副标题混用
+- **消除桌面触控板单次划动与热点切换瞬间 `bot` 误报「机械轨迹」(`static/app.js`)**：
+  - 加宽 `inputStraightRatio` 采样窗口（16 点长跨度、步进 8、最小弦长 80px）并结合速度变异系数 `bioConstVel` 双重确认，避免 MacBook 触控板指针加速平滑下的短促快速甩动被误判为脚本直线插值；
+  - 单条孤立的 `headlessSoft`（如刚切换手机热点时 Chrome NQE 尚未采样完成导致 `navigator.connection.rtt === 0`）不再单独触发 `bot` 警告扣分（需 ≥2 项弱信号叠加）；并补齐 `getVisualConflict("bot")` 各警告子项专属胶囊标签。
+- **修正「防追踪」视角下 `fp` 差异胶囊与专属提示文案 (`static/app.js` + `static/index.html`)**：
+  - 修复未清空 `LocalStorage`（`4/4 项存储认出回访`）却显示 `清空存储 ≠ ETag 命中` 的逻辑错误（现仅在 `R.cacheResurrected` 为真时显示，常规回访准确显示 `ETag/存储跨会话锁定`）；
+  - 区分「伪装自检」与「防追踪」视角的卡片标题（`抗风控健康度` vs `防追踪隐私度`）、副标题说明及历史对比基线（`SK.prevChecks` 按视角独立存储，不再跨模式混算增减）。
+
+---
+
 ## [v7.7.1] - 2026-11-25
 
 ### Fixed — 修复真机 5G 蜂窝网络（CGNAT）下「TSval 时钟突变」高危误报与小屏标题折行

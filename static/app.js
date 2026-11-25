@@ -1,4 +1,4 @@
-/* WhoProbe v7.9.0 — website visibility, transport evidence and egress diagnostics */
+/* WhoProbe v7.9.1 — website visibility, transport evidence and egress diagnostics */
 (function () {
   "use strict";
 
@@ -201,7 +201,7 @@
     ["nettype", "net", "线路属性判定", false, "综合 ASN 名单、机房关键字、蜂窝标志与 Apple Relay 网段识别机房 VPS 或原生家宽。"],
     ["tzip", "net", "出口 IP 所属时区", false, "出口 IP 所在地理区域对应的标准 IANA 时区与当前 UTC 偏移量。"],
     ["ptr", "net", "反向 DNS 解析 (PTR)", true, "对出口 IP 进行反向域名解析得到的主机名，家宽常含 dynamic/broadband，机房常含 cloud/vps。"],
-    ["tcprtt", "net", "服务端 TCP 握手 vs 浏览器 RTT", false, "服务端旁路抓包实测 SYN→ClientHello 物理握手延迟，与浏览器 HTTP 往返对比可抓出代理中转多绕的路程。"],
+    ["tcprtt", "net", "服务端 TCP 握手 vs 浏览器 HTTP 耗时", false, "对照服务端观测的 SYN→ClientHello 与浏览器 HTTP 响应耗时。无握手对照时，HTTP 偏慢只提示性能问题，不能确认中转。"],
     ["wsping", "net", "服务端主动控制帧 Ping 测距", false, "服务端在 WebSocket 通道主动连发 RFC 6455 Ping 控制帧，测量浏览器底层 C++ 网络进程自动回传 Pong 的纯传输耗时（绕过页面 JS 主线程节流），与 HTTP fetch 及 TCP 握手交叉核验。"],
     ["muxjitter", "net", "微脉冲粘包与多路复用抖动", false, "连续发射微间隔并发 HTTP 脉冲，对比服务端微秒级到达间隔压缩比与 RTT 抖动标准差，识别 smux/yamux/h2mux 隧道合并特征。"],
     ["clock", "net", "本机时钟与服务端偏差", false, "利用往返中点校准法测量浏览器系统时间与服务端标准时间的快慢误差。"],
@@ -227,7 +227,7 @@
     ["webrtc", "net", "WebRTC STUN 公网地址", true, "通过 STUN 协议在 UDP 通道探测本机反射出的真实公网 IPv4/IPv6 地址，未开 TUN 的代理常在此漏底。"],
     ["rtcsdp", "net", "WebRTC SDP 协议栈与 SCTP 模板", false, "纯本地生成 RTCPeerConnection Offer SDP（不连外网），提取 ice-options、DTLS 指纹哈希算法、SCTP max-message-size 与 RTP 扩展模板签名，区分 libwebrtc、WebKit 与 Gecko 真实媒体栈。"],
     ["ufrag", "net", "SDP ice-ufrag 长度与 Origin 引擎互证", false, "核验 SDP Offer 的 o= Origin 签名（Firefox 必含 THIS_IS_SDPARTA）与 a=ice-ufrag 随机串长度（Chromium libwebrtc 恒为 4 字符，Firefox nICEr 为 8 字符），专杀 Chromium 套壳伪装 Firefox 或 Camoufox 伪装 Chrome。"],
-    ["udprtt", "net", "WebRTC UDP 握手 vs TCP 往返差", false, "对比浏览器直接发起的 STUN UDP 候选返回耗时与 HTTP TCP 热连接往返耗时，识别仅代理 TCP 或高开销 UDP-over-TCP 封装。"],
+    ["udprtt", "net", "WebRTC 首个公网 ICE 候选出现耗时", false, "测量从开始 ICE 收集到首个公网候选出现的时间，不是端到端 UDP RTT。是否存在不同出口另按候选地址与本站地址核对。"],
     ["lan", "net", "WebRTC 局域网地址与 mDNS", true, "读取 ICE Host 候选：现代浏览器通常用随机 .local (mDNS) 隐藏内网 IP，旧环境或特殊设置会直接暴露。"],
     ["v6mac", "net", "IPv6 物理网卡 MAC 泄露", true, "扫描所有观测到的 IPv6 地址后 64 位是否含 ff:fe (EUI-64)，一旦命中即永久暴露物理网卡 MAC。"],
 
@@ -327,7 +327,7 @@
     ["stackfmt", "dev", "Error 调用栈语法与引擎互证", false, "解析原生 Error.prototype.stack 行缩进语法（V8 的 '    at ' vs SpiderMonkey/JSC 的 '@'）及结构化堆栈接口，反证跨浏览器内核的 UA 伪装。"],
     ["wasmfeat", "dev", "WebAssembly 特性矩阵与内核代际", false, "逐项校验 13 项 WASM 提案字节码（SIMD、异常处理、尾调用、GC、Relaxed SIMD、线程等）与 JSPI，按各特性正式上线版本反推 V8 / SpiderMonkey 真实代际，拆穿虚报新版 UA 的旧内核。"],
     ["fontlocal", "dev", "FontFace local() 字体旁路核验", false, "绕过 Canvas 字宽测量，直接用 CSS Font Loading API 的 local() 加载 17 款系统标志性字体，与 Canvas 字体探测交叉比对，识破只 Hook measureText 的字体伪装与跨系统虚报。"],
-    ["cpuarch", "dev", "浮点 NaN 位模式 CPU 架构", false, "Infinity − Infinity 生成的 NaN 在 x86 与 ARM 上高字节不同（0xFF vs 0x7F），与 Client Hints / UA 自报架构比对，可识破手机 UA 跑在 x86 模拟器 / 云手机上的情形（FingerprintJS architecture 同款）。"],
+    ["cpuarch", "dev", "浮点 NaN 位模式（CPU 架构参考）", false, "Infinity − Infinity 产生的 NaN 位模式取决于浏览器和运行环境；与明确上报的架构做参考对照，不代表物理 CPU，也不单独计分。"],
     ["sysfont", "dev", "CSS 系统字体关键字与系统色", false, "解析 font: caption / menu / message-box 等系统字体关键字与 Canvas / Highlight / AccentColor 等系统色，渲染引擎直接取自宿主操作系统，可反证伪装系统（CreepJS 同款）。"],
     ["navprops", "dev", "navigator 厂商属性一致性", false, "核对 vendor、productSub、eval.toString 长度、appVersion、oscpu / buildID、userAgentData、H.264 专利解码与 15 种厂商全局对象（FingerprintJS vendorFlavors）是否与自报浏览器一致——Akamai / BotD 同款检查。"],
     ["cssv", "dev", "CSS 特性反推渲染引擎版本", false, "测试 :has()、color-mix()、anchor-name、reading-flow 等现代 CSS 特性，锁定真实 Blink 内核代际。"],
@@ -411,7 +411,7 @@
     ["conn", "底层 TCP/TLS 协议栈与自报系统", ["disguise"]],
     ["synspoof", "IP/TCP 内核时钟连续性与防改包", ["disguise"]],
     ["reality", "出口主动回探（:443 Reality 与代理端口）", ["disguise"]],
-    ["rtt", "往返延迟三维测距（TCP/HTTP/UDP）", ["disguise"]],
+    ["rtt", "HTTP 耗时与传输层时序对照", ["disguise"]],
     ["webrtc", "WebRTC STUN 真实 IP 与网卡 MAC 泄漏", ["disguise", "privacy"]],
     ["dc", "出口 IP 机房 / 原生住宅多源投票", ["disguise"]],
     ["lease", "伪家宽自报冲突、IP 租赁段与广播属性", ["disguise"]],
@@ -419,7 +419,7 @@
     ["subpixel", "字体光栅化、原生控件与滚动条跨系统核验", ["disguise"]],
     ["hwvirt", "虚拟化抢占抖动与显卡硬解芯片核验", ["disguise"]],
     ["tamper", "浏览器环境篡改与谎言检测", ["disguise"]],
-    ["fpb", "指纹浏览器与跨线程矛盾", ["disguise"]],
+    ["fpb", "浏览器平台与跨线程一致性", ["disguise"]],
     ["ua", "UA、Client Hints 与显卡系统一致性", ["disguise"]],
     ["bot", "自动化控制与无头浏览器痕迹", ["disguise"]],
     ["fp", "跨站指纹与无痕缓存追踪抗性", ["privacy"]]
@@ -1287,6 +1287,16 @@
     return { level: "ok", extra, cellularJitter: false };
   }
 
+  function describeHttpOnlyLatency(httpMs) {
+    const estimate = expectedDirectRttMs();
+    const elevated = estimate ? httpMs >= 230 && httpMs - estimate.expectedMs >= 95 : httpMs >= 270;
+    const reference = estimate ? `（地理参考约 ${estimate.expectedMs} ms）` : "";
+    return {
+      level: "info", httpOnly: true, elevated,
+      summary: `HTTP 响应耗时 ${httpMs} ms${reference}${elevated ? "，延迟偏高" : ""}；未获得 TCP 握手对照，不能判断是否中转`
+    };
+  }
+
   function backfillExitMeta(meta = {}) {
     if (!meta) return;
     const metaIp = cleanIp(meta.ip);
@@ -1647,9 +1657,9 @@
       if (R.latDone && R.httpRtt != null) {
         const gap = classifyHandshakeGap(R.httpRtt, R.srvTcpRtt);
         const extraText = gap.level === "ok"
-          ? (gap.cellularJitter ? ` · 蜂窝空口波动 +${gap.extra} ms` : " · 往返吻合")
-          : ` · 浏览器多绕 +${gap.extra} ms`;
-        setProbe("tcprtt", `浏览器 ${R.httpRtt} ms vs 服务端握手 ${R.srvTcpRtt} ms${extraText}`, {
+          ? (gap.cellularJitter ? ` · 蜂窝链路常见差值 +${gap.extra} ms` : " · 耗时接近")
+          : ` · 耗时差 +${gap.extra} ms`;
+        setProbe("tcprtt", `HTTP 响应 ${R.httpRtt} ms vs SYN→ClientHello ${R.srvTcpRtt} ms${extraText}`, {
           tone: gap.level
         });
         $("#kpiRttVal").textContent = `${R.httpRtt} ms / 握手 ${R.srvTcpRtt} ms`;
@@ -2093,26 +2103,19 @@
     if (R.httpRtt != null && R.srvTcpRtt != null) {
       const gap = classifyHandshakeGap(R.httpRtt, R.srvTcpRtt);
       const extraText = gap.level === "ok"
-        ? (gap.cellularJitter ? ` · 蜂窝空口波动 +${gap.extra} ms` : " · 往返吻合")
-        : ` · 浏览器多绕 +${gap.extra} ms`;
-      setProbe("tcprtt", `浏览器 ${R.httpRtt} ms vs 服务端握手 ${R.srvTcpRtt} ms${extraText}`, {
+        ? (gap.cellularJitter ? ` · 蜂窝链路常见差值 +${gap.extra} ms` : " · 耗时接近")
+        : ` · 耗时差 +${gap.extra} ms`;
+      setProbe("tcprtt", `HTTP 响应 ${R.httpRtt} ms vs SYN→ClientHello ${R.srvTcpRtt} ms${extraText}`, {
         tone: gap.level,
-        why: `热连接采样最小值: ${samples.map(x => Math.round(x) + "ms").join(", ")}\n服务端网卡最近窗口 SYN→ClientHello 中位数: ${R.srvTcpRtt}ms`
+        why: `HTTP 响应耗时样本（显示最小值）：${samples.map(x => Math.round(x) + "ms").join(", ")}\n与服务端探针对应的 SYN→ClientHello 耗时：${R.srvTcpRtt} ms`
       });
       $("#kpiRttVal").textContent = `${R.httpRtt} ms / 握手 ${R.srvTcpRtt} ms`;
     } else if (R.httpRtt != null) {
-      const geoBase = expectedDirectRttMs();
-      if (geoBase) {
-        const gDiff = Math.round(R.httpRtt - geoBase.expectedMs);
-        const gTone = (gDiff >= 145 && R.httpRtt >= 290) ? "bad" : (gDiff >= 95 && R.httpRtt >= 230) ? "warn" : "ok";
-        setProbe("tcprtt", `浏览器往返 ${R.httpRtt} ms vs 光缆物理基准 ~${geoBase.expectedMs} ms (${geoBase.km} km${gDiff >= 95 ? ` · 多绕 +${gDiff} ms` : ""})`, {
-          tone: gTone,
-          why: `5 次热连接采样最小值: ${samples.map(x => Math.round(x) + "ms").join(", ")}\n出口距服务端大圆距离: ${geoBase.km} km`
-        });
-      } else {
-        const absTone = R.httpRtt >= 360 ? "bad" : R.httpRtt >= 270 ? "warn" : "neutral";
-        setProbe("tcprtt", `浏览器往返 ${R.httpRtt} ms${R.httpRtt >= 270 ? "（高于洲际直连光缆物理上限）" : "（连接复用未重测握手）"}`, { tone: absTone });
-      }
+      const latency = describeHttpOnlyLatency(R.httpRtt);
+      setProbe("tcprtt", latency.summary, {
+        tone: latency.elevated ? "warn" : "neutral",
+        why: `HTTP 响应耗时样本（显示最小值）：${samples.map(x => Math.round(x) + "ms").join(", ")}`
+      });
       $("#kpiRttVal").textContent = `HTTP ${R.httpRtt} ms`;
     } else {
       setNA("tcprtt", "网络计时受限");
@@ -2421,28 +2424,12 @@
       return setNA("udprtt", "WebRTC 已禁用");
     }
     if (!R.rtcDone) return;
-    if (R.stunRttMs == null) {
-      setProbe("udprtt", "未收到公网 STUN UDP 响应（UDP 被屏蔽或仅 mDNS）", { tone: "neutral" });
-      return;
-    }
-    if (R.httpRtt != null) {
-      const delta = Math.round(R.stunRttMs - R.httpRtt);
-      const sign = delta >= 0 ? `+${delta}` : `${delta}`;
-      const anycastCloserOnly = delta <= -65 && R.srvTcpRtt != null && (R.httpRtt - R.srvTcpRtt) < 42 && !getLeakedWebrtcIps().length;
-      const suspect = Math.abs(delta) >= 95 && !anycastCloserOnly;
-      setProbe("udprtt", `STUN UDP 候选 ${R.stunRttMs} ms vs HTTP TCP ${R.httpRtt} ms (差值 ${sign} ms)`, {
-        tone: suspect ? "warn" : "ok",
-        why: anycastCloserOnly
-          ? "STUN Anycast 边缘节点物理距离比本站单播源站更近，且服务端 TCP 握手往返吻合、无异网 IP 泄漏。"
-          : delta <= -65
-          ? "UDP 显著快于 HTTP TCP：高度疑似代理仅接管了 TCP，而 UDP 直接走本地物理宽带穿透！"
-          : delta >= 110
-          ? "UDP 显著慢于 TCP：疑似经过 UDP-over-TCP (UoT) 二次隧道封装或远端中继。"
-          : "UDP 与 TCP 往返时延量级吻合。"
-      });
-    } else {
-      setProbe("udprtt", `STUN UDP 候选握手 ${R.stunRttMs} ms`);
-    }
+    const iceCandidateMs = R.stunRttMs;
+    if (iceCandidateMs == null) return setNA("udprtt", "未获得公网 ICE 候选出现耗时");
+    setProbe("udprtt", `首个公网 ICE 候选 ${iceCandidateMs} ms${R.httpRtt != null ? ` · HTTP 响应 ${R.httpRtt} ms` : ""}`, {
+      tone: "neutral",
+      why: "候选出现耗时包含 ICE 收集开销，且目标不一定是本站。这两个时间不能单独证明 UDP 旁路或中转。"
+    });
   }
 
   // 5. WebRTC STUN, UDP Timing & LAN mDNS Probe (3 items: webrtc, udprtt, lan)
@@ -3369,19 +3356,37 @@
     });
   }
 
-  // Web Worker independent thread verification
-  async function probeWorkerRealm() {
-    if (!window.Worker || !window.Blob) {
-      R.workerDiff = [];
-      return setNA("worker");
+  function realmValue(value) {
+    if (value == null || (typeof value === "number" && !Number.isFinite(value))) return null;
+    const text = String(value);
+    return text.trim() ? text : null;
+  }
+
+  function compareRealmReadings(main, other) {
+    const diffs = [], missing = [];
+    let compared = 0;
+    for (const [field, value] of Object.entries(main)) {
+      const a = realmValue(value), b = realmValue(other[field]);
+      if (a === null || b === null) missing.push(field);
+      else {
+        compared++;
+        if (a !== b) diffs.push(field);
+      }
     }
+    return { diffs, missing, compared };
+  }
+
+  // Compare observed values, not whether an optional API is exposed.
+  async function probeWorkerRealm() {
+    R.workerDiff = [];
+    if (!window.Worker || !window.Blob) return setNA("worker");
     const code = `
       try {
         postMessage({
           ua: navigator.userAgent,
           plat: navigator.platform,
           langs: (navigator.languages || []).join(","),
-          hc: navigator.hardwareConcurrency,
+          hc: navigator.hardwareConcurrency || null,
           mem: navigator.deviceMemory || null,
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone
         });
@@ -3391,7 +3396,6 @@
     let wk = null;
     try { wk = new Worker(blobUrl); } catch (e) {
       URL.revokeObjectURL(blobUrl);
-      R.workerDiff = [];
       return setNA("worker", "CSP 或沙箱限制创建 Worker");
     }
     const wData = await within(new Promise(res => {
@@ -3401,24 +3405,27 @@
     wk.terminate();
     URL.revokeObjectURL(blobUrl);
 
-    if (!wData) {
-      R.workerDiff = [];
-      return setNA("worker", "Worker 未返回读数");
-    }
+    if (!wData) return setNA("worker", "Worker 未返回读数");
     const main = {
       ua: navigator.userAgent,
       plat: navigator.platform,
       langs: (navigator.languages || []).join(","),
-      hc: navigator.hardwareConcurrency,
+      hc: navigator.hardwareConcurrency || null,
       mem: navigator.deviceMemory || null,
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone
     };
-    const labels = { ua: "userAgent", plat: "platform", langs: "languages", hc: "CPU核数", mem: "内存", tz: "时区" };
-    const diffs = Object.keys(main).filter(k => wData[k] != null && String(wData[k]) !== "" && String(wData[k]) !== String(main[k]));
+    const labels = { ua: "userAgent", plat: "platform", langs: "languages", hc: "CPU 核数", mem: "内存", tz: "时区" };
+    const { diffs, missing, compared } = compareRealmReadings(main, wData);
     R.workerDiff = diffs;
-    setProbe("worker", diffs.length ? `跨线程矛盾！Worker 与主页面不一致: ${diffs.map(k => labels[k]).join(", ")}` : "主页面与独立 Worker 线程完全一致", {
-      tone: diffs.length ? "bad" : "ok",
-      why: diffs.length ? diffs.map(k => `主线程 ${labels[k]}: ${main[k]}\nWorker ${labels[k]}: ${wData[k]}`).join("\n") : ""
+    if (!compared) return setNA("worker", "主页面与 Worker 无可核对的读数");
+    const detail = missing.length ? `；未核对：${missing.map(k => labels[k]).join("、")}` : "";
+    setProbe("worker", (diffs.length ? `主页面与 Worker 不一致：${diffs.map(k => labels[k]).join("、")}`
+      : `主页面与 Worker 已核对 ${compared} 项，读数一致`) + detail, {
+      tone: diffs.length ? "bad" : missing.length ? "neutral" : "ok",
+      why: [
+        ...diffs.map(k => `${labels[k]}：主线程 ${main[k]} / Worker ${wData[k]}`),
+        ...missing.map(k => `${labels[k]}：主线程 ${realmValue(main[k]) ?? "未读到"} / Worker ${realmValue(wData[k]) ?? "未读到"}`)
+      ].join("\n")
     });
   }
 
@@ -3500,19 +3507,21 @@
       }
     }
 
-    // Clean iframe value comparison
-    const frameDiffs = [];
+    // Clean iframe value comparison; missing reads are not disagreements.
+    let frame = { diffs: [], missing: [], compared: 0 };
     try {
       if (w && w.navigator && w.screen && w.Intl) {
-        const cmp = (name, a, b) => { if (String(a) !== String(b)) frameDiffs.push(name); };
-        cmp("userAgent", navigator.userAgent, w.navigator.userAgent);
-        cmp("platform", navigator.platform, w.navigator.platform);
-        cmp("languages", navigator.languages, w.navigator.languages);
-        cmp("hardwareConcurrency", navigator.hardwareConcurrency, w.navigator.hardwareConcurrency);
-        cmp("deviceMemory", navigator.deviceMemory, w.navigator.deviceMemory);
-        cmp("screen", `${screen.width}x${screen.height}`, `${w.screen.width}x${w.screen.height}`);
-        cmp("timeZone", Intl.DateTimeFormat().resolvedOptions().timeZone, w.Intl.DateTimeFormat().resolvedOptions().timeZone);
-        cmp("timezoneOffset", new Date().getTimezoneOffset(), new w.Date().getTimezoneOffset());
+        const snapshot = (nav, scr, intl, clock) => ({
+          userAgent: nav.userAgent,
+          platform: nav.platform,
+          languages: nav.languages,
+          hardwareConcurrency: nav.hardwareConcurrency || null,
+          deviceMemory: nav.deviceMemory || null,
+          screen: `${scr.width}x${scr.height}`,
+          timeZone: intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezoneOffset: new clock().getTimezoneOffset()
+        });
+        frame = compareRealmReadings(snapshot(navigator, screen, Intl, Date), snapshot(w.navigator, w.screen, w.Intl, w.Date));
       }
     } catch (e) {}
 
@@ -3520,11 +3529,16 @@
 
     const uniqLies = Array.from(new Set(lies));
     R.lies = uniqLies;
-    R.iframeDiffs = frameDiffs;
+    R.iframeDiffs = frame.diffs;
 
-    setProbe("iframe", frameDiffs.length ? `沙箱读数不符：${frameDiffs.join(", ")}` : "空白 iframe 与主页面 8 项核心读数一致", {
-      tone: frameDiffs.length ? "bad" : "ok"
-    });
+    if (!frame.compared) setNA("iframe", "主页面与空白 iframe 无可核对的读数");
+    else {
+      const detail = frame.missing.length ? `；未核对：${frame.missing.join("、")}` : "";
+      setProbe("iframe", (frame.diffs.length ? `沙箱读数不符：${frame.diffs.join("、")}`
+        : `空白 iframe 与主页面已核对 ${frame.compared} 项，读数一致`) + detail, {
+        tone: frame.diffs.length ? "bad" : frame.missing.length ? "neutral" : "ok"
+      });
+    }
     setProbe("lies", uniqLies.length ? `抓获 ${uniqLies.length} 处被钩子重写的接口：${uniqLies.slice(0, 4).join(" · ")}${uniqLies.length > 4 ? "…" : ""}` : `检验 ${testedCount} 项核心原生原型与属性，未发现篡改`, {
       tone: uniqLies.length ? "bad" : "ok",
       why: uniqLies.length ? `全部异常接口:\n${uniqLies.join("\n")}` : ""
@@ -4876,20 +4890,18 @@
       byte = u[3];
     } catch (e) {}
     const arch = byte === 255 ? "x86" : byte === 127 ? "arm" : "";
-    R.cpuArch = arch;
     const ua = navigator.userAgent || "";
     const claims = [];
     if (R.hi?.architecture) claims.push(["高熵 Client Hints", /arm/i.test(R.hi.architecture) ? "arm" : /x86/i.test(R.hi.architecture) ? "x86" : ""]);
-    if (/Android|iPhone|iPad|iPod/.test(ua)) claims.push(["移动端 UA", "arm"]);
     if (/aarch64|armv\d/i.test(ua)) claims.push(["UA", "arm"]);
     if (/x86_64|Win64; x64|WOW64|i686/i.test(ua) && !/Android/.test(ua)) claims.push(["UA", "x86"]);
-    const conflict = arch ? claims.filter(([, c]) => c && c !== arch && !(c === "x86" && /Windows/.test(ua))) : [];
-    R.cpuArchConflict = conflict.length ? `${conflict[0][0]} 自报 ${conflict[0][1]}，浮点 NaN 位模式实测 ${arch}` : "";
-    const emu = arch === "x86" && /Android|iPhone|iPad/.test(ua);
-    setProbe("cpuarch", arch
-      ? `${arch === "x86" ? "x86 / x86-64" : "ARM / AArch64"} (NaN 高字节 0x${byte.toString(16)})${conflict.length ? ` · 与${conflict[0][0]}矛盾` : ""}${emu ? " · 手机 UA 跑在 x86 上：模拟器 / 云手机特征" : ""}`
-      : "无法判定（非标准浮点实现）",
-    { tone: conflict.length || emu ? "bad" : "neutral" });
+    const different = arch ? claims.find(([, c]) => c && c !== arch) : null;
+    R.cpuArchHint = different ? `${different[0]} 上报 ${different[1]}，NaN 模式推测 ${arch}` : "";
+    if (!arch) return setNA("cpuarch", "此 NaN 位模式无法用于架构参考");
+    setProbe("cpuarch", `架构参考：${arch === "x86" ? "x86 / x86-64" : "ARM / AArch64"}（NaN 高字节 0x${byte.toString(16)}）${different ? `；${different[0]} 上报 ${different[1]}` : ""}`, {
+      tone: "neutral",
+      why: "NaN 位模式可能受到浏览器实现和运行环境影响，不是物理 CPU 的直接读数；此项不单独判定异常或扣分。"
+    });
   }
 
   // (7) CSS system font keywords & system colors → host OS (CreepJS style)
@@ -5356,7 +5368,7 @@
       const gap = Math.round(R.httpRtt - wsMs);
       cmpParts.push(`HTTP ${R.httpRtt} ms`);
       if (gap >= 85) {
-        cmpParts.push(`JS 主线程延迟 +${gap} ms`);
+        cmpParts.push(`比 HTTP 少 ${gap} ms`);
         tone = "warn";
       }
     }
@@ -5364,7 +5376,7 @@
       const wsGap = classifyHandshakeGap(wsMs, R.srvTcpRtt);
       cmpParts.push(`TCP 握手 ${R.srvTcpRtt} ms`);
       if (wsGap.level === "bad") {
-        cmpParts.push(`代理多绕 +${wsGap.extra} ms`);
+        cmpParts.push(`耗时差 +${wsGap.extra} ms`);
         tone = "bad";
       } else if (wsGap.level === "warn" && tone === "ok") {
         tone = "warn";
@@ -5619,25 +5631,27 @@
       return setNA("swrealm", "当前容器未启用 SharedWorker / ServiceWorker");
     }
 
-    const diffs = [];
-    const mainLang = (navigator.language || "").split("-")[0].toLowerCase();
-    const mainGpu = norm(R.gpuRaw || "");
+    const langTag = value => (value || "").split("-")[0].toLowerCase();
+    const main = { UA: navigator.userAgent, platform: navigator.platform, "CPU 核数": navigator.hardwareConcurrency || null,
+      "时区": R.tz, "语言": langTag(navigator.language), GPU: norm(R.gpuRaw) };
+    const diffs = [], missing = [];
+    let compared = 0;
     for (const [rName, d] of realms) {
-      if (d.ua && d.ua !== navigator.userAgent) diffs.push(`${rName}.UA`);
-      if (d.plat && d.plat !== navigator.platform) diffs.push(`${rName}.platform`);
-      if (d.hc && navigator.hardwareConcurrency && d.hc !== navigator.hardwareConcurrency) diffs.push(`${rName}.CPU核数(${d.hc}≠${navigator.hardwareConcurrency})`);
-      if (d.tz && R.tz && d.tz !== R.tz) diffs.push(`${rName}.时区(${d.tz}≠${R.tz})`);
-      if (d.lang && mainLang && d.lang.split("-")[0].toLowerCase() !== mainLang) diffs.push(`${rName}.语言(${d.lang})`);
-      if (d.gpu && mainGpu && norm(d.gpu) !== mainGpu) diffs.push(`${rName}.GPU`);
+      const current = compareRealmReadings(main, { UA: d.ua, platform: d.plat, "CPU 核数": d.hc || null,
+        "时区": d.tz, "语言": langTag(d.lang), GPU: norm(d.gpu) });
+      compared += current.compared;
+      diffs.push(...current.diffs.map(field => `${rName}.${field}`));
+      missing.push(...current.missing.map(field => `${rName}.${field}`));
     }
     R.swRealmDiff = diffs;
-    const names = realms.map(([n]) => n).join(" + ");
-    setProbe("swrealm", diffs.length
-      ? `跨线程穿帮：${diffs.join("、")} 与主线程不一致`
-      : `${names} 与主线程全量核对一致（已即采即销零残留）`,
-    {
-      tone: diffs.length ? "bad" : "ok",
-      why: realms.map(([n, d]) => `${n}: plat=${d.plat} · hc=${d.hc} · tz=${d.tz} · lang=${d.lang}`).join("\n")
+    if (!compared) return setNA("swrealm", "SharedWorker / ServiceWorker 无可核对的读数");
+    setProbe("swrealm", (diffs.length ? `与主线程不一致：${diffs.join("、")}`
+      : `与主线程已核对 ${compared} 项，读数一致`) + (missing.length ? `；${missing.length} 项未核对` : ""), {
+      tone: diffs.length ? "bad" : missing.length ? "neutral" : "ok",
+      why: [
+        ...realms.map(([n, d]) => `${n}: plat=${d.plat} · hc=${d.hc} · tz=${d.tz} · lang=${d.lang}`),
+        ...(missing.length ? [`未核对：${missing.join("、")}`] : [])
+      ].join("\n")
     });
   }
 
@@ -5904,9 +5918,9 @@
         "端口回扫：服务端同时对出口 IP 并发 connect 17 个常见代理 / VPN / 远控 / 面板端口（1080、3128、8388、7890、10808、1194、22、3389、54321 等）。出口若开放 SOCKS / HTTP 代理或 Shadowsocks、OpenVPN 端口，等于直接告诉风控「这台机器就是代理服务器」——请用防火墙 / 安全组仅对自己的来源 IP 放行，并关闭 X-UI 等面板的公网监听。"
       ],
       rtt: [
-        "原理（三维物理测距）：① 服务端测量 TCP 握手耗时（代理节点→本站物理距离）；② 浏览器测量 HTTP 往返耗时（你的电脑→代理节点→本站）；③ WebRTC 测量 STUN UDP 候选耗时。三者差值直接框定「你到代理节点」多绕的物理路程，无法靠改浏览器插件伪造。",
-        "有效解法：① 缩短第一跳物理距离——亚洲用户优先选用日本/新加坡/香港 IEPL/IPLC 专线（电脑→节点仅 +8~20ms，落入正常 Wi-Fi 抖动阈值内）；② 若必须用欧美住宅 IP，直接在同城云桌面（如美西 Mac/Win 远程主机）内打开浏览器，使浏览器与出口物理同地，实现 0ms 中转差！",
-        "光速违例：浏览器还会对 AWS 全球 18 个区域测量热连接往返。任何信号都不可能快于光纤中的光速（往返约 距离/100 ms），若到某区域的往返低于「出口 IP 登记地 → 该区域」的物理下限，说明这条流量根本没走当前出口（规则分流直连），或出口 IP 是登记在 A 洲却在 B 洲广播的「广播 IP」。修复：改用全局 / TUN 模式，并选择 RIR 注册国与实际机房一致的原生 IP。"
+        "HTTP 响应耗时可能包含浏览器调度、网络排队、重传和服务端处理。只有 HTTP 读数时，偏高是性能提示，不是中转证据。",
+        "TCP SYN→ClientHello 和 WebSocket Ping/Pong 是独立的时序观测。比较差值可提示进一步排查，但不能据此算出转发跳数；WebRTC 首个候选出现耗时也不是 UDP RTT。",
+        "如需复核，请在前台标签页重测几次并对照 TCP 和 WebSocket 数据；若到地区节点的延迟甚至低于地理估算，也请核对 IP 定位与该测试节点的位置。"
       ],
       webrtc: [
         `在代理客户端中开启「TUN 虚拟网卡模式（接管全局 UDP）」，使 STUN UDP 探测包与 TCP 走完全相同的代理出口。`,
@@ -5940,9 +5954,9 @@
         "v7.4 新增的跨层核验更难绕过：① CSS 媒体查询（device-width / resolution）由渲染引擎计算，只改 JS screen 属性必然矛盾；② 夏令时与 2005/2015 历史时区规则由 ICU 计算，只 Hook getTimezoneOffset 固定值会在冬夏切换露馅；③ FontFace local() 直接走系统字体服务，只 Hook Canvas measureText 的字体伪装会被反证；④ Accept-Language 改写须保持 q 权重递减且语种与 navigator.languages 同源。"
       ],
       fpb: [
-        "指纹浏览器三大常见死穴：① 只改主线程忘了改 Web Worker；② 虚报新版 Chrome 但底层 Chromium 内核缺失新版 JS/CSS 特性；③ Windows 机器伪装成 Mac 但显卡渲染器仍暴露 Direct3D。",
-        "修复建议：升级指纹浏览器到最新内核版本，并保持「真实宿主机系统 = Profile 伪装系统」。",
-        "WebAssembly 特性矩阵（GC / 尾调用 / Relaxed SIMD / JSPI 等）是内核编译期决定的，无法通过 JS 注入伪造；本地字体 local() 旁路则直接反映宿主系统字库——两者都与 UA 自报版本 / 系统对不上时，说明内核或宿主机与伪装不符。"
+        "只比较两侧都读到的字段。主页面、Worker 或 iframe 没有暴露某项时，该项标为未核对，不算冲突。",
+        "若 UA / Client Hints 与 WebGL 指向不同平台，应查看原始读数。同一台设备可用普通浏览器的干净配置做对照；结果只表明本次页面可读的值不同，不指明使用了哪款浏览器或虚拟机。",
+        "浮点 NaN 位模式只提供架构参考，即使与 Client Hints 不同也不单独扣分。"
       ],
       ua: [
         "请关闭任何改 User-Agent 的插件或开发者工具设备模拟模式，保持 HTTP 请求头、Sec-CH-UA-Platform 与显卡驱动平台三者自然一致。",
@@ -6179,57 +6193,30 @@
       }
     }
 
-    // 9. rtt: 3D Physical Distance Triangulation (Browser HTTP vs Server TCP vs WebRTC STUN UDP + Geo Fiber Floor)
+    // HTTP response time and ICE collection time alone don't establish a
+    // transport path; address differences are checked separately by WebRTC.
     if (!R.latDone || R.httpRtt == null) {
-      out.rtt = { level: "info", summary: R.coarseTimer ? "浏览器开启了时钟降精度保护，无法精确测量毫秒级往返差" : "等待浏览器热连接、服务端握手与 UDP 候选三维测距…" };
+      out.rtt = { level: "info", summary: R.coarseTimer ? "浏览器降低了时钟精度，无法精确比较毫秒级时序" : "等待 HTTP 响应与 TCP 握手耗时…" };
+    } else if (R.srvTcpRtt == null) {
+      out.rtt = describeHttpOnlyLatency(R.httpRtt);
     } else {
-      const hsGap = R.srvTcpRtt != null ? classifyHandshakeGap(R.httpRtt, R.srvTcpRtt) : null;
-      const tcpMatchesDirect = hsGap ? hsGap.level === "ok" && !getLeakedWebrtcIps().length : false;
-      const udpBypass = R.stunRttMs != null && (R.httpRtt - R.stunRttMs) >= 75 && !tcpMatchesDirect;
-      if (udpBypass) {
-        out.rtt = { level: "bad", summary: `UDP 旁路穿帮：HTTP TCP 往返需 ${R.httpRtt} ms，但 STUN UDP 仅 ${R.stunRttMs} ms，暴露本地宽带直连 UDP！` };
-      } else if (hsGap) {
-        if (hsGap.level === "bad") {
-          out.rtt = { level: "bad", summary: `物理测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但浏览器实际往返高达 ${R.httpRtt} ms（多绕了 +${hsGap.extra} ms 代理路程）` };
-        } else if (hsGap.level === "warn") {
-          out.rtt = { level: "warn", summary: `往返存在额外开销：浏览器往返 ${R.httpRtt} ms 比服务端握手 ${R.srvTcpRtt} ms 慢了 +${hsGap.extra} ms，疑似经过代理中转` };
-        } else {
-          out.rtt = {
-            level: "ok",
-            summary: hsGap.cellularJitter
-              ? `三维测距通过：浏览器 HTTP (${R.httpRtt} ms) 与服务端握手 (${R.srvTcpRtt} ms) 差值处于 4G/5G 蜂窝空口正常波动范围`
-              : `三维测距吻合：浏览器 HTTP (${R.httpRtt} ms) 与服务端 TCP 握手 (${R.srvTcpRtt} ms) 基本一致`
-          };
-        }
-      } else {
-        const geoBase = expectedDirectRttMs();
-        const geoExtra = geoBase ? Math.round(R.httpRtt - geoBase.expectedMs) : null;
-        if (geoBase && geoExtra >= 145 && R.httpRtt >= 290) {
-          out.rtt = { level: "bad", summary: `物理光速测距抓获中转：出口距服务端约 ${geoBase.km} km（直连光缆基准 ~${geoBase.expectedMs} ms），但实测热连接往返高达 ${R.httpRtt} ms（多绕 +${geoExtra} ms 代理路程）` };
-        } else if (geoBase && geoExtra >= 95 && R.httpRtt >= 230) {
-          out.rtt = { level: "warn", summary: `往返延迟高于地理直连基准：距服务端约 ${geoBase.km} km（直连基准 ~${geoBase.expectedMs} ms），实测 HTTP 往返 ${R.httpRtt} ms（偏慢 +${geoExtra} ms），疑似代理中转` };
-        } else if (!geoBase && R.httpRtt >= 360) {
-          out.rtt = { level: "bad", summary: `物理往返延迟异常：单次热连接 HTTP 往返高达 ${R.httpRtt} ms（远超全球海底光缆直连物理上限），实锤跨洲多跳代理中转` };
-        } else if (!geoBase && R.httpRtt >= 270) {
-          out.rtt = { level: "warn", summary: `热连接 HTTP 往返达 ${R.httpRtt} ms，显著高于常规洲际直连延迟，疑似经过代理中转` };
-        } else {
-          out.rtt = {
-            level: "ok",
-            summary: geoBase
-              ? `地理光缆测距吻合：浏览器 HTTP 往返 ${R.httpRtt} ms 符合 ${geoBase.km} km 物理直连范围（基准 ~${geoBase.expectedMs} ms）`
-              : `浏览器热连接 HTTP 往返 ${R.httpRtt} ms，未见跨洲中转延迟异常`
-          };
-        }
-      }
+      const gap = classifyHandshakeGap(R.httpRtt, R.srvTcpRtt);
+      const sample = `HTTP 响应 ${R.httpRtt} ms，SYN→ClientHello ${R.srvTcpRtt} ms`;
+      out.rtt = {
+        level: gap.level,
+        summary: gap.level !== "ok"
+          ? `${gap.level === "bad" ? "时序差异明显" : "HTTP 响应开销偏高"}：${sample}（+${gap.extra} ms）。差值不能确定转发跳数。`
+          : `${sample}；${gap.cellularJitter ? "差值在蜂窝链路常见波动范围内" : "两种耗时接近"}`
+      };
     }
 
-    // 9b. rtt overlay: multi-region speed-of-light violation or WebSocket Pong control-frame relay gap
+    // Independent evidence may still report a timing anomaly.
     const geoRtt = analyzeRttGeo();
     if (geoRtt?.violation && out.rtt?.level !== "bad") {
       const v = geoRtt.violation;
-      out.rtt = { level: "bad", summary: `光速违例：到 ${v.name} 往返仅 ${v.ms} ms，但出口 IP 登记地距其 ${v.km.toLocaleString()} km（光纤物理下限≈${v.floorMs} ms），该路流量未经出口或出口为跨洲广播 IP` };
+      out.rtt = { level: "bad", summary: `光速违例：到 ${v.name} 的响应仅 ${v.ms} ms，低于以出口定位估算的光纤下限 ${v.floorMs} ms；需核对出口定位或实际请求路径` };
     } else if (R.wsPingRtt != null && R.srvTcpRtt != null && classifyHandshakeGap(R.wsPingRtt, R.srvTcpRtt).level === "bad" && out.rtt?.level !== "bad") {
-      out.rtt = { level: "bad", summary: `底层控制帧测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但 WebSocket Pong 控制帧需 ${R.wsPingRtt} ms（多绕 +${R.wsPingRtt - R.srvTcpRtt} ms 代理路程）` };
+      out.rtt = { level: "bad", wsComparison: true, summary: `控制帧与握手时序差异明显：WebSocket Pong ${R.wsPingRtt} ms，SYN→ClientHello ${R.srvTcpRtt} ms；仅凭差值不能确定中转路径` };
     } else if (geoRtt?.best && out.rtt?.level === "ok") {
       out.rtt = { ...out.rtt, summary: `${out.rtt.summary} · 全球测距最近 ${geoRtt.best.name} ${geoRtt.best.ms} ms` };
     }
@@ -6428,7 +6415,10 @@
 
     // 17. fpb: Anti-Detect Browser & Cross-Thread Contradictions
     const fpbHits = [];
-    if ((R.workerDiff || []).length) fpbHits.push(`主线程与 Web Worker 读数不一致 (${R.workerDiff.join(", ")})`);
+    if ((R.workerDiff || []).length) {
+      const fields = R.workerDiff.map(k => k === "mem" ? "内存" : k);
+      fpbHits.push(`主线程与 Web Worker 读数不一致（${fields.join("、")}）`);
+    }
     const claimedChrome = +((/Chrome\/(\d+)/.exec(navigator.userAgent) || [])[1] || 0);
     if (R.engine === "V8" && claimedChrome >= 115) {
       const maxTestedFloor = JS_FEATURES.filter(([v]) => v <= claimedChrome).map(([v]) => v).pop() || 0;
@@ -6444,7 +6434,7 @@
     }
     const gpuOs = inferGpuOS(R.gpuRaw);
     if ((gpuOs === "Windows" && R.dev?.os && R.dev.os !== "Windows") || (gpuOs === "Apple" && R.dev?.os && !/^(macOS|iOS|iPadOS)$/.test(R.dev.os))) {
-      fpbHits.push(`显卡驱动渲染栈属于 ${gpuOs}，却声称运行在 ${R.dev.os}`);
+      fpbHits.push(`WebGL 渲染器指向 ${gpuOs}，而 UA / Client Hints 指向 ${R.dev.os}`);
     }
     if (R.dev?.os === "macOS" && R.engine === "V8") {
       const pvRaw = String(R.hi?.platformVersion || "").trim();
@@ -6468,7 +6458,6 @@
       else if (R.engine === "SpiderMonkey" && claimedFf >= 122 && !wf.gc) fpbHits.push(`虚报 Firefox ${claimedFf}，但 WebAssembly GC（Firefox 120+）不可用`);
     }
     if (R.fontLocalOsConflict) fpbHits.push(`本地字体旁路：${R.fontLocalOsConflict}`);
-    if (R.cpuArchConflict) fpbHits.push(`CPU 架构矛盾：${R.cpuArchConflict}`);
     if (R.sysFontConflict) fpbHits.push(R.sysFontConflict);
     if (R.glWorkerMismatch) fpbHits.push(`WebGL 跨线程穿帮：${R.glWorkerMismatch}`);
     if ((R.swRealmDiff || []).length) fpbHits.push(`Shared/ServiceWorker 跨界矛盾 (${R.swRealmDiff.join(", ")})`);
@@ -6478,8 +6467,10 @@
     if (R.gpuSoft) fpbHits.push("使用 SwiftShader / Basic Render 软件虚拟显卡");
 
     out.fpb = fpbHits.length
-      ? { level: "bad", summary: `识别出指纹浏览器/虚拟机硬伤：${fpbHits.join("；")}` }
-      : { level: "ok", summary: "内核版本语法、Worker 线程、显卡渲染栈与平台属性完全自洽" };
+      ? { level: "bad", summary: `浏览器读数不一致：${fpbHits.join("；")}` }
+      : R.cpuArchHint
+      ? { level: "info", summary: `CPU 架构待核验：${R.cpuArchHint}；仅作参考，不计分` }
+      : { level: "ok", summary: "本轮取得的内核、线程和平台读数未见冲突" };
 
     // 18. ua: UA vs Client Hints vs GPU Platform Consistency
     const hiPlat = R.hi?.platform || "";
@@ -6590,7 +6581,7 @@
     conn: "TCP 协议栈",
     synspoof: "TSval 与粘包",
     reality: ":443 与端口回扫",
-    rtt: "物理测距",
+    rtt: "链路时序",
     webrtc: "WebRTC 泄漏",
     dc: "机房/家宽属性",
     lease: "伪家宽与租赁",
@@ -6598,7 +6589,7 @@
     subpixel: "光栅化与控件",
     hwvirt: "虚拟化与硬解",
     tamper: "环境篡改检测",
-    fpb: "指纹浏览器矛盾",
+    fpb: "浏览器读数不一致",
     ua: "UA 与高熵头",
     bot: "自动化痕迹",
     fp: "缓存与防关联"
@@ -6617,7 +6608,10 @@
     const uaOs = R.dev?.os || "端侧";
     const tcpHuman = tcp ? (({ windows: "Windows", apple: "macOS", linux: "Linux" })[tcp.osFamily || tcp.osGuess] || tcp.osGuess || "未知") : "未知";
 
-    if (lv === "info") return { single: "待核验" };
+    if (lv === "info") {
+      if (id === "rtt" && res.httpOnly) return { single: res.elevated ? "延迟偏高" : "仅测得 HTTP" };
+      return { single: "待核验" };
+    }
     if (lv === "ok") {
       switch (id) {
         case "tz": return { single: `${shortTzCity(R.tz)} 对齐` };
@@ -6681,12 +6675,10 @@
         if (gv && /光速违例/.test(res?.summary || "")) {
           return { left: `${gv.name} ${gv.ms}ms`, op: "<", right: `光速下限 ${gv.floorMs}ms` };
         }
-        if (R.stunRttMs != null && R.httpRtt != null && (R.httpRtt - R.stunRttMs) >= 75) {
-          return { left: `TCP ${R.httpRtt}ms`, op: "≫", right: `UDP ${R.stunRttMs}ms` };
+        if (res.wsComparison) {
+          return { left: `Pong ${R.wsPingRtt}ms`, op: "≫", right: `握手 ${R.srvTcpRtt}ms` };
         }
-        return R.srvTcpRtt != null
-          ? { left: `HTTP ${R.httpRtt}ms`, op: "≫", right: `握手 ${R.srvTcpRtt}ms` }
-          : { single: `RTT ${R.httpRtt ?? "--"}ms 偏高` };
+        return { left: `HTTP ${R.httpRtt}ms`, op: "≫", right: `握手 ${R.srvTcpRtt}ms` };
       }
       case "webrtc": {
         if (R.v6mac) return { single: "IPv6 暴露 MAC" };
@@ -6814,7 +6806,7 @@
           TIMEOUT_SENSITIVE.has(id) &&
           !(id === "dc" && R.netKind === "relay") &&
           !(id === "reality" && R.intel && !R.intel.tls443?.probed) &&
-          !(id === "rtt" && R.coarseTimer)
+          !(id === "rtt" && (R.coarseTimer || res.httpOnly))
         ) {
           unverifiedCnt++;
         }
@@ -6970,7 +6962,7 @@
     $("#scoreSub").textContent = totalIssues === 0 && unverifiedCnt > 0
       ? `${unverifiedCnt} 项网络探针超时，已按不确定性降级`
       : totalIssues === 0
-      ? (isPriv ? "已启用防指纹与网络隔离保护，跨站难以锁定你" : "协议栈、出口信誉与硬件指纹全项自洽")
+      ? (isPriv ? "已核验项未见明显追踪暴露" : "已核验项未见明显冲突")
       : isPriv
       ? "常规浏览器未开防指纹加噪 · 网站可免 Cookie 跨站认出回访"
       : badCnt > 0
@@ -6989,7 +6981,7 @@
 
     const tabCk = $("#tabChecksBadge");
     if (tabCk) {
-      tabCk.textContent = totalIssues > 0 ? `${totalIssues} 异常` : "全过";
+      tabCk.textContent = totalIssues > 0 ? `${totalIssues} 异常` : "未见异常";
       tabCk.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
         badCnt > 0
           ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
@@ -7005,7 +6997,7 @@
       .filter(x => isCheckCounted(x.id) && (x.lv === "bad" || x.lv === "warn"))
       .sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1) || (CHECK_WEIGHTS[b.id] || 0) - (CHECK_WEIGHTS[a.id] || 0));
 
-    $("#topGiveaway").textContent = rankedIssues.length ? rankedIssues[0].title : "全部通过";
+    $("#topGiveaway").textContent = rankedIssues.length ? rankedIssues[0].title : "已核验项未见明显冲突";
 
     const pBox = $("#priorityBox"), pList = $("#priorityList"), clearBox = $("#allClearBox");
     const moreHint = $("#priorityMoreHint");
@@ -7026,11 +7018,11 @@
             );
           }
           if (ct) {
-            ct.textContent = warnMode ? `${okCnt} 项通过 · ${unverifiedCnt} 项待重测` : "全部核心核验零高危冲突";
+            ct.textContent = warnMode ? `${okCnt} 项通过 · ${unverifiedCnt} 项待重测` : "已核验项未见明显冲突";
             ct.className = "text-xs font-semibold " + (warnMode ? "text-amber-950 dark:text-amber-200" : "text-emerald-950 dark:text-emerald-200");
           }
           if (cs) {
-            cs.textContent = warnMode ? "可点击下方超时项右侧「重测」补齐验证" : "底层握手、出口信誉与浏览器环境一致";
+            cs.textContent = warnMode ? "可点击下方超时项右侧「重测」补齐验证" : "未核对的读数不代表通过";
             cs.className = "text-[11px] truncate " + (warnMode ? "text-amber-800/80 dark:text-amber-300/80" : "text-emerald-800/80 dark:text-emerald-300/80");
           }
         }
@@ -7432,12 +7424,12 @@
         l2Line.setAttribute("class", "topo-flow-anim stroke-rose-500");
         l2Arrow.setAttribute("class", "stroke-rose-500");
       } else if (checks.rtt?.level === "bad" || checks.synspoof?.level === "bad") {
-        l2Badge.textContent = checks.synspoof?.level === "bad" ? "SYN 改包露馅" : "多跳中转延迟";
+        l2Badge.textContent = checks.synspoof?.level === "bad" ? "SYN 改包露馅" : "时序需核对";
         l2Badge.className = "py-0.5 px-2 rounded-full text-[10.5px] font-semibold whitespace-nowrap bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300";
         l2Line.setAttribute("stroke-dasharray", "4 4");
         l2Line.setAttribute("class", "topo-flow-anim stroke-rose-500");
         l2Arrow.setAttribute("class", "stroke-rose-500");
-      } else if (checks.conn?.level === "warn" || checks.rtt?.level === "warn") {
+      } else if (checks.conn?.level === "warn" || checks.rtt?.level === "warn" || checks.rtt?.elevated) {
         l2Badge.textContent = checks.conn?.level === "warn" ? `MTU ${tcp?.mtu || ""} 隧道` : "延迟偏高";
         l2Badge.className = "py-0.5 px-2 rounded-full text-[10.5px] font-semibold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300";
         l2Line.setAttribute("stroke-dasharray", "4 4");
@@ -7462,7 +7454,7 @@
         wowTitle.textContent = "正在交叉核验底层协议栈、分流与出口信誉…";
         wowTitle.className = "font-semibold truncate text-zinc-900 dark:text-zinc-100";
       } else {
-        let alertTone = "ok", head = "底层协议栈、出口信誉与浏览器环境全项自洽";
+        let alertTone = "ok", head = "已核验项未见明显冲突";
         if (checks.reality?.level === "bad") { alertTone = "bad"; head = "反向 :443 穿透抓获 Reality 偷证书伪装"; }
         else if (checks.conn?.level === "bad") { alertTone = "bad"; head = `TCP 协议栈穿帮：自报 ${R.dev?.os || "端侧"}，实测 ${tcpShort || "Linux"} 代发连接`; }
         else if (checks.synspoof?.level === "bad") { alertTone = "bad"; head = "跨包 TSval 时钟拆穿无状态 SYN 改包"; }
@@ -7477,10 +7469,10 @@
         }
         else if (checks.lease?.level === "bad") { alertTone = "bad"; head = "PeeringDB 流量画像拆穿伪家宽机房"; }
         else if (checks.reputation?.level === "bad") { alertTone = "bad"; head = "出口命中实时黑名单或同 C 段高危污染"; }
-        else if (checks.fpb?.level === "bad") { alertTone = "bad"; head = "硬件与内核版本矛盾，暴露指纹浏览器伪装"; }
+        else if (checks.fpb?.level === "bad") { alertTone = "bad"; head = "浏览器的线程或平台读数不一致"; }
         else if (R.cacheResurrected) { alertTone = "bad"; head = "本地存储虽清空，HTTP ETag 缓存仍认出回访"; }
         else if (checks.tz?.level === "bad") { alertTone = "bad"; head = "出口位于海外，但系统时钟仍停留在原时区"; }
-        else if (checks.rtt?.level === "bad") { alertTone = "bad"; head = "物理测距超光缆上限，暴露多跳代理中转"; }
+        else if (checks.rtt?.level === "bad") { alertTone = "bad"; head = "链路观测的时序差异明显，需进一步核对路径"; }
         else if (checks.dc?.level === "bad") { alertTone = "bad"; head = "当前出口属于云服务器/IDC 数据中心机房段"; }
         else if (checks.tamper?.level === "bad" || checks.tamper?.level === "warn") { alertTone = checks.tamper.level; head = "检测到浏览器原型钩子或请求头不一致"; }
         else if ((R.unverifiedCnt || 0) > 0) { alertTone = "warn"; head = `${R.unverifiedCnt} 项网络情报探针超时，可单项重测`; }
@@ -7576,7 +7568,7 @@
           iconKey: "scan",
           icon: TILE_ICONS.scan,
           label: "沙箱与防篡改",
-          status: brwTone === "bad" ? "检出伪装" : brwTone === "warn" ? "可疑钩子" : "零篡改",
+          status: brwTone === "bad" ? "读数异常" : brwTone === "warn" ? "待复核" : "未见异常",
           tone: brwTone,
           val: `${R.browserLabel || "浏览器"} (${R.engine || "–"})`,
           sub: `${(R.lies || []).length ? R.lies.length + " 处 API 谎言" : "52 项原型纯净"} · ${R.adblock ? "有去广告" : "无去广告"}`,
@@ -8127,7 +8119,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.9.0",
+        version: "7.9.1",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,

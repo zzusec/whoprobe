@@ -1,13 +1,13 @@
 {
   "name": "whoprobe",
-  "version": "7.9.0",
+  "version": "7.9.1",
   "description": "Website visibility receipt, dual-stack protocol probes and egress evidence",
   "private": true,
   "license": "MIT",
   "scripts": {
     "build:css": "tailwindcss -i ./src/tw-input.css -o ./static/style.css --minify",
     "watch:css": "tailwindcss -i ./src/tw-input.css -o ./static/style.css --watch",
-    "test": "python3 -B probe.py --self-test && python3 -B -m unittest discover -s tests && node --check static/app.js && node --check static/visibility.js && node --test tests/test_visibility_lab.cjs"
+    "test": "python3 -B probe.py --self-test && python3 -B -m unittest discover -s tests && node --check static/app.js && node --check static/visibility.js && node --test tests/*.cjs"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.0",

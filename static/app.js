@@ -1257,6 +1257,36 @@
     return { km: Math.round(km), expectedMs: Math.round(km * 0.0145 + 22) };
   }
 
+  function classifyHandshakeGap(clientMs, srvMs) {
+    const extra = Math.round(clientMs - srvMs);
+    const tcp = R.srv?.packet?.tcp;
+    const uaOs = R.dev?.os || "";
+    const fam = tcp?.osFamily || tcp?.osGuess || "";
+    const osMis =
+      (fam === "windows" && uaOs !== "Windows") ||
+      (fam === "apple" && !/^(macOS|iOS|iPadOS)$/.test(uaOs)) ||
+      (fam === "linux" && /^(macOS|iOS|iPadOS|Windows)$/.test(uaOs));
+    const isNativeCellular = isCellularNativeLink(uaOs, osMis) && !getLeakedWebrtcIps().length;
+    const geoBase = expectedDirectRttMs();
+    // 4G/5G 原生蜂窝链路（协议栈自洽且无分流泄漏）：运营商省级 UPF/PEP 网关分段握手与空口 DRX/HARQ 排队常产生 50~175ms 正常波动
+    if (isNativeCellular && srvMs >= 18) {
+      const geoOk = !geoBase || clientMs <= geoBase.expectedMs + 175;
+      if (extra < 185 && (clientMs < 260 || geoOk)) {
+        return { level: "ok", extra, cellularJitter: extra >= 42 };
+      }
+      if (extra < 250 && clientMs < 320) {
+        return { level: "warn", extra, cellularJitter: true };
+      }
+    }
+    // 非机房原生宽带且服务端握手已覆盖地理光缆距离（排除 1~18ms 就近 VPS 代发连接）：容忍跨境拥塞抖动
+    if (R.netKind === "isp" && !osMis && srvMs >= 28 && geoBase && srvMs >= geoBase.expectedMs * 0.65 && clientMs <= geoBase.expectedMs + 135 && extra < 145) {
+      return { level: extra >= 95 ? "warn" : "ok", extra, cellularJitter: false };
+    }
+    if (extra >= 95) return { level: "bad", extra, cellularJitter: false };
+    if (extra >= 42) return { level: "warn", extra, cellularJitter: false };
+    return { level: "ok", extra, cellularJitter: false };
+  }
+
   function backfillExitMeta(meta = {}) {
     if (!meta) return;
     const metaIp = cleanIp(meta.ip);
@@ -1605,10 +1635,12 @@
     if (lateSrvRtt != null) {
       R.srvTcpRtt = Math.round(lateSrvRtt);
       if (R.latDone && R.httpRtt != null) {
-        const diff = Math.round(R.httpRtt - R.srvTcpRtt);
-        const extraText = diff >= 45 ? ` · 浏览器多绕 +${diff} ms` : " · 往返吻合";
+        const gap = classifyHandshakeGap(R.httpRtt, R.srvTcpRtt);
+        const extraText = gap.level === "ok"
+          ? (gap.cellularJitter ? ` · 蜂窝空口波动 +${gap.extra} ms` : " · 往返吻合")
+          : ` · 浏览器多绕 +${gap.extra} ms`;
         setProbe("tcprtt", `浏览器 ${R.httpRtt} ms vs 服务端握手 ${R.srvTcpRtt} ms${extraText}`, {
-          tone: diff >= 100 ? "bad" : diff >= 45 ? "warn" : "ok"
+          tone: gap.level
         });
         $("#kpiRttVal").textContent = `${R.httpRtt} ms / 握手 ${R.srvTcpRtt} ms`;
         updateUdpRttProbe();
@@ -1932,9 +1964,37 @@
     showToast(`已完成 ${externalQueryIp} 的多源信誉与 :443 证书穿透分析`);
   }
 
+  async function measureCleanPrePing() {
+    const pre = [];
+    try {
+      const nav = performance.getEntriesByType?.("navigation")?.[0];
+      if (nav && nav.responseStart > nav.requestStart && nav.requestStart > 0) {
+        const navRtt = nav.responseStart - nav.requestStart;
+        if (navRtt >= 2 && navRtt <= 1500) pre.push(navRtt);
+      }
+    } catch (e) {}
+    for (let i = 0; i < 2; i++) {
+      const u = new URL(`./api/who/ping?seq=pre${i}&t=${Date.now()}`, location.href).href;
+      const t0 = performance.now();
+      const ok = await fetch(u, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(900) })
+        .then(r => r.ok, () => false);
+      const wall = performance.now() - t0;
+      if (!ok) break;
+      const entries = performance.getEntriesByName(u);
+      const e = entries[entries.length - 1];
+      if (e && e.responseStart > e.requestStart && e.requestStart > 0) {
+        pre.push(e.responseStart - e.requestStart);
+      } else if (wall > 1) {
+        pre.push(wall);
+      }
+    }
+    R.preHttpRtt = pre.length ? Math.round(Math.min(...pre)) : null;
+  }
+
   // 2. Physical TCP Handshake RTT vs Browser Warm HTTP RTT + Micro-Burst Mux/Jitter Coalescing (2 items: tcprtt, muxjitter)
   async function probeLatency() {
     const samples = [];
+    if (R.preHttpRtt != null) samples.push(R.preHttpRtt);
     for (let i = 0; i < 5; i++) {
       const u = new URL(`./api/who/ping?seq=s${i}&t=${Date.now()}`, location.href).href;
       const t0 = performance.now();
@@ -2017,11 +2077,13 @@
     R.latDone = true;
 
     if (R.httpRtt != null && R.srvTcpRtt != null) {
-      const diff = Math.round(R.httpRtt - R.srvTcpRtt);
-      const extraText = diff >= 45 ? ` · 浏览器多绕 +${diff} ms` : " · 往返吻合";
+      const gap = classifyHandshakeGap(R.httpRtt, R.srvTcpRtt);
+      const extraText = gap.level === "ok"
+        ? (gap.cellularJitter ? ` · 蜂窝空口波动 +${gap.extra} ms` : " · 往返吻合")
+        : ` · 浏览器多绕 +${gap.extra} ms`;
       setProbe("tcprtt", `浏览器 ${R.httpRtt} ms vs 服务端握手 ${R.srvTcpRtt} ms${extraText}`, {
-        tone: diff >= 100 ? "bad" : diff >= 45 ? "warn" : "ok",
-        why: `5 次热连接采样最小值: ${samples.map(x => Math.round(x) + "ms").join(", ")}\n服务端网卡 SYN→ClientHello 实测: ${R.srvTcpRtt}ms`
+        tone: gap.level,
+        why: `热连接采样最小值: ${samples.map(x => Math.round(x) + "ms").join(", ")}\n服务端网卡最近窗口 SYN→ClientHello 中位数: ${R.srvTcpRtt}ms`
       });
       $("#kpiRttVal").textContent = `${R.httpRtt} ms / 握手 ${R.srvTcpRtt} ms`;
     } else if (R.httpRtt != null) {
@@ -5280,12 +5342,12 @@
       }
     }
     if (R.srvTcpRtt != null) {
-      const relay = wsMs - R.srvTcpRtt;
+      const wsGap = classifyHandshakeGap(wsMs, R.srvTcpRtt);
       cmpParts.push(`TCP 握手 ${R.srvTcpRtt} ms`);
-      if (relay >= 95) {
-        cmpParts.push(`代理多绕 +${relay} ms`);
+      if (wsGap.level === "bad") {
+        cmpParts.push(`代理多绕 +${wsGap.extra} ms`);
         tone = "bad";
-      } else if (relay >= 45 && tone === "ok") {
+      } else if (wsGap.level === "warn" && tone === "ok") {
         tone = "warn";
       }
     }
@@ -6121,18 +6183,23 @@
     if (!R.latDone || R.httpRtt == null) {
       out.rtt = { level: "info", summary: R.coarseTimer ? "浏览器开启了时钟降精度保护，无法精确测量毫秒级往返差" : "等待浏览器热连接、服务端握手与 UDP 候选三维测距…" };
     } else {
-      const tcpMatchesDirect = R.srvTcpRtt != null && (R.httpRtt - R.srvTcpRtt) < 42 && !getLeakedWebrtcIps().length;
+      const hsGap = R.srvTcpRtt != null ? classifyHandshakeGap(R.httpRtt, R.srvTcpRtt) : null;
+      const tcpMatchesDirect = hsGap ? hsGap.level === "ok" && !getLeakedWebrtcIps().length : false;
       const udpBypass = R.stunRttMs != null && (R.httpRtt - R.stunRttMs) >= 75 && !tcpMatchesDirect;
       if (udpBypass) {
         out.rtt = { level: "bad", summary: `UDP 旁路穿帮：HTTP TCP 往返需 ${R.httpRtt} ms，但 STUN UDP 仅 ${R.stunRttMs} ms，暴露本地宽带直连 UDP！` };
-      } else if (R.srvTcpRtt != null) {
-        const extra = R.httpRtt - R.srvTcpRtt;
-        if (extra >= 95) {
-          out.rtt = { level: "bad", summary: `物理测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但浏览器实际往返高达 ${R.httpRtt} ms（多绕了 +${extra} ms 代理路程）` };
-        } else if (extra >= 42) {
-          out.rtt = { level: "warn", summary: `往返存在额外开销：浏览器往返 ${R.httpRtt} ms 比服务端握手 ${R.srvTcpRtt} ms 慢了 +${extra} ms，疑似经过代理中转` };
+      } else if (hsGap) {
+        if (hsGap.level === "bad") {
+          out.rtt = { level: "bad", summary: `物理测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但浏览器实际往返高达 ${R.httpRtt} ms（多绕了 +${hsGap.extra} ms 代理路程）` };
+        } else if (hsGap.level === "warn") {
+          out.rtt = { level: "warn", summary: `往返存在额外开销：浏览器往返 ${R.httpRtt} ms 比服务端握手 ${R.srvTcpRtt} ms 慢了 +${hsGap.extra} ms，疑似经过代理中转` };
         } else {
-          out.rtt = { level: "ok", summary: `三维测距吻合：浏览器 HTTP (${R.httpRtt} ms) 与服务端 TCP 握手 (${R.srvTcpRtt} ms) 基本一致` };
+          out.rtt = {
+            level: "ok",
+            summary: hsGap.cellularJitter
+              ? `三维测距通过：浏览器 HTTP (${R.httpRtt} ms) 与服务端握手 (${R.srvTcpRtt} ms) 差值处于 4G/5G 蜂窝空口正常波动范围`
+              : `三维测距吻合：浏览器 HTTP (${R.httpRtt} ms) 与服务端 TCP 握手 (${R.srvTcpRtt} ms) 基本一致`
+          };
         }
       } else {
         const geoBase = expectedDirectRttMs();
@@ -6161,7 +6228,7 @@
     if (geoRtt?.violation && out.rtt?.level !== "bad") {
       const v = geoRtt.violation;
       out.rtt = { level: "bad", summary: `光速违例：到 ${v.name} 往返仅 ${v.ms} ms，但出口 IP 登记地距其 ${v.km.toLocaleString()} km（光纤物理下限≈${v.floorMs} ms），该路流量未经出口或出口为跨洲广播 IP` };
-    } else if (R.wsPingRtt != null && R.srvTcpRtt != null && (R.wsPingRtt - R.srvTcpRtt) >= 95 && out.rtt?.level !== "bad") {
+    } else if (R.wsPingRtt != null && R.srvTcpRtt != null && classifyHandshakeGap(R.wsPingRtt, R.srvTcpRtt).level === "bad" && out.rtt?.level !== "bad") {
       out.rtt = { level: "bad", summary: `底层控制帧测距抓获中转：服务端与出口握手仅 ${R.srvTcpRtt} ms，但 WebSocket Pong 控制帧需 ${R.wsPingRtt} ms（多绕 +${R.wsPingRtt - R.srvTcpRtt} ms 代理路程）` };
     } else if (geoRtt?.best && out.rtt?.level === "ok") {
       out.rtt = { ...out.rtt, summary: `${out.rtt.summary} · 全球测距最近 ${geoRtt.best.name} ${geoRtt.best.ms} ms` };
@@ -8835,7 +8902,10 @@
         renderTargetSimulator();
       }
     });
-    await new Promise(r => setTimeout(r, 80));
+    // 在 20 路跨域并发探测挤占蜂窝上行队列前，先在空闲复用连接上完成 2 次轻量基准测距
+    await Promise.race([pSrv, new Promise(r => setTimeout(r, 450))]);
+    if (seq !== runSeq) return;
+    await measureCleanPrePing();
     if (seq !== runSeq) return;
 
     const pIntel = probeIntel().then(() => {

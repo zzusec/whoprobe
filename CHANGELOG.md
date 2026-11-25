@@ -1,5 +1,17 @@
 # Changelog
 
+## [v7.7.3] - 2026-11-25
+
+### Fixed — 修复手机 5G 蜂窝网络下「物理测距 `HTTP ≫ 握手`」高危中转误报
+- **消除 `SYN` 重传计时覆盖与共享 CGNAT 跨用户极小值粘滞 (`probe.py` · `LinuxPacketSniffer` + `update_handshake_rtt_window`)**：
+  - 同一连接发生 TCP `SYN` 重传（相同 `src_ip:src_port` 与 `tcp_seq`）时不再覆盖首次 `SYN` 时间戳且跳过重传歧义连接的握手测时，避免重传 `SYN` 与首轮 `ClientHello` 相减得出虚假极小握手 RTT；
+  - 将共享公网 IP 的 `minHandshakeRttMs` 从 180 秒历史全局最小值改为 **12 秒新鲜滑动窗口中位数**，杜绝 5G CGNAT 地址池内其他邻近基站用户或偶发单包极值污染后续检测。
+- **并发风暴前空闲预采样与 4G/5G 空口抖动物理模型 (`static/app.js` · `measureCleanPrePing` + `classifyHandshakeGap`)**：
+  - 在启动 20 路并发分流/DNS/扩展探测挤占手机 5G 上行 PDCP 队列前，先在空闲热连接上完成轻量预采样并结合 `NavigationTiming` 首包往返；
+  - 对协议栈吻合且无分流泄漏的原生蜂窝移动网络（`R.netKind === "mobile"`），兼容运营商省级 UPF/PEP 分段握手与 5G NR 空口 DRX/HARQ 调度产生的正常波动，同时保留对机房 VPS 代发握手（`1~18ms`）或协议栈错配代理的精准抓捕。
+
+---
+
 ## [v7.7.2] - 2026-11-25
 
 ### Fixed — 修复 Mac 触控板快速划动「机械轨迹」误报与「防追踪」视角胶囊/副标题混用

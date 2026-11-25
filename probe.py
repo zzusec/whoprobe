@@ -847,6 +847,34 @@ def evaluate_tcp_continuity(
     return None, False, None
 
 
+def update_handshake_rtt_window(
+    prev_samples: object,
+    now_mono: float,
+    rtt_ms: float,
+    window_sec: float = 12.0,
+) -> tuple[list[tuple[float, float]], float]:
+    """
+    维护同一出口 IP 最近 window_sec 秒内的干净握手 RTT 滑动窗口并返回中位数基准。
+    避免共享 5G CGNAT 地址池跨用户历史极小值或单次空口瞬时包粘滞长达数分钟。
+    """
+    fresh: list[tuple[float, float]] = []
+    if isinstance(prev_samples, list):
+        for item in prev_samples:
+            if (
+                isinstance(item, (tuple, list))
+                and len(item) == 2
+                and isinstance(item[0], (int, float))
+                and isinstance(item[1], (int, float))
+                and 0.0 <= (now_mono - float(item[0])) <= window_sec
+            ):
+                fresh.append((float(item[0]), float(item[1])))
+    fresh.append((now_mono, rtt_ms))
+    fresh = fresh[-5:]
+    ordered = sorted(v for _, v in fresh)
+    median_rtt = ordered[len(ordered) // 2]
+    return fresh, round(median_rtt, 1)
+
+
 class LinuxPacketSniffer:
     """
     Linux AF_PACKET 只读旁路抓包器。
@@ -962,9 +990,20 @@ class LinuxPacketSniffer:
                     opts_raw = pkt[tcp_start + 20 : tcp_start + data_offset]
                     opts, mss, wscale = parse_tcp_options(opts_raw)
                     syn_tsval = extract_tcp_tsval(opts_raw)
-                    syn_cache.set(conn_key, (now_mono, tcp_seq, ttl, syn_tsval, "ts" in opts), ttl_sec=10.0)
+                    prev_syn = syn_cache.get(conn_key)
+                    if (
+                        isinstance(prev_syn, tuple)
+                        and len(prev_syn) == 6
+                        and prev_syn[1] == tcp_seq
+                    ):
+                        # 同一连接发生 TCP SYN 重传：保留首次 SYN 时间并标记重传，防止重传 SYN 刷新时间造成虚假极小握手 RTT
+                        syn_cache.set(conn_key, (prev_syn[0], tcp_seq, ttl, syn_tsval, "ts" in opts, True), ttl_sec=10.0)
+                    else:
+                        syn_cache.set(conn_key, (now_mono, tcp_seq, ttl, syn_tsval, "ts" in opts, False), ttl_sec=10.0)
                     init_ttl = infer_initial_ttl(ttl)
                     os_guess, os_family = guess_tcp_os(init_ttl, window, opts)
+                    prev_mono = prev_tcp.get("_rttMono")
+                    is_fresh_rtt = isinstance(prev_mono, (int, float)) and 0.0 <= (now_mono - float(prev_mono)) <= 12.0
                     rec["tcp"] = {
                         "observedTtl": ttl,
                         "initialTtl": init_ttl,
@@ -987,8 +1026,10 @@ class LinuxPacketSniffer:
                         "tsHz": prev_tcp.get("tsHz"),
                         "tsNote": prev_tcp.get("tsNote"),
                         "synSpoofSuspect": False,
-                        "handshakeRttMs": prev_tcp.get("handshakeRttMs"),
-                        "minHandshakeRttMs": prev_tcp.get("minHandshakeRttMs"),
+                        "handshakeRttMs": prev_tcp.get("handshakeRttMs") if is_fresh_rtt else None,
+                        "minHandshakeRttMs": prev_tcp.get("minHandshakeRttMs") if is_fresh_rtt else None,
+                        "_rttSamples": prev_tcp.get("_rttSamples") if is_fresh_rtt else [],
+                        "_rttMono": prev_mono if is_fresh_rtt else None,
                         "capturedAt": round(time.time(), 2),
                     }
                     PACKET_CACHE.set(src_ip, rec)
@@ -1000,25 +1041,27 @@ class LinuxPacketSniffer:
                     continue
                 if len(payload) >= 6 and payload[0] == 0x16 and payload[1] == 0x03 and payload[5] == 0x01:
                     # SYN -> ClientHello 首包时间差即服务端到客户端/代理节点的真实 TCP 往返握手 RTT；
-                    # 必须校验 tcp_seq == (syn_seq + 1) & 0xFFFFFFFF 锁定同一条 TCP 连接，避免 5G CGNAT 共享端口串扰
+                    # 必须校验 tcp_seq == (syn_seq + 1) & 0xFFFFFFFF 且未发生 SYN 重传，避免重传计时偏小与 5G CGNAT 跨用户串扰
                     hello_tsval = extract_tcp_tsval(pkt[tcp_start + 20 : tcp_start + data_offset])
                     syn_entry = syn_cache.get(conn_key)
                     if (
                         isinstance(syn_entry, tuple)
-                        and len(syn_entry) == 5
+                        and len(syn_entry) == 6
                         and tcp_seq == ((syn_entry[1] + 1) & 0xFFFFFFFF)
                     ):
-                        syn_t, _syn_seq, syn_ttl, syn_tsval, syn_had_ts = syn_entry
+                        syn_t, _syn_seq, syn_ttl, syn_tsval, syn_had_ts, syn_retrans = syn_entry
                         syn_cache.set(conn_key, None, ttl_sec=0.0)
                         dt_sec = now_mono - syn_t
                         rtt_ms = round(dt_sec * 1000.0, 1)
-                        if 0.2 <= rtt_ms <= 4000.0 and isinstance(rec.get("tcp"), dict):
+                        if not syn_retrans and 0.2 <= rtt_ms <= 4000.0 and isinstance(rec.get("tcp"), dict):
                             tcp_obj = dict(rec["tcp"])
                             tcp_obj["handshakeRttMs"] = rtt_ms
-                            old_min = tcp_obj.get("minHandshakeRttMs")
-                            tcp_obj["minHandshakeRttMs"] = (
-                                min(old_min, rtt_ms) if isinstance(old_min, (int, float)) else rtt_ms
+                            samples_win, med_rtt = update_handshake_rtt_window(
+                                tcp_obj.get("_rttSamples"), now_mono, rtt_ms, window_sec=12.0
                             )
+                            tcp_obj["_rttSamples"] = samples_win
+                            tcp_obj["_rttMono"] = now_mono
+                            tcp_obj["minHandshakeRttMs"] = med_rtt
                             tcp_obj["helloIpId"] = ip_id
                             ts_hz, spoof_suspect, ts_note = evaluate_tcp_continuity(
                                 syn_ttl=syn_ttl,
@@ -2648,6 +2691,10 @@ def run_self_test() -> None:
             assert evaluate_tcp_continuity(
                 syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=0, hello_tsval=2_850_000_000, dt_sec=0.050
             )[1] is True
+            w1, med1 = update_handshake_rtt_window([(10.0, 43.0)], 30.0, 182.0, window_sec=12.0)
+            assert len(w1) == 1 and med1 == 182.0
+            w2, med2 = update_handshake_rtt_window([(30.0, 43.0), (31.0, 179.0)], 32.0, 185.0, window_sec=12.0)
+            assert med2 == 179.0
 
             print(f"SELF-TEST OK on 127.0.0.1:{port} | ja4t={ja4t} | etag={et1['etagId']} | share={sid}")
         finally:

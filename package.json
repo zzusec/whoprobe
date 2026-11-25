@@ -1,7 +1,7 @@
 {
   "name": "whoprobe",
-  "version": "7.5.0",
-  "description": "174-probe L3–L7 browser, protocol-stack, :443 Reality & proxy-port back-scan & multi-source BGP/DNSBL egress reputation inspector",
+  "version": "7.6.0",
+  "description": "182-probe L3–L7 browser, protocol-stack, :443 Reality & proxy-port back-scan & multi-source BGP/DNSBL egress reputation inspector",
   "private": true,
   "license": "MIT",
   "scripts": {

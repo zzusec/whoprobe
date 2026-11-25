@@ -23,6 +23,7 @@ import os
 import re
 import secrets
 import socket
+import ssl
 import struct
 import sys
 import tempfile
@@ -91,6 +92,8 @@ class TTLCache:
 GEO_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
 PTR_CACHE = TTLCache(maxsize=2048, ttl_sec=900.0)
 PACKET_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
+H2_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
+TLS_META_CACHE = TTLCache(maxsize=4096, ttl_sec=180.0)
 SHARE_RATE_CACHE = TTLCache(maxsize=4096, ttl_sec=60.0)
 _GEO_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="geo")
 _SERVER_COORDS: list[float] | None = None
@@ -891,6 +894,513 @@ class LinuxPacketSniffer:
 
 
 SNIFFER: LinuxPacketSniffer | None = None
+TLS_BRIDGE: TLSBridgeServer | None = None
+
+# ---------------------------------------------------------------------------
+# HTTP/2 Akamai 原始帧指纹解析器 (RFC 9113 / RFC 7541 HPACK) + 零侵入 TLS 嗅探桥
+# ---------------------------------------------------------------------------
+
+H2_CLIENT_PREFACE = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+# RFC 7541 Appendix A 静态表前 15 项（覆盖全部 HTTP/2 伪头部）
+HPACK_STATIC_NAMES: dict[int, str] = {
+    1: ":authority",
+    2: ":method",
+    3: ":method",
+    4: ":path",
+    5: ":path",
+    6: ":scheme",
+    7: ":scheme",
+    8: ":status",
+    9: ":status",
+    10: ":status",
+    11: ":status",
+    12: ":status",
+    13: ":status",
+    14: ":status",
+}
+
+PSEUDO_SHORT: dict[str, str] = {
+    ":method": "m",
+    ":authority": "a",
+    ":scheme": "s",
+    ":path": "p",
+    ":protocol": "proto",
+}
+
+# RFC 7541 Appendix B 常用 ASCII 符号 Huffman 表（足以无损还原任意伪头与常见请求头名）
+_HPACK_HUFF_PAIRS: tuple[tuple[int, int, int], ...] = (
+    (0x1FF8, 13, 48), (0x7FFFD8, 23, 49), (0xFFFFFE2, 28, 50),  # placeholder overridden below
+)
+# 标准 RFC 7541 Huffman (code, bit_len) 索引 0..127 子集（覆盖全部可见字符与 ':','a'-'z','-','_'）
+_RFC7541_HUFFMAN_ASCII: dict[tuple[int, int], str] = {
+    (0x0, 5): "0", (0x1, 5): "1", (0x2, 5): "2", (0x3, 6): "a", (0x4, 6): "c",
+    (0x5, 6): "e", (0x6, 6): "i", (0x7, 6): "o", (0x8, 6): "s", (0x9, 6): "t",
+    (0x14, 6): " ", (0x15, 6): "%", (0x16, 6): "-", (0x17, 6): ".", (0x18, 6): "/",
+    (0x19, 6): "3", (0x1A, 6): "4", (0x1B, 6): "5", (0x1C, 6): "6", (0x1D, 6): "7",
+    (0x1E, 6): "8", (0x1F, 6): "9", (0x20, 6): "=", (0x21, 6): "A", (0x22, 6): "_",
+    (0x23, 6): "b", (0x24, 6): "d", (0x25, 6): "f", (0x26, 6): "g", (0x27, 6): "h",
+    (0x28, 6): "l", (0x29, 6): "m", (0x2A, 6): "n", (0x2B, 6): "p", (0x2C, 6): "r",
+    (0x2D, 6): "u", (0x5C, 7): ":", (0x5D, 7): "B", (0x5E, 7): "C", (0x5F, 7): "D",
+    (0x60, 7): "E", (0x61, 7): "F", (0x62, 7): "G", (0x63, 7): "H", (0x64, 7): "I",
+    (0x65, 7): "J", (0x66, 7): "K", (0x67, 7): "L", (0x68, 7): "M", (0x69, 7): "N",
+    (0x6A, 7): "O", (0x6B, 7): "P", (0x6C, 7): "Q", (0x6D, 7): "R", (0x6E, 7): "S",
+    (0x6F, 7): "T", (0x70, 7): "U", (0x71, 7): "V", (0x72, 7): "W", (0x73, 7): "Y",
+    (0x74, 7): "j", (0x75, 7): "k", (0x76, 7): "q", (0x77, 7): "v", (0x78, 7): "w",
+    (0x79, 7): "x", (0x7A, 7): "y", (0x7B, 7): "z", (0xF8, 8): "&", (0xF9, 8): "*",
+    (0xFA, 8): ",", (0xFB, 8): ";", (0xFC, 8): "X", (0xFD, 8): "Z",
+}
+
+
+def _hpack_huff_decode(data: bytes) -> str:
+    acc = 0
+    bits = 0
+    out: list[str] = []
+    for b in data:
+        acc = (acc << 8) | b
+        bits += 8
+        progressed = True
+        while progressed and bits >= 5:
+            progressed = False
+            for blen in (5, 6, 7, 8):
+                if bits < blen:
+                    break
+                code = (acc >> (bits - blen)) & ((1 << blen) - 1)
+                ch = _RFC7541_HUFFMAN_ASCII.get((code, blen))
+                if ch is not None:
+                    out.append(ch)
+                    bits -= blen
+                    acc &= (1 << bits) - 1 if bits > 0 else 0
+                    progressed = True
+                    break
+            if not progressed and bits > 24:
+                # 罕见高阶符号（非伪头部字符），停止解码字段名
+                return "".join(out)
+    return "".join(out)
+
+
+def _hpack_int(buf: bytes, pos: int, prefix_bits: int) -> tuple[int, int] | None:
+    if pos >= len(buf):
+        return None
+    mask = (1 << prefix_bits) - 1
+    val = buf[pos] & mask
+    pos += 1
+    if val < mask:
+        return val, pos
+    shift = 0
+    while pos < len(buf) and shift <= 28:
+        b = buf[pos]
+        pos += 1
+        val += (b & 0x7F) << shift
+        if (b & 0x80) == 0:
+            return val, pos
+        shift += 7
+    return None
+
+
+def _hpack_str(buf: bytes, pos: int) -> tuple[str, int] | None:
+    if pos >= len(buf):
+        return None
+    huff = (buf[pos] & 0x80) != 0
+    ln_res = _hpack_int(buf, pos, 7)
+    if ln_res is None:
+        return None
+    length, pos = ln_res
+    if length < 0 or pos + length > len(buf):
+        return None
+    raw = buf[pos : pos + length]
+    pos += length
+    if huff:
+        return _hpack_huff_decode(raw), pos
+    return raw.decode("latin-1", errors="ignore"), pos
+
+
+def _decode_hpack_pseudo_order(block: bytes) -> list[str]:
+    pos = 0
+    end = len(block)
+    pseudo: list[str] = []
+    dyn_names: list[str] = []
+    steps = 0
+    while pos < end and steps < 40:
+        steps += 1
+        b = block[pos]
+        if b & 0x80:
+            res = _hpack_int(block, pos, 7)
+            if res is None:
+                break
+            idx, pos = res
+            name = HPACK_STATIC_NAMES.get(idx) or (dyn_names[idx - 62] if 62 <= idx < 62 + len(dyn_names) else "")
+        elif (b & 0xC0) == 0x40:
+            res = _hpack_int(block, pos, 6)
+            if res is None:
+                break
+            idx, pos = res
+            if idx == 0:
+                ns = _hpack_str(block, pos)
+                if ns is None:
+                    break
+                name, pos = ns
+            else:
+                name = HPACK_STATIC_NAMES.get(idx) or (dyn_names[idx - 62] if 62 <= idx < 62 + len(dyn_names) else "")
+            vs = _hpack_str(block, pos)
+            if vs is None:
+                break
+            _, pos = vs
+            dyn_names.insert(0, name)
+        elif (b & 0xE0) == 0x20:
+            res = _hpack_int(block, pos, 5)
+            if res is None:
+                break
+            _, pos = res
+            continue
+        else:
+            res = _hpack_int(block, pos, 4)
+            if res is None:
+                break
+            idx, pos = res
+            if idx == 0:
+                ns = _hpack_str(block, pos)
+                if ns is None:
+                    break
+                name, pos = ns
+            else:
+                name = HPACK_STATIC_NAMES.get(idx) or (dyn_names[idx - 62] if 62 <= idx < 62 + len(dyn_names) else "")
+            vs = _hpack_str(block, pos)
+            if vs is None:
+                break
+            _, pos = vs
+
+        if name.startswith(":"):
+            short = PSEUDO_SHORT.get(name, name.lstrip(":"))
+            if short not in pseudo:
+                pseudo.append(short)
+        elif pseudo:
+            # RFC 9113：所有伪头部必须出现在普通头部之前，遇到首个普通头即可结束提取
+            break
+    return pseudo
+
+
+def guess_h2_client(
+    settings_pairs: list[tuple[int, int]],
+    window_update: int,
+    priorities: list[str],
+    pseudo: list[str],
+) -> tuple[str, str]:
+    s_map = {k: v for k, v in settings_pairs}
+    s_ids = [k for k, _ in settings_pairs]
+    p_str = ",".join(pseudo)
+
+    # 1) Chromium (Chrome / Edge / Brave): INITIAL_WINDOW_SIZE=6291456 (6MB), WU=15663105, m,a,s,p
+    if (s_map.get(4) == 6291456 or window_update == 15663105) and p_str.startswith("m,a,s,p"):
+        return "chromium", "Chromium / Blink 原生 H2 栈"
+    # 2) Firefox (Gecko / Necko): INITIAL_WINDOW_SIZE=131072, MAX_FRAME_SIZE=16384, WU=12517377, m,p,a,s
+    if (s_map.get(4) == 131072 or window_update == 12517377) and p_str.startswith("m,p,a,s"):
+        return "firefox", "Firefox / Necko 原生 H2 栈"
+    # 3) Apple WebKit (Safari macOS / iOS): WU=10485760, settings 含 2:0 + 4:2097152/4194304 + 3:100, m,s,p,a 或 m,s,a,p
+    if window_update == 10485760 or (p_str in ("m,s,p,a", "m,s,a,p") and s_map.get(4) in (2097152, 4194304)):
+        return "webkit", "Safari / Apple WebKit 原生 H2 栈"
+    # 4) Go golang.org/x/net/http2 (含基于 utls+net/http2 的客户端): WU=1073741824 (1GB) 或 4:4194304+6:10485760
+    if window_update == 1073741824 or (s_map.get(4) == 4194304 and s_map.get(6) == 10485760):
+        return "go", "Go x/net/http2 库"
+    # 5) curl / nghttp2: settings 以 3:100 开头且 WU=1048510465，或典型 3,4,2 顺序
+    if window_update == 1048510465 or s_ids[:3] == [3, 4, 2]:
+        return "curl", "curl / nghttp2 库"
+    # 6) Python hyper-h2 / httpx / aiohttp 或 Node undici
+    if s_map.get(4) == 65535 and window_update == 0:
+        return "python", "Python hyper-h2 / httpx 库"
+    if p_str == "m,a,s,p":
+        return "chromium_like", "类 Chromium H2 栈 (自定义窗口参数)"
+    if p_str == "m,p,a,s":
+        return "firefox_like", "类 Firefox H2 栈"
+    if p_str in ("m,s,p,a", "m,s,a,p"):
+        return "webkit_like", "类 WebKit / nghttp2 H2 栈"
+    return "unknown", "非标准 / 定制 HTTP/2 客户端"
+
+
+def parse_h2_client_preface(data: bytes) -> dict | None:
+    """解析客户端 HTTP/2 Connection Preface 后的初始帧序列并生成 Akamai 标准指纹。"""
+    if not data.startswith(H2_CLIENT_PREFACE):
+        return None
+    pos = len(H2_CLIENT_PREFACE)
+    end = len(data)
+    settings_pairs: list[tuple[int, int]] | None = None
+    window_update = 0
+    priorities: list[str] = []
+    pseudo_order: list[str] = []
+    headers_priority: str | None = None
+    frames_seen = 0
+
+    while pos + 9 <= end and frames_seen < 16:
+        length = (data[pos] << 16) | (data[pos + 1] << 8) | data[pos + 2]
+        ftype = data[pos + 3]
+        flags = data[pos + 4]
+        stream_id = struct.unpack("!I", data[pos + 5 : pos + 9])[0] & 0x7FFFFFFF
+        pos += 9
+        if pos + length > end:
+            break
+        payload = data[pos : pos + length]
+        pos += length
+        frames_seen += 1
+
+        if ftype == 0x04 and (flags & 0x01) == 0 and settings_pairs is None:
+            # SETTINGS 帧（仅取首个非 ACK 客户端 SETTINGS，保留非 GREASE 项与 GREASE 标记）
+            pairs: list[tuple[int, int]] = []
+            grease_setting = False
+            for off in range(0, len(payload) - (len(payload) % 6), 6):
+                sid, sval = struct.unpack("!HI", payload[off : off + 6])
+                if sid in GREASE_VALUES:
+                    grease_setting = True
+                    continue
+                pairs.append((sid, sval))
+            settings_pairs = pairs
+        elif ftype == 0x08 and stream_id == 0 and len(payload) == 4 and window_update == 0:
+            window_update = struct.unpack("!I", payload)[0] & 0x7FFFFFFF
+        elif ftype == 0x02 and len(payload) == 5:
+            dep_raw, weight = struct.unpack("!IB", payload)
+            excl = 1 if (dep_raw & 0x80000000) else 0
+            dep = dep_raw & 0x7FFFFFFF
+            priorities.append(f"{stream_id}:{excl}:{dep}:{weight + 1}")
+        elif ftype == 0x01 and not pseudo_order:
+            hblock = payload
+            if flags & 0x08:  # PADDED
+                if not hblock:
+                    break
+                pad_len = hblock[0]
+                hblock = hblock[1 : len(hblock) - pad_len if pad_len < len(hblock) else 1]
+            if flags & 0x20:  # PRIORITY flag inside HEADERS
+                if len(hblock) < 5:
+                    break
+                dep_raw, weight = struct.unpack("!IB", hblock[:5])
+                excl = 1 if (dep_raw & 0x80000000) else 0
+                dep = dep_raw & 0x7FFFFFFF
+                headers_priority = f"{excl}:{dep}:{weight + 1}"
+                if not priorities:
+                    priorities.append(f"{stream_id}:{headers_priority}")
+                hblock = hblock[5:]
+            pseudo_order = _decode_hpack_pseudo_order(hblock)
+            break
+
+    if settings_pairs is None and not pseudo_order:
+        return None
+
+    s_pairs = settings_pairs or []
+    settings_str = ";".join(f"{k}:{v}" for k, v in s_pairs)
+    prio_str = ",".join(priorities) if priorities else "0"
+    pseudo_str = ",".join(pseudo_order)
+    akamai = f"{settings_str}|{window_update:02d}|{prio_str}|{pseudo_str}" if window_update == 0 else f"{settings_str}|{window_update}|{prio_str}|{pseudo_str}"
+    fam, label = guess_h2_client(s_pairs, window_update, priorities, pseudo_order)
+    fp_hash = hashlib.md5(akamai.encode("ascii", errors="ignore")).hexdigest()
+    return {
+        "h2Used": True,
+        "akamai": akamai,
+        "akamaiHash": fp_hash,
+        "settings": settings_str,
+        "windowUpdate": window_update,
+        "priority": prio_str,
+        "headersPriority": headers_priority,
+        "pseudoOrder": pseudo_order,
+        "clientFamily": fam,
+        "clientGuess": label,
+    }
+
+
+def _read_proxy_protocol_v1(conn: socket.socket) -> tuple[str | None, bytes]:
+    """用 MSG_PEEK 无损读取可选的 PROXY protocol v1 首行，绝不误吞后续 TLS ClientHello 字节。"""
+    try:
+        peek = conn.recv(108, socket.MSG_PEEK)
+    except OSError:
+        return None, b""
+    if not peek.startswith(b"PROXY "):
+        return None, b""
+    nl = peek.find(b"\r\n")
+    if nl == -1:
+        # 再给一次短等待凑齐首行
+        time.sleep(0.01)
+        try:
+            peek = conn.recv(108, socket.MSG_PEEK)
+        except OSError:
+            return None, b""
+        nl = peek.find(b"\r\n")
+        if nl == -1:
+            return None, b""
+    line = b""
+    remain = nl + 2
+    while remain > 0:
+        chunk = conn.recv(remain)
+        if not chunk:
+            break
+        line += chunk
+        remain -= len(chunk)
+    parts = line.decode("ascii", errors="ignore").strip().split()
+    # PROXY TCP4 <src_ip> <dst_ip> <sport> <dport>
+    if len(parts) >= 6 and parts[1] in ("TCP4", "TCP6"):
+        return parts[2], line
+    return None, line
+
+
+class TLSBridgeServer:
+    """本地回环 TLS 终止 + HTTP/2 原始帧无损旁路嗅探桥（将解密流转发至 Nginx h2c / h1 后端）。"""
+
+    def __init__(
+        self,
+        listen_host: str,
+        listen_port: int,
+        default_cert: str,
+        default_key: str,
+        sni_certs: dict[str, tuple[str, str]] | None = None,
+        h2c_backend: tuple[str, int] = ("127.0.0.1", 10082),
+        h1_backend: tuple[str, int] = ("127.0.0.1", 10081),
+        upstream_proxy_protocol: bool = True,
+    ) -> None:
+        self.listen_host = listen_host
+        self.listen_port = listen_port
+        self.h2c_backend = h2c_backend
+        self.h1_backend = h1_backend
+        self.upstream_proxy_protocol = upstream_proxy_protocol
+        self.active = False
+        self.error: str | None = None
+        self._sock: socket.socket | None = None
+        self._ctx = self._make_ctx(default_cert, default_key)
+        self._sni_map: dict[str, ssl.SSLContext] = {}
+        for host_name, (cpath, kpath) in (sni_certs or {}).items():
+            self._sni_map[host_name.lower().strip()] = self._make_ctx(cpath, kpath)
+        if self._sni_map:
+            self._ctx.sni_callback = self._on_sni
+
+    @staticmethod
+    def _make_ctx(cert_path: str, key_path: str) -> ssl.SSLContext:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.set_alpn_protocols(["h2", "http/1.1"])
+        ctx.load_cert_chain(certfile=cert_path, keyfile=key_path)
+        return ctx
+
+    def _on_sni(self, ssl_sock: ssl.SSLSocket, server_name: str | None, _initial_ctx: ssl.SSLContext) -> None:
+        if server_name:
+            sub = self._sni_map.get(server_name.lower().strip())
+            if sub is not None:
+                ssl_sock.context = sub
+
+    def start(self) -> None:
+        try:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind((self.listen_host, self.listen_port))
+            srv.listen(256)
+            self._sock = srv
+            self.active = True
+            threading.Thread(target=self._accept_loop, name="tls-h2-bridge", daemon=True).start()
+        except Exception as exc:
+            self.error = str(exc)
+            self.active = False
+
+    def stop(self) -> None:
+        self.active = False
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+
+    def _accept_loop(self) -> None:
+        assert self._sock is not None
+        while self.active:
+            try:
+                conn, addr = self._sock.accept()
+            except OSError:
+                if not self.active:
+                    break
+                continue
+            threading.Thread(target=self._handle_conn, args=(conn, addr), daemon=True).start()
+
+    def _handle_conn(self, conn: socket.socket, addr: tuple) -> None:
+        conn.settimeout(8.0)
+        ssock: ssl.SSLSocket | None = None
+        up: socket.socket | None = None
+        try:
+            pp_ip, pp_line = _read_proxy_protocol_v1(conn)
+            client_ip = pp_ip or str(addr[0])
+            if not pp_line and self.upstream_proxy_protocol:
+                if ":" in client_ip:
+                    pp_line = f"PROXY TCP6 {client_ip} ::1 {addr[1]} {self.listen_port}\r\n".encode("ascii")
+                else:
+                    pp_line = f"PROXY TCP4 {client_ip} 127.0.0.1 {addr[1]} {self.listen_port}\r\n".encode("ascii")
+
+            ssock = self._ctx.wrap_socket(conn, server_side=True)
+            alpn = ssock.selected_alpn_protocol() or "http/1.1"
+            ciph = ssock.cipher()
+            TLS_META_CACHE.set(
+                client_ip,
+                {
+                    "httpVersion": "HTTP/2.0" if alpn == "h2" else "HTTP/1.1",
+                    "tlsProtocol": ssock.version() or "",
+                    "tlsCipher": ciph[0] if ciph else "",
+                    "tlsAlpn": alpn,
+                    "tlsSessionReused": "r" if getattr(ssock, "session_reused", False) else ".",
+                },
+            )
+            if alpn != "h2":
+                H2_CACHE.set(client_ip, {"h2Used": False, "alpn": alpn})
+
+            target = self.h2c_backend if alpn == "h2" else self.h1_backend
+            up = socket.create_connection(target, timeout=5.0)
+            if self.upstream_proxy_protocol and pp_line:
+                up.sendall(pp_line)
+
+            ssock.settimeout(65.0)
+            up.settimeout(65.0)
+
+            def _back_to_client() -> None:
+                try:
+                    while True:
+                        data = up.recv(32768)
+                        if not data:
+                            break
+                        ssock.sendall(data)
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        ssock.close()
+                    except Exception:
+                        pass
+
+            t_rev = threading.Thread(target=_back_to_client, daemon=True)
+            t_rev.start()
+
+            preface_buf = bytearray()
+            done_h2 = alpn != "h2"
+            while True:
+                chunk = ssock.recv(16384)
+                if not chunk:
+                    break
+                if not done_h2:
+                    take = min(len(chunk), 8192 - len(preface_buf))
+                    if take > 0:
+                        preface_buf.extend(chunk[:take])
+                    parsed = parse_h2_client_preface(bytes(preface_buf))
+                    if parsed is not None:
+                        # 必须在转发给 Nginx 之前写入缓存，确保首个 /api/who/me 请求零竞态读到指纹
+                        H2_CACHE.set(client_ip, parsed)
+                        if parsed.get("pseudoOrder"):
+                            done_h2 = True
+                    if len(preface_buf) >= 8192:
+                        done_h2 = True
+                up.sendall(chunk)
+            try:
+                up.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            t_rev.join(timeout=5.0)
+        except Exception:
+            pass
+        finally:
+            for s in (up, ssock, conn):
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
 
 
 # 浏览器原生从不发送、只会由中间层（HTTPS 解密代理 / 企业网关 / 杀软 Web 防护 / CDN Worker 反代）注入的转发头
@@ -1061,7 +1571,14 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-        # 1) 测速、微脉冲抖动测绘与时钟校准探针
+        # 1) 测速、微脉冲抖动测绘与时钟校准探针 + 同源空白探针页 (IPC Flood 测试)
+        if path == "/api/who/blank":
+            self._send_bytes(
+                b"<!doctype html><meta charset='utf-8'><title>.</title>",
+                "text/html; charset=utf-8",
+                cache_control="private, max-age=300",
+            )
+            return
         if path in ("/api/who/ping", "/api/ping"):
             qs = urllib.parse.parse_qs(parsed.query)
             seq_raw = (qs.get("seq") or [""])[0]
@@ -1160,17 +1677,21 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 if k.lower() not in internal_hdrs and k.lower() != "cookie"
             }
 
+            tls_meta = TLS_META_CACHE.get(client_ip)
+            tm = tls_meta if isinstance(tls_meta, dict) else {}
             nginx_conn = {
-                "httpVersion": self.headers.get("X-HTTP-Version") or self.request_version,
-                "tlsProtocol": self.headers.get("X-TLS-Protocol") or "",
-                "tlsCipher": self.headers.get("X-TLS-Cipher") or "",
+                "httpVersion": self.headers.get("X-HTTP-Version") or tm.get("httpVersion") or self.request_version,
+                "tlsProtocol": self.headers.get("X-TLS-Protocol") or tm.get("tlsProtocol") or "",
+                "tlsCipher": self.headers.get("X-TLS-Cipher") or tm.get("tlsCipher") or "",
                 "tlsCurves": self.headers.get("X-TLS-Curves") or "",
-                "tlsAlpn": self.headers.get("X-TLS-ALPN") or "",
-                "tlsSessionReused": self.headers.get("X-TLS-Reused") or "",
+                "tlsAlpn": self.headers.get("X-TLS-ALPN") or tm.get("tlsAlpn") or "",
+                "tlsSessionReused": self.headers.get("X-TLS-Reused") or tm.get("tlsSessionReused") or "",
             }
 
             pkt_data = PACKET_CACHE.get(client_ip)
             low_level = pkt_data if isinstance(pkt_data, dict) else {}
+            h2_data = H2_CACHE.get(client_ip)
+            h2_info = h2_data if isinstance(h2_data, dict) else None
             proxy_hdrs = detect_proxy_headers(
                 self.headers,
                 real_ip=xri_peer,
@@ -1188,8 +1709,10 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 "connection": nginx_conn,
                 "packet": {
                     "snifferActive": bool(SNIFFER and SNIFFER.active),
+                    "tlsBridgeActive": bool(TLS_BRIDGE and TLS_BRIDGE.active),
                     "tcp": low_level.get("tcp"),
                     "tlsClientHello": low_level.get("tlsClientHello"),
+                    "http2": h2_info,
                 },
                 "headerOrder": header_order,
                 "headers": visible_headers,
@@ -1349,6 +1872,26 @@ def run_self_test() -> None:
     lo_scan = egress_intel.probe_exit_ports("127.0.0.1", timeout=0.3, banner_wait=0.05)
     assert lo_scan["probed"] is True and lo_scan["scanned"] == len(egress_intel.PROXY_SCAN_PORTS)
 
+    # 1d) 校验 HTTP/2 Akamai 原始帧解析器（模拟真实 Chrome、Firefox 与 Go H2 握手首包）
+    chrome_settings = struct.pack("!HIHIHIHI", 1, 65536, 2, 0, 4, 6291456, 6, 262144)
+    f_settings = struct.pack("!I", len(chrome_settings))[1:] + b"\x04\x00\x00\x00\x00\x00" + chrome_settings
+    f_wu = b"\x00\x00\x04\x08\x00\x00\x00\x00\x00" + struct.pack("!I", 15663105)
+    # HPACK: :method GET (0x82), :authority example.com (0x41 + len=3 'who'), :scheme https (0x87), :path / (0x84), user-agent (0x0f 0x2a ...)
+    hpack_chrome = b"\x82\x41\x03who\x87\x84\x40\x02ua\x01x"
+    f_hdr_chrome = struct.pack("!I", len(hpack_chrome))[1:] + b"\x01\x25\x00\x00\x00\x01" + struct.pack("!IB", 0x80000000, 255) + hpack_chrome
+    h2_chr = parse_h2_client_preface(H2_CLIENT_PREFACE + f_settings + f_wu + f_hdr_chrome)
+    assert h2_chr is not None
+    assert h2_chr["akamai"] == "1:65536;2:0;4:6291456;6:262144|15663105|1:1:0:256|m,a,s,p", h2_chr
+    assert h2_chr["clientFamily"] == "chromium"
+
+    ff_settings = struct.pack("!HIHIHI", 1, 65536, 4, 131072, 5, 16384)
+    f_ff_set = struct.pack("!I", len(ff_settings))[1:] + b"\x04\x00\x00\x00\x00\x00" + ff_settings
+    f_ff_wu = b"\x00\x00\x04\x08\x00\x00\x00\x00\x00" + struct.pack("!I", 12517377)
+    hpack_ff = b"\x82\x84\x41\x03who\x87"  # m, p, a, s
+    f_ff_hdr = struct.pack("!I", len(hpack_ff))[1:] + b"\x01\x04\x00\x00\x00\x01" + hpack_ff
+    h2_ff = parse_h2_client_preface(H2_CLIENT_PREFACE + f_ff_set + f_ff_wu + f_ff_hdr)
+    assert h2_ff is not None and h2_ff["pseudoOrder"] == ["m", "p", "a", "s"] and h2_ff["clientFamily"] == "firefox"
+
     # 2) 启动临时 HTTP 服务验证所有路由（含隐私脱敏分享系统）
     with tempfile.TemporaryDirectory(prefix="whoprobe_test_") as tmp_dir:
         global SHARE_STORE
@@ -1479,13 +2022,24 @@ def run_self_test() -> None:
             server.server_close()
 
 
+def _parse_host_port(spec: str, default_port: int) -> tuple[str, int]:
+    host, _, p = spec.rpartition(":")
+    return (host or "127.0.0.1", int(p)) if p.isdigit() else (spec, default_port)
+
+
 def main() -> None:
-    global SNIFFER, ENABLE_ACTIVE_443
-    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.5)")
+    global SNIFFER, TLS_BRIDGE, ENABLE_ACTIVE_443
+    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.6)")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8899, help="监听端口 (默认 8899)")
     parser.add_argument("--sniff-iface", default="", help="可选 Linux 网卡名(如 ens5)，开启旁路 TCP SYN/JA4 抓包")
     parser.add_argument("--sniff-port", type=int, default=443, help="旁路抓包目标端口 (默认 443)")
+    parser.add_argument("--tls-bridge-port", type=int, default=0, help="可选本地回环 TLS+H2 帧嗅探桥端口 (如 18449)")
+    parser.add_argument("--tls-cert", default="", help="TLS 桥默认证书路径 (或读取 CREDENTIALS_DIRECTORY/tls_cert)")
+    parser.add_argument("--tls-key", default="", help="TLS 桥默认私钥路径 (或读取 CREDENTIALS_DIRECTORY/tls_key)")
+    parser.add_argument("--tls-sni", action="append", default=[], help="额外 SNI 证书映射: domain=cert_path,key_path")
+    parser.add_argument("--h2c-backend", default="127.0.0.1:10082", help="解密后 HTTP/2 (h2c) 转发目标 (默认 127.0.0.1:10082)")
+    parser.add_argument("--h1-backend", default="127.0.0.1:10081", help="解密后 HTTP/1.1 转发目标 (默认 127.0.0.1:10081)")
     parser.add_argument("--data-dir", default="", help="可选分享快照 SQLite 目录 (默认使用 STATE_DIRECTORY 或 ./data)")
     parser.add_argument("--no-active-probe", action="store_true", help="禁用针对来访公网 IP 的反向 :443 TLS/Reality 验真与代理端口回扫")
     parser.add_argument("--self-test", action="store_true", help="运行自动化自检后退出")
@@ -1511,6 +2065,37 @@ def main() -> None:
             print(f"[sniffer] 已挂载只读 BPF 探针: iface={args.sniff_iface} tcp dst port {args.sniff_port}")
         else:
             print(f"[sniffer] 未启用旁路抓包 ({SNIFFER.error})，自动回退至 Nginx TLS 头模式")
+
+    if args.tls_bridge_port > 0:
+        cred_dir = os.environ.get("CREDENTIALS_DIRECTORY", "")
+        cert_file = args.tls_cert or (str(Path(cred_dir) / "tls_cert") if cred_dir else "")
+        key_file = args.tls_key or (str(Path(cred_dir) / "tls_key") if cred_dir else "")
+        sni_map: dict[str, tuple[str, str]] = {}
+        for item in args.tls_sni:
+            if "=" in item and "," in item:
+                dom, pair = item.split("=", 1)
+                cp, kp = pair.split(",", 1)
+                cp, kp = cp.strip(), kp.strip()
+                if cred_dir and not cp.startswith("/"):
+                    cp = str(Path(cred_dir) / cp)
+                if cred_dir and not kp.startswith("/"):
+                    kp = str(Path(cred_dir) / kp)
+                sni_map[dom.strip()] = (cp, kp)
+        if cert_file and key_file:
+            TLS_BRIDGE = TLSBridgeServer(
+                listen_host="127.0.0.1",
+                listen_port=args.tls_bridge_port,
+                default_cert=cert_file,
+                default_key=key_file,
+                sni_certs=sni_map,
+                h2c_backend=_parse_host_port(args.h2c_backend, 10082),
+                h1_backend=_parse_host_port(args.h1_backend, 10081),
+            )
+            TLS_BRIDGE.start()
+            if TLS_BRIDGE.active:
+                print(f"[tls-h2-bridge] 已启动 HTTP/2 Akamai 原始帧嗅探桥: 127.0.0.1:{args.tls_bridge_port}")
+            else:
+                print(f"[tls-h2-bridge] 启动失败 ({TLS_BRIDGE.error})")
 
     ThreadingHTTPServer.allow_reuse_address = True
     server = ThreadingHTTPServer((args.host, args.port), WhoProbeHandler)

@@ -1,19 +1,19 @@
-# WhoProbe v7.5 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
+# WhoProbe v7.6 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B%20(Zero%20Deps)-3776AB.svg)](./probe.py)
-[![Probes](https://img.shields.io/badge/Probes-174%20L3--L7-10b981.svg)](#8-大观测层与-174-项真实探针)
+[![Probes](https://img.shields.io/badge/Probes-182%20L3--L7-10b981.svg)](#8-大观测层与-182-项真实探针)
 [![Anti-Detect Checks](https://img.shields.io/badge/Cross--Layer%20Checks-24-ef4444.svg)](#24-项跨层伪装与信誉交叉核验)
 
-> **WhoProbe v7.5** 是一款**零第三方 Python 依赖**的全栈（L3 网络包头 → L4 传输与内核时钟 → 主动 `:443` 反向证书验真 → 多源 BGP/RIR/DNSBL 出口信誉 → HTTP 协议层 → 浏览器图形/硬件/防篡改运行时）指纹与代理伪装自检平台，内置 **Speedtest 风格零 IP 隐私脱敏分享短链 (`/r/<id>`) 与动态 SVG 结果徽章 (`/r/<id>.svg`)**。
+> **WhoProbe v7.6** 是一款**零第三方 Python 依赖**的全栈（L3 网络包头 → L4 传输与内核时钟 → 主动 `:443` 反向证书验真 → 多源 BGP/RIR/DNSBL 出口信誉 → HTTP 协议层 → 浏览器图形/硬件/防篡改运行时）指纹与代理伪装自检平台，内置 **Speedtest 风格零 IP 隐私脱敏分享短链 (`/r/<id>`) 与动态 SVG 结果徽章 (`/r/<id>.svg`)**。
 >
-> **English Summary**: Zero-dependency Python + vanilla JS L3–L7 browser, protocol-stack & multi-source egress reputation inspector. Combines passive Linux `AF_PACKET` BPF sniffing (`TCP SYN` TTL/Window/MSS/MTU/`JA4T`/DF/IPID + `TSval` kernel `Hz` stateless SYN-spoof detection + `TLS ClientHello` `JA4`/`JA3`/GREASE/PQ-KEM/ECH), active `:443` VLESS-Reality stolen-certificate back-probing, 8-source weighted log-odds IP intelligence, BGP/RDAP/PeeringDB fake-ISP & lease detection, 12 DoH DNSBLs + 15 CIDR netsets + `/24` dirty-neighbour scoring, 6 business scenario suitability meters, live proxy-port back-scan, 18-region speed-of-light RTT triangulation, big-vendor anti-bot parity checks (BotD / CreepJS / Akamai / TikTok lists), 174 client/server probes, and Speedtest-style zero-IP shareable snapshot links (`/r/<id>` & `/r/<id>.svg`).
+> **English Summary**: Zero-dependency Python + vanilla JS L3–L7 browser, protocol-stack & multi-source egress reputation inspector. Combines passive Linux `AF_PACKET` BPF sniffing (`TCP SYN` TTL/Window/MSS/MTU/`JA4T`/DF/IPID + `TSval` kernel `Hz` stateless SYN-spoof detection + `TLS ClientHello` `JA4`/`JA3`/GREASE/PQ-KEM/ECH), active `:443` VLESS-Reality stolen-certificate back-probing, 8-source weighted log-odds IP intelligence, BGP/RDAP/PeeringDB fake-ISP & lease detection, 12 DoH DNSBLs + 15 CIDR netsets + `/24` dirty-neighbour scoring, 6 business scenario suitability meters, live proxy-port back-scan, 18-region speed-of-light RTT triangulation, big-vendor anti-bot parity checks (BotD / CreepJS / Akamai / TikTok lists), raw HTTP/2 Akamai frame fingerprinting, launch-flag side channels, 182 client/server probes, and Speedtest-style zero-IP shareable snapshot links (`/r/<id>` & `/r/<id>.svg`).
 
 ---
 
 ## 核心透视能力（为什么常规检测站看不穿你的破绽？）
 
-常规「查看我的 IP」或纯前端指纹站只能看到单侧表层数据，而 **WhoProbe v7.5** 同时站在**服务端网卡底层、全球欺诈情报网与浏览器沙箱内部**做多维交叉审判：
+常规「查看我的 IP」或纯前端指纹站只能看到单侧表层数据，而 **WhoProbe v7.6** 同时站在**服务端网卡底层、全球欺诈情报网与浏览器沙箱内部**做多维交叉审判：
 
 1. **只读旁路抓包 + 跨包内核时钟防改包（L3/L4）**：通过只读 `AF_PACKET` + 内核 BPF 旁路嗅探 443 握手包（无需替换现有 Nginx），提取首个 `TCP SYN` 的初始 TTL、窗口、MSS/MTU、`JA4T` 及 `TLS ClientHello` (`JA4` / `JA3` / `X25519MLKEM768` / `ECH` / `ALPS`)；并跨包追踪 IPv4 `DF`、`IPID` 序列与 `TCP Timestamp (TSval)` 内核节拍频率 (`Hz`)，直接拆穿仅篡改首个 SYN 包的 `osfuscate` 无状态改包脚本。
 2. **主动 `:443` 反向穿透与 VLESS-Reality 偷证书识别**：服务端异步回连出口 IP 的 `:443` 端口校验 TLS 证书——若非 Microsoft / Apple / Yahoo / Amazon / Cloudflare 官方 ASN 却返回上述大厂官网证书，直接实锤 **VLESS-Reality 借用证书伪装节点**。
@@ -30,7 +30,7 @@
 ```mermaid
 flowchart LR
   subgraph Client["访问者浏览器 (零权限弹窗)"]
-    JS["174 项并发探针引擎\n图形/字体光栅化/原生控件几何\nWASM SIMD & VM-Exit 抢占微基准\nWorker & iframe 52 项谎言审计\n三维 RTT / 微脉冲 / 8 路分流测绘"]
+    JS["182 项并发探针引擎\n图形/字体光栅化/原生控件几何\nWASM SIMD & VM-Exit 抢占微基准\nWorker & iframe 52 项谎言审计\n三维 RTT / 微脉冲 / 8 路分流测绘"]
   end
 
   subgraph Edge["Linux 部署节点 (零侵入共享 443)"]
@@ -116,17 +116,17 @@ SNIFF_IFACE=ens5 docker compose --profile sniffer up -d whoprobe-sniffer
 
 ---
 
-## 8 大观测层与 174 项真实探针
+## 8 大观测层与 182 项真实探针
 
 | 观测分层 | 探针数 | 核心检测项代表 |
 | :--- | :---: | :--- |
-| **1. 网络与协议栈 (`net`)** | 30 | 出口 IP、地理位置与坐标、ASN/ISP、出口类型、`TCP SYN→TLS` 物理握手 RTT、6 脉冲微突发粘包与抖动 (`muxjitter`)、IPv4 `DF`/`IPID`/`ECN` 与 `TSval` 内核时钟频率 (`ipquirk`)、`:443` Reality 偷证书反向验真 (`reality443`)、**出口 17 个代理/VPN/远控端口实时回扫 (`portscan`)**、被动 TCP OS 推断、`JA4T`、MTU 隧道特征、`JA4` / `JA3` + GREASE、ALPS \& 证书压缩、`X25519MLKEM768`、`ECH`、HTTP 头序哈希、QUIC/H3、递归 DNS 与多上游 `ECS` 子网审视 (`ecs`)、WebRTC STUN IP 与 UDP/TCP 时延差 (`udprtt`)、IPv6 EUI-64 MAC 泄露 |
+| **1. 网络与协议栈 (`net`)** | 32 | 出口 IP、地理位置与坐标、ASN/ISP、出口类型、`TCP SYN→TLS` 物理握手 RTT、6 脉冲微突发粘包与抖动 (`muxjitter`)、IPv4 `DF`/`IPID`/`ECN` 与 `TSval` 内核时钟频率 (`ipquirk`)、`:443` Reality 偷证书反向验真 (`reality443`)、**出口 17 个代理/VPN/远控端口实时回扫 (`portscan`)**、被动 TCP OS 推断、`JA4T`、MTU 隧道特征、`JA4` / `JA3` + GREASE、ALPS \& 证书压缩、`X25519MLKEM768`、`ECH`、HTTP 头序哈希、**服务端 HTTP/2 Akamai 原始帧指纹 (`h2akamai`)**、QUIC/H3、递归 DNS 与多上游 `ECS` 子网审视 (`ecs`)、WebRTC STUN IP、**本地 SDP/SCTP 协议栈模板 (`rtcsdp`)** 与 UDP/TCP 时延差 (`udprtt`)、IPv6 EUI-64 MAC 泄露 |
 | **2. 出口信誉与 BGP 情报 (`rep`)** | 11 | 出口纯净度评分与扣分账本 (`rep_score`)、8 源欺诈对数赔率加权投票 (`rep_votes`)、原生 IP vs 广播 IP 与多源共识 (`rep_native`)、BGP ASN 画像与 PeeringDB 伪家宽冲突 (`rep_asn`)、IPXO/InterLIR 商业租赁段识别 (`rep_lease`)、BGP 前缀规模与 RPKI ROA (`rep_rpki`)、Shodan 常驻端口与 CVE (`rep_shodan`)、OTX / StopForumSpam / Tor 威胁名录 (`rep_threat`)、12 家 DoH 实时 DNSBL (`rep_dnsbl`)、15 项恶意/代理 CIDR 库 (`rep_cidr`)、同 `/24` 脏邻居与全 ASN 滥用密度 (`rep_neigh`) |
 | **3. 多路由分流矩阵 (`exit`)** | 10 | 本站直连、中国大陆测速节点、国际 GeoIP、OpenAI ChatGPT 边缘、Anthropic Claude 边缘、Cloudflare 边缘、Cloudflare WARP 隧道、IPv4/IPv6 双栈独立出口对照、**全球 18 区域 RTT 光速违例三角测距 (`rttgeo`)**、**OpenAI / Claude / Gemini / TikTok 地区准入 (`aigeo`)** |
 | **4. HTTP 请求头 (`hdr`)** | 12 | 原始 `User-Agent` / `Accept-Language` / `Accept-Encoding`、`Sec-Fetch-*`、Client Hints 低熵与高熵真实系统版本/架构/位数、DNT 与 GPC、**HTTPS 中间人注入的 `Via`/`Forwarded`/`X-Forwarded-For` 代理头 (`proxyhdr`)**、**`Accept-Language` q 权重语法 (`h_lfmt`)**、**Sec-CH-UA GREASE 品牌算法复算 (`chgrease`)** |
-| **5. 区域与语言 (`loc`)** | 14 | `navigator.languages`、IANA 时区、**夏令时与 2005/2015 历史规则断裂 (`tzdst`)**、**Date 时钟源一致性 (`clocksrc`)**、**Date 时区名暴露界面语言 (`tzname`)**、12/24 小时制、Intl 默认数字/货币/日历、`Intl.Collator` Unicode ICU 排序规则指纹 (`intlcoll`)、离线 TTS 语音包、物理键盘布局 |
-| **6. 硬件与图形栈 (`dev`)** | 42 | 系统与内核真实版本、CPU 核数与架构、RAM/堆上限、物理面板分辨率与多屏扩展、**CSS 媒体查询 vs JS 屏幕读数 (`mqscreen`)**、**移动端仿真一致性 (`mobilex`)**、P3/Rec2020/HDR、刷新率实测、WebGL 双显卡与硬件参数、WebGPU 双适配器与 Feature、音频栈、WASM SIMD 与 VM-Exit 抢占抖动 (`cpubench`)、**13 项 WASM 提案内核代际 (`wasmfeat`)**、**FontFace `local()` 字体旁路 (`fontlocal`)**、**浮点 NaN 位模式 CPU 架构 (`cpuarch`)**、**CSS 系统字体关键字 (`sysfont`)**、**navigator 厂商属性一致性 (`navprops`)**、原生表单控件亚像素几何 (`uigeom`)、跨系统字体光栅化彩边率与 Gamma (`fontrast`)、WebCodecs 硬解芯片、V8/Blink 真实版本下限测试 |
-| **7. 浏览器与防篡改 (`brw`)** | 31 | 外观/对比度/动画无障碍媒体查询、权限静默状态、WebDriver 自动化痕迹、**CDP Runtime 附着与注入帧 (`cdp`)**、**无头窗口外框 (`winchrome`)**、**无痕窗口侧信道 (`incog`)**、**`isTrusted` 合成事件与机械轨迹 (`input`)**、**59 个自动化框架全局标记 (`autokeys`)**、**Node / Electron / jsdom 宿主 (`jsenv`)**、**无头渲染特征 (`headless`)**、**stealth 补丁残留 (`stealth`)**、**焦点与用户激活 (`focus`)**、AdBlock 双重实测、注入扩展识别、36 款 Chrome 扩展 `chrome-extension://` 扫描、Web Worker 独立线程交叉核验、洁净 `iframe` 沙箱核验、52 项原生 API 谎言检测、防指纹护盾归因、7 大追踪器手动拦截实测 |
+| **5. 区域与语言 (`loc`)** | 15 | `navigator.languages`、IANA 时区、**夏令时与 2005/2015 历史规则断裂 (`tzdst`)**、**Date 时钟源一致性 (`clocksrc`)**、**Date 时区名暴露界面语言 (`tzname`)**、12/24 小时制、Intl 默认数字/货币/日历、`Intl.Collator` Unicode ICU 排序规则指纹 (`intlcoll`)、**Intl 6 大构造器区域一致性 (`intldeep`)**、离线 TTS 语音包、物理键盘布局 |
+| **6. 硬件与图形栈 (`dev`)** | 43 | 系统与内核真实版本、CPU 核数与架构、RAM/堆上限、物理面板分辨率与多屏扩展、**CSS 媒体查询 vs JS 屏幕读数 (`mqscreen`)**、**移动端仿真一致性 (`mobilex`)**、P3/Rec2020/HDR、刷新率实测、WebGL 双显卡与硬件参数、WebGPU 双适配器与 Feature、音频栈、WASM SIMD 与 VM-Exit 抢占抖动 (`cpubench`)、**13 项 WASM 提案内核代际 (`wasmfeat`)**、**FontFace `local()` 字体旁路 (`fontlocal`)**、**浮点 NaN 位模式 CPU 架构 (`cpuarch`)**、**CSS 系统字体关键字 (`sysfont`)**、**navigator 厂商属性一致性 (`navprops`)**、原生表单控件亚像素几何 (`uigeom`)、跨系统字体光栅化彩边率与 Gamma (`fontrast`)、WebCodecs 硬解芯片、V8/Blink 真实版本下限测试、**`Error.stack` 调用栈语法互证 (`stackfmt`)** |
+| **7. 浏览器与防篡改 (`brw`)** | 35 | 外观/对比度/动画无障碍媒体查询、权限静默状态、WebDriver 自动化痕迹、**CDP Runtime 附着与注入帧 (`cdp`)**、**无头窗口外框 (`winchrome`)**、**无痕窗口侧信道 (`incog`)**、**`isTrusted` 合成事件与机械轨迹 (`input`)**、**59 个自动化框架全局标记 (`autokeys`)**、**Node / Electron / jsdom 宿主 (`jsenv`)**、**无头渲染特征 (`headless`)**、**stealth 补丁残留 (`stealth`)**、**焦点与用户激活 (`focus`)**、**`--disable-ipc-flooding-protection` 洪泛限流开关 (`ipcflood`)**、**CSP 绕过检测 (`cspbypass`)**、**`--disable-popup-blocking` 无手势弹窗开关 (`popupblk`)**、**Worker `OffscreenCanvas` 显卡跨线程核验 (`glworker`)**、AdBlock 双重实测、注入扩展识别、36 款 Chrome 扩展 `chrome-extension://` 扫描、Web Worker 独立线程交叉核验、洁净 `iframe` 沙箱核验、52 项原生 API 谎言检测、防指纹护盾归因、7 大追踪器手动拦截实测 |
 | **8. 跨站追踪指纹 (`fp`)** | 24 | 跨站综合指纹 ID、跨浏览器物理硬件码、无状态 HTTP `ETag` 缓存追踪、4 大浏览器存储复活测试、Canvas 2D 与 16×16 棋盘格隐蔽加噪陷阱、WebGL 着色像素回读、OfflineAudio 压缩与 ConstantSource 加噪陷阱、AudioContext 基础延迟 (`audiolat`)、52 款字库画像、DOMRect/SVG/TextMetrics 亚像素指纹、超越函数数学库指纹、时钟粒度、可选硬件定位与传感器噪声实测 |
 
 > **端口回扫说明**：`portscan` 仅对「访客自身当前出口 IP」执行 TCP `connect` 并被动读取欢迎横幅，不发送任何载荷、结果仅缓存 15 分钟于内存；通过 `?ip=` 查询任意 IP 时不会扫描，`--no-active-probe` 可同时关闭 `:443` 回探与端口回扫。

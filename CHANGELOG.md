@@ -1,5 +1,22 @@
 # Changelog
 
+## [v7.6.0] - 2026-11-25
+
+### Added — 攻克 HTTP/2 Akamai 原始帧指纹与无打扰启动参数副作用检测（174 → 182 项）
+将此前因 Nginx 终止 TLS 或担心打扰用户而未纳入的高阶检测手段全部无感落地，并补齐跨线程 WebGL 与 SDP/Intl 深度核验：
+- **服务端 HTTP/2 Akamai 原始帧指纹 (`h2akamai` · `probe.py`)**：
+  - `probe.py` 内置零依赖 `TLSBridgeServer` (`--tls-bridge-port`) 与 RFC 9113 / RFC 7541 HPACK 伪头解析器，支持上游 Nginx `stream` SNI 路由与 `PROXY protocol v1` 透传、多域名 SNI 证书切换（兼容 `systemd` `LoadCredential` 最小权限加载）及 Nginx `h2c` / `http/1.1` 双后端自动桥接（上游可配 `backup` 无缝容灾）。
+  - 在转发首包前无损提取客户端原始 `SETTINGS` 参数顺序与值、连接级 `WINDOW_UPDATE` 增量、`PRIORITY` / `HEADERS` 流优先级与伪头部顺序（如 Chromium `m,a,s,p`、Firefox `m,p,a,s`、Safari WebKit `m,s,p,a`、Go `x/net/http2`、curl `nghttp2`、Python `hyper-h2`），拼装标准 `<SETTINGS>|<WU>|<PRIORITY>|<PSEUDO>` Akamai 指纹并与 UA 自报内核交叉核验（不一致时直接计入 `conn` 高危穿帮）。
+- **IPC 洪泛保护开关无感检测 (`ipcflood`)**：新增 `/api/who/blank` 轻量同源空白页，在隐藏 `iframe` 内 12ms 同步执行 260 次 `history.replaceState`（零主页面 URL 变动、零耗时等待）：正常 Chromium 在 ~200 次触发 Blink `FloodGuard` 限流，开启 Puppeteer / Playwright 默认参数 `--disable-ipc-flooding-protection` 时 260 次全量放行。
+- **CSP 内容安全策略绕过检测 (`cspbypass`)**：在隔离 `srcdoc` `iframe` 内声明 `script-src 'none'` 并放置内联探针脚本，毫秒级零误报实锤 CDP `Page.setBypassCSP` / Playwright `bypassCSP: true`。
+- **无手势弹窗拦截自动实测 (`popupblk`)**：仅在页面首次加载且 `navigator.userActivation.isActive === false` 时静默测试 `window.open` 是否被默认拦截（若放行则同帧立即 `w.close()` 关闭；用户手动点「重新检测」处于激活窗口期时自动复用首测结果，绝不误弹窗），识别 `--disable-popup-blocking`。
+- **Worker `OffscreenCanvas` 显卡跨线程核验 (`glworker`)**：在独立 Web Worker 内读取 WebGL `UNMASKED_RENDERER_WEBGL` 并与主线程显卡比对（CreepJS `hasBadWebGL` 同款），专杀只 Hook 主页面 WebGL 的 stealth 插件与指纹浏览器。
+- **WebRTC SDP 协议栈与 DTLS/SCTP 模板 (`rtcsdp`)**：纯本地零外网请求生成 Offer SDP，提取 `ice-options`、DTLS 哈希算法、SCTP `max-message-size` 与 RTP 扩展模板签名。
+- **Intl 六大构造器默认区域一致性 (`intldeep`)**：比对 `DateTimeFormat`、`NumberFormat`、`RelativeTimeFormat`、`PluralRules`、`DisplayNames` 与 `ListFormat` 默认主语种，抓捕半吊子语言注入。
+- **原生 `Error.stack` 调用栈语法互证 (`stackfmt`)**：校验 V8 `'    at '` 与 SpiderMonkey/JSC `'@'` 堆栈格式及 `Error.captureStackTrace`，反证跨引擎 UA 伪装。
+
+---
+
 ## [v7.5.0] - 2026-11-25
 
 ### Added — 对标大厂风控 SDK 与开源检测项目的 12 项新探针（162 → 174 项）

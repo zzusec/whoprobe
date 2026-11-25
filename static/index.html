@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
   <title>WhoProbe · 网站眼里的你 — L3–L7 全栈指纹、BGP 出口情报与伪装风控诊断</title>
-  <meta name="description" content="零权限弹窗读取 174 项网络协议栈、TCP TSval 时钟、:443 Reality 偷证书反向验真、8 源欺诈/BGP 租赁情报、同 /24 脏邻居、硬件光栅化与 52 项原型谎言，精准评估 6 大业务准入与防关联破绽。">
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.5.0">
-  <link rel="stylesheet" href="./assets/style.css?v=7.5.0">
+  <meta name="description" content="零权限弹窗读取 182 项网络协议栈、TCP TSval 时钟、:443 Reality 偷证书反向验真、8 源欺诈/BGP 租赁情报、同 /24 脏邻居、硬件光栅化与 52 项原型谎言，精准评估 6 大业务准入与防关联破绽。">
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.6.0">
+  <link rel="stylesheet" href="./assets/style.css?v=7.6.0">
   <script>
     (function () {
       try {
@@ -56,7 +56,7 @@
           <span class="hidden lg:inline-block h-3.5 w-px bg-zinc-300 dark:bg-zinc-800" aria-hidden="true"></span>
           <span id="liveStatusPill" class="hidden lg:inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400 truncate">
             <span id="liveDot" class="size-1.5 shrink-0 rounded-full animate-pulse bg-blue-600"></span>
-            <span id="liveStatusText" class="truncate">正在初始化 174 项无感嗅探…</span>
+            <span id="liveStatusText" class="truncate">正在初始化 182 项无感嗅探…</span>
           </span>
         </div>
 
@@ -81,7 +81,7 @@
               <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
               <span id="btnCopyTxtLabel" class="hidden md:inline">复制</span>
             </button>
-            <button id="btnCopyJson" type="button" class="py-1.5 px-2 sm:px-2.5 inline-flex items-center text-xs font-mono font-medium text-zinc-700 hover:bg-zinc-50 transition dark:text-zinc-300 dark:hover:bg-white/[0.05]" title="复制全部 174 项原始 JSON 数据">
+            <button id="btnCopyJson" type="button" class="py-1.5 px-2 sm:px-2.5 inline-flex items-center text-xs font-mono font-medium text-zinc-700 hover:bg-zinc-50 transition dark:text-zinc-300 dark:hover:bg-white/[0.05]" title="复制全部 182 项原始 JSON 数据">
               <span>JSON</span>
             </button>
             <button id="btnTheme" type="button" class="py-1.5 px-2 sm:px-2.5 inline-flex justify-center items-center text-zinc-700 hover:bg-zinc-50 transition dark:text-zinc-300 dark:hover:bg-white/[0.05]" aria-label="切换深浅色主题" title="切换浅色 / 深色模式">
@@ -378,8 +378,8 @@
             <span id="tabRoutesBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">8 路</span>
           </button>
           <button type="button" role="tab" data-wstab="probes" aria-selected="false" aria-controls="explorerSection" tabindex="-1" class="ws-tab shrink-0 min-w-0 py-2 px-2 sm:px-3.5 inline-flex items-center justify-center gap-1.5 sm:gap-2 rounded-lg text-xs transition font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
-            <span class="sm:hidden">探针</span><span class="hidden sm:inline">174 项原始探针库</span>
-            <span id="probeCountBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">0/174</span>
+            <span class="sm:hidden">探针</span><span class="hidden sm:inline">182 项原始探针库</span>
+            <span id="probeCountBadge" class="py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">0/182</span>
           </button>
         </nav>
       </div>
@@ -453,12 +453,12 @@
         </div>
       </div>
 
-      <!-- Panel 3: 174 Full Sniffer Data Explorer -->
+      <!-- Panel 3: 182 Full Sniffer Data Explorer -->
       <div id="explorerSection" data-wspanel="probes" hidden class="ws-panel surface-sheet rounded-2xl overflow-hidden">
         <div class="px-5 py-4 border-b border-zinc-950/[0.06] dark:border-white/[0.07] space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 class="text-base font-semibold text-zinc-950 dark:text-white">174 项原始探针读数库</h2>
+              <h2 class="text-base font-semibold text-zinc-950 dark:text-white">182 项原始探针读数库</h2>
               <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">点击任意行复制读数；悬停「?」查看检测原理</p>
             </div>
             <div class="relative w-full sm:w-72">
@@ -478,7 +478,7 @@
 
     <!-- Quiet Footer -->
     <footer class="pt-1 pb-5 text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap items-center justify-between gap-2">
-      <span>WhoProbe v7.5.0 · 被动 L3/L4 BPF 嗅探 · :443 伪装验真与端口回扫 · 多源 BGP 信誉 · 174 项全栈检测</span>
+      <span>WhoProbe v7.6.0 · 被动 L3/L4 BPF 嗅探 · :443 伪装验真与端口回扫 · 多源 BGP 信誉 · 182 项全栈检测</span>
       <div class="flex flex-wrap items-center gap-2">
         <span>当前会话实时计算 · 零持久化日志</span>
         <span>·</span>
@@ -538,6 +538,6 @@
   <div id="globalTip" role="tooltip" hidden class="fixed z-50 max-w-xs sm:max-w-sm rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-100 shadow-xl pointer-events-none whitespace-pre-line dark:border-white/[0.12] dark:bg-zinc-900"></div>
   <div id="toastBar" hidden class="fixed bottom-5 right-5 z-50 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-950 dark:border-white"></div>
 
-  <script src="./assets/app.js?v=7.5.0"></script>
+  <script src="./assets/app.js?v=7.6.0"></script>
 </body>
 </html>

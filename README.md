@@ -1,4 +1,4 @@
-# WhoProbe v7.7 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
+# WhoProbe v7.8 · 全栈浏览器指纹、协议栈深潜与多源出口信誉透视探针 (L3–L7)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B%20(Zero%20Deps)-3776AB.svg)](./probe.py)
@@ -174,11 +174,13 @@ SNIFF_IFACE=ens5 docker compose --profile sniffer up -d whoprobe-sniffer
 | `GET /api/who/quic` | 查询 UDP `:443` `QUICInitialCollector` 实时解密的 `JA4Q` 与 `quic_transport_parameters` |
 | `GET /api/who/tls2` | 查询同一客户端连续多次独立 TLS 握手的扩展洗牌 (`tlsPermutation`) 与 PSK 状态 |
 | `GET /sw-probe.js` | 同源零缓存 `SharedWorker` / `ServiceWorker` 第 4、5 界沙箱探针脚本 |
+| `GET /admin` | 可选管理后台（默认未配口令时返回 `404`；配置 `WHOPROBE_ADMIN_TOKEN` 或 `LoadCredential=admin_token` 后启用每日 UV/PV 趋势、来访 IP 明细与分享页全真预览） |
 
 ```text
 usage: probe.py [-h] [--host HOST] [--port PORT] [--sniff-iface SNIFF_IFACE]
                 [--sniff-port SNIFF_PORT] [--quic-port QUIC_PORT]
                 [--tls-bridge-port PORT --tls-cert PEM --tls-key PEM]
+                [--admin-token TOKEN | --admin-token-file PATH]
                 [--no-active-probe] [--self-test]
 ```
 
@@ -195,7 +197,7 @@ usage: probe.py [-h] [--host HOST] [--port PORT] [--sniff-iface SNIFF_IFACE]
 
 ## 隐私与合规声明
 
-- **零持久化日志**：[`probe.py`](./probe.py) 与 [`egress_intel.py`](./egress_intel.py) 不连接任何数据库、不落盘保存访问者 IP 或指纹日志；所有嗅探包头与情报缓存均保存在定长内存 `TTLCache` 中到期自动销毁。
+- **默认零持久化日志**：默认启动模式下 [`probe.py`](./probe.py) 与 [`egress_intel.py`](./egress_intel.py) 不落盘保存访问者 IP，所有嗅探包头与情报缓存仅保存在内存 `TTLCache` 中到期自动销毁；仅当部署者显式配置管理后台口令（`WHOPROBE_ADMIN_TOKEN` / `--admin-token-file`）时，才会在私有 SQLite（90 天自动轮转清理）中记录访问与分享审计统计，且公开分享链接（`/r/<id>`）对外部访客始终保持 100% 零 IP 脱敏。
 - **合规用途**：本项目仅供网络安全研究、反欺诈风控原理解析、跨境网络排障及个人隐私暴露面自检使用。
 
 ## License

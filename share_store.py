@@ -340,6 +340,47 @@ class ShareStore:
             return None
         return {"id": sid, "createdAt": int(created_at), "report": report}
 
+    def count_active(self) -> int:
+        cutoff = int(time.time()) - self.TTL_SEC
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM shares WHERE created_at >= ?", (cutoff,)
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def list_recent(self, limit: int = 80, offset: int = 0) -> list[dict]:
+        lim = max(1, min(200, int(limit)))
+        off = max(0, int(offset))
+        cutoff = int(time.time()) - self.TTL_SEC
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT id, created_at, payload
+                FROM shares
+                WHERE created_at >= ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (cutoff, lim, off),
+            ).fetchall()
+        out: list[dict] = []
+        for sid, created_at, payload_str in rows:
+            try:
+                report = json.loads(payload_str)
+            except Exception:
+                continue
+            out.append({"id": sid, "createdAt": int(created_at), "report": report})
+        return out
+
+    def delete(self, share_id: str) -> bool:
+        sid = (share_id or "").strip()
+        if not SHARE_ID_RE.match(sid):
+            return False
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM shares WHERE id = ?", (sid,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
 
 def _svg_esc(val: object) -> str:
     return html.escape(str(val or ""), quote=True)

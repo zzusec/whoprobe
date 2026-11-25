@@ -1,4 +1,4 @@
-/* WhoProbe v7.7.2 — 191-Probe L3–L7 Forensic, QUIC Initial JA4Q, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.8.0 — 191-Probe L3–L7 Forensic, QUIC Initial JA4Q, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -8000,7 +8000,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.7.2",
+        version: "7.8.0",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,

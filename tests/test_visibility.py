@@ -41,7 +41,7 @@ class VisibilityFieldsTest(unittest.TestCase):
         self.assertEqual(cfg.cors("https://main.example")["Access-Control-Allow-Origin"], "https://main.example")
         self.assertFalse(cfg.cors("https://shadow.main.example"))
         with self.assertRaises(ValueError):
-            visibility.Settings.from_args(parser.parse_args(["--visibility-h3-url", "https://login:secret@wrong.example/api/who/visibility/sample"]))
+            visibility.Settings.from_args(parser.parse_args(["--visibility-h3-url", "https://user@wrong.example/api/who/visibility/sample"]))
         with self.assertRaises(ValueError):
             visibility.Settings.from_args(parser.parse_args(["--visibility-ipv4-url", "http://unencrypted.example/api/who/visibility/sample"]))
 
@@ -82,7 +82,7 @@ class VisibilityHttpTest(unittest.TestCase):
         unusual = "browser </script><svg onload=bad>"
         for path in ("/", "/who/"):
             status, headers, data = self.request("GET", path + "?k=private-query-value", {
-                "Cookie": "id=private-cookie-value", "Authorization": "Basic private-auth-value",
+                "Cookie": "receipt_probe=private-cookie-value", "Authorization": "Basic private-auth-value",
                 "User-Agent": unusual,
             })
             self.assertEqual(status, 200)

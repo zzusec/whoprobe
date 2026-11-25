@@ -1,6 +1,6 @@
 {
   "name": "whoprobe",
-  "version": "7.8.0",
+  "version": "7.9.0",
   "description": "Website visibility receipt, dual-stack protocol probes and egress evidence",
   "private": true,
   "license": "MIT",

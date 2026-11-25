@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="WhoProbe" \
-      org.opencontainers.image.description="148-probe L3-L7 browser, protocol-stack, Reality :443 & multi-source egress reputation inspector" \
+      org.opencontainers.image.description="Website visibility, dual-stack transport probes and egress evidence" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -11,8 +11,7 @@ WORKDIR /app
 
 COPY probe.py ./probe.py
 COPY egress_intel.py ./egress_intel.py
-COPY share_store.py ./share_store.py
-COPY visibility.py visibility_dns.py ./
+COPY whoprobe_admin_store.py share_store.py visibility.py visibility_dns.py ./
 COPY static ./static
 
 # Run built-in verification during build

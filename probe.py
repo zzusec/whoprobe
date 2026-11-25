@@ -42,6 +42,7 @@ STATIC_DIR = BASE_DIR / "static"
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+import whoprobe_admin_store as admin_store  # noqa: E402
 import egress_intel  # noqa: E402
 import share_store  # noqa: E402
 import visibility  # noqa: E402
@@ -66,6 +67,8 @@ ACTIVE_PROBE_HEADER = "X-Who-Active-Probe"
 SHARE_STORE: share_store.ShareStore | None = None
 _SHARE_STORE_LOCK = threading.Lock()
 _SHARE_RATE_SALT = secrets.token_hex(16)
+ADMIN_AUTH: admin_store.AdminAuth | None = None
+ADMIN_STORE: admin_store.AdminStore | None = None
 
 
 def _ip_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -185,6 +188,70 @@ def get_share_store(data_dir: str | Path | None = None) -> share_store.ShareStor
         if SHARE_STORE is None:
             SHARE_STORE = share_store.ShareStore(data_dir=data_dir)
         return SHARE_STORE
+
+
+def record_admin_visit_async(
+    *,
+    ip: str,
+    event: str,
+    ua: str = "",
+    geo: dict | None = None,
+    tcp_os: str = "",
+    share_id: str = "",
+    target_ip: str = "",
+    score: int = 0,
+    grade: str = "",
+    created_at: int | None = None,
+    dedup_sec: float = 4.0,
+) -> None:
+    store = ADMIN_STORE
+    if store is None or not ip:
+        return
+    if ip in ("127.0.0.1", "::1") and os.environ.get("WHOPROBE_LOG_LOCAL") != "1":
+        return
+
+    if geo is not None:
+        try:
+            store.record_visit(
+                ip=ip,
+                event=event,
+                ua=ua,
+                geo=geo,
+                tcp_os=tcp_os,
+                share_id=share_id,
+                target_ip=target_ip,
+                score=score,
+                grade=grade,
+                created_at=created_at,
+                dedup_sec=dedup_sec,
+            )
+        except Exception:
+            pass
+        return
+
+    def _bg() -> None:
+        try:
+            g = lookup_ip_geo(ip)
+            store.record_visit(
+                ip=ip,
+                event=event,
+                ua=ua,
+                geo=g,
+                tcp_os=tcp_os,
+                share_id=share_id,
+                target_ip=target_ip,
+                score=score,
+                grade=grade,
+                created_at=created_at,
+                dedup_sec=dedup_sec,
+            )
+        except Exception:
+            pass
+
+    try:
+        _GEO_POOL.submit(_bg)
+    except Exception:
+        pass
 
 
 def is_private_or_loopback(ip: str) -> bool:
@@ -2347,6 +2414,41 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             "quic": None,  # 独立 UDP Initial 解析没有 HTTP 请求归属
         }
 
+    def _check_admin_access(self, qs: dict[str, list[str]] | None = None) -> tuple[bool, str | None]:
+        """
+        校验 ?k=<token>、X-Admin-Key 或已签发 HttpOnly 会话 Cookie。
+        未携带有效凭据时一律伪装返回 404，对扫描器完全隐身管理后台路径。
+        返回 (authorized, new_cookie_header_or_None)。
+        """
+        if ADMIN_AUTH is None or ADMIN_STORE is None:
+            return False, None
+        client_ip = self._extract_client_ip()
+        k_val = ((qs or {}).get("k") or [""])[0].strip() or (self.headers.get("X-Admin-Key") or "").strip()
+        if k_val:
+            if not ADMIN_AUTH.check_rate_limit(client_ip):
+                return False, None
+            if not ADMIN_AUTH.verify_password(k_val):
+                ADMIN_AUTH.record_failure(client_ip)
+                return False, None
+            ADMIN_AUTH.clear_failures(client_ip)
+            is_https = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower() == "https"
+            flags = f"Path=/; HttpOnly; SameSite=Strict{'; Secure' if is_https else ''}"
+            tok = ADMIN_AUTH.issue_session_cookie()
+            return True, f"{ADMIN_AUTH.COOKIE_NAME}={tok}; Max-Age={ADMIN_AUTH.SESSION_TTL_SEC}; {flags}"
+
+        ok = ADMIN_AUTH.verify_request_headers(
+            self.headers.get("Cookie") or "",
+            self.headers.get("Authorization") or "",
+        )
+        return ok, None
+
+    def _require_admin(self, qs: dict[str, list[str]] | None = None) -> bool:
+        ok, _ = self._check_admin_access(qs)
+        if not ok:
+            self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+            return False
+        return True
+
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -2367,6 +2469,163 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
 
         origin_prefix, base_href = self._origin_and_base(mounted_under_who)
 
+        # 0a) 隐身令牌式管理后台 (/admin?k=<token>)：无有效令牌或 Cookie 时一律返回 404，绝不暴露后台入口
+        if path in ("/admin", "/admin/"):
+            qs_adm = urllib.parse.parse_qs(parsed.query)
+            ok_adm, new_ck = self._check_admin_access(qs_adm)
+            if not ok_adm:
+                self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            adm_file = STATIC_DIR / "admin.html"
+            if not adm_file.is_file():
+                self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            raw_adm = adm_file.read_text(encoding="utf-8")
+            base_tag = f'  <base href="{share_store.html.escape(base_href, quote=True)}">\n'
+            out_adm = raw_adm.replace("<head>", "<head>\n" + base_tag, 1) if "<head>" in raw_adm else (base_tag + raw_adm)
+            adm_page_hdrs = {"X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer"}
+            if new_ck:
+                adm_page_hdrs["Set-Cookie"] = new_ck
+            self._send_bytes(
+                out_adm.encode("utf-8"),
+                "text/html; charset=utf-8",
+                cache_control="no-store, no-cache, must-revalidate",
+                extra_headers=adm_page_hdrs,
+            )
+            return
+
+        if path.startswith("/api/who/admin/"):
+            qs = urllib.parse.parse_qs(parsed.query)
+            if not self._require_admin(qs):
+                return
+            assert ADMIN_STORE is not None
+            adm_hdrs = {"X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer"}
+
+            if path == "/api/who/admin/overview":
+                try:
+                    days = int((qs.get("days") or ["30"])[0])
+                except ValueError:
+                    days = 30
+                ov = ADMIN_STORE.get_overview(days=days, total_shares_in_store=get_share_store().count_active())
+                self._send_json({"ok": True, **ov}, cache_control="no-store", extra_headers=adm_hdrs)
+                return
+
+            if path == "/api/who/admin/visits":
+                day_f = (qs.get("day") or [""])[0].strip()
+                ev_f = (qs.get("event") or [""])[0].strip()
+                q_f = (qs.get("q") or [""])[0].strip()
+                try:
+                    lim = int((qs.get("limit") or ["80"])[0])
+                    off = int((qs.get("offset") or ["0"])[0])
+                except ValueError:
+                    lim, off = 80, 0
+                total, items = ADMIN_STORE.query_visits(day=day_f, event=ev_f, q=q_f, limit=lim, offset=off)
+                sh_cache: dict[str, dict | None] = {}
+                sstore = get_share_store()
+                for it in items:
+                    sid = it.get("shareId") or ""
+                    if not sid:
+                        continue
+                    if sid not in sh_cache:
+                        sh_cache[sid] = sstore.get(sid)
+                    srec = sh_cache[sid]
+                    if srec and isinstance(srec.get("report"), dict):
+                        rep = srec["report"]
+                        it["shareSummary"] = {
+                            "exists": True,
+                            "score": rep.get("score"),
+                            "grade": rep.get("grade") or "",
+                            "exitRegion": ((rep.get("topo") or {}).get("exitRegion") or "")[:36],
+                            "verdict": ((rep.get("verdict") or {}).get("text") or rep.get("summary") or "")[:64],
+                        }
+                    else:
+                        it["shareSummary"] = {"exists": False}
+                self._send_json(
+                    {"ok": True, "total": total, "items": items},
+                    cache_control="no-store",
+                    extra_headers=adm_hdrs,
+                )
+                return
+
+            if path == "/api/who/admin/shares":
+                q_f = (qs.get("q") or [""])[0].strip().lower().lstrip("#")
+                try:
+                    lim = int((qs.get("limit") or ["80"])[0])
+                    off = int((qs.get("offset") or ["0"])[0])
+                except ValueError:
+                    lim, off = 80, 0
+                sstore = get_share_store()
+                recent = sstore.list_recent(limit=200, offset=0)
+                meta_map = ADMIN_STORE.get_share_meta_map([r["id"] for r in recent])
+                cards: list[dict] = []
+                for r in recent:
+                    sid = r["id"]
+                    rep = r.get("report") if isinstance(r.get("report"), dict) else {}
+                    meta = meta_map.get(sid, {})
+                    topo = rep.get("topo") if isinstance(rep.get("topo"), dict) else {}
+                    vd = rep.get("verdict") if isinstance(rep.get("verdict"), dict) else {}
+                    card = {
+                        "id": sid,
+                        "createdAt": r["createdAt"],
+                        "score": rep.get("score"),
+                        "grade": rep.get("grade") or "-",
+                        "scene": rep.get("scene") or "disguise",
+                        "badCnt": rep.get("badCnt", 0),
+                        "warnCnt": rep.get("warnCnt", 0),
+                        "okCnt": rep.get("okCnt", 0),
+                        "exitRegion": topo.get("exitRegion") or "",
+                        "exitType": topo.get("exitType") or "",
+                        "purityText": topo.get("purityText") or "",
+                        "deviceSub": topo.get("deviceSub") or "",
+                        "verdictTone": vd.get("tone") or "ok",
+                        "verdictText": vd.get("text") or rep.get("summary") or "",
+                        "creatorIp": meta.get("creatorIp") or "",
+                        "creatorCc": meta.get("creatorCc") or "",
+                        "creatorCity": meta.get("creatorCity") or "",
+                        "creatorOrg": meta.get("creatorOrg") or "",
+                        "viewCount": int(meta.get("viewCount") or 0),
+                        "lastViewedAt": int(meta.get("lastViewedAt") or 0),
+                        "lastViewerIp": meta.get("lastViewerIp") or "",
+                    }
+                    if q_f:
+                        blob = f"{sid} {card['creatorIp']} {card['creatorCity']} {card['creatorOrg']} {card['exitRegion']} {card['verdictText']} {card['grade']} {card['lastViewerIp']}".lower()
+                        if q_f not in blob:
+                            continue
+                    cards.append(card)
+                sliced = cards[off : off + max(1, min(120, lim))]
+                self._send_json(
+                    {"ok": True, "total": len(cards), "items": sliced},
+                    cache_control="no-store",
+                    extra_headers=adm_hdrs,
+                )
+                return
+
+            if path.startswith("/api/who/admin/share/"):
+                sid = path.removeprefix("/api/who/admin/share/").strip("/")
+                srec = get_share_store().get(sid)
+                meta = ADMIN_STORE.get_share_meta_map([sid]).get(sid, {})
+                viewers = ADMIN_STORE.get_share_viewers(sid, limit=100)
+                if not srec and not viewers and not meta:
+                    self._send_json({"ok": False, "error": "share_not_found"}, status=HTTPStatus.NOT_FOUND, extra_headers=adm_hdrs)
+                    return
+                self._send_json(
+                    {
+                        "ok": True,
+                        "id": sid,
+                        "exists": bool(srec),
+                        "createdAt": srec["createdAt"] if srec else 0,
+                        "report": srec["report"] if srec else None,
+                        "meta": meta,
+                        "viewers": viewers,
+                    },
+                    cache_control="no-store",
+                    extra_headers=adm_hdrs,
+                )
+                return
+
+            self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND, extra_headers=adm_hdrs)
+            return
+
         # 0) 隐私脱敏分享数据查询与矢量分享卡片 (/api/who/share/<id>, /r/<id>.svg, /r/<id>)
         if path.startswith("/api/who/share/"):
             sid = path.removeprefix("/api/who/share/").strip("/")
@@ -2374,6 +2633,14 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             if not rec:
                 self._send_json({"ok": False, "error": "share_not_found"}, status=HTTPStatus.NOT_FOUND)
                 return
+            if not self._head_only:
+                record_admin_visit_async(
+                    ip=self._extract_client_ip(),
+                    event="share_view",
+                    ua=self.headers.get("User-Agent") or "",
+                    share_id=sid,
+                    dedup_sec=10.0,
+                )
             self._send_json({"ok": True, **rec}, cache_control="public, max-age=300")
             return
 
@@ -2393,6 +2660,14 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             index_file = STATIC_DIR / "index.html"
             if index_file.is_file():
                 rec = get_share_store().get(sid)
+                if rec and not self._head_only:
+                    record_admin_visit_async(
+                        ip=self._extract_client_ip(),
+                        event="share_view",
+                        ua=self.headers.get("User-Agent") or "",
+                        share_id=sid,
+                        dedup_sec=10.0,
+                    )
                 raw_html = index_file.read_text(encoding="utf-8")
                 body = share_store.inject_html_for_route(
                     raw_html,
@@ -2529,6 +2804,14 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 target_ip, enable_active_443=active, enable_port_scan=active,
             )
             intel_payload["isSelfEgress"] = is_self_query
+            if not is_self_query and intel_payload.get("ok"):
+                record_admin_visit_async(
+                    ip=self._extract_client_ip(),
+                    event="ip_query",
+                    ua=self.headers.get("User-Agent") or "",
+                    target_ip=str(intel_payload.get("targetIp") or target_ip),
+                    dedup_sec=5.0,
+                )
             self._send_json(intel_payload)
             return
 
@@ -2604,6 +2887,15 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             proxy_hdrs = detect_proxy_headers(self.headers, real_ip=xri_peer, trusted_cf=trusted_cf)
 
             geo = lookup_ip_geo(client_ip)
+            tcp_info = packet.get("tcp") or {}
+            record_admin_visit_async(
+                ip=client_ip,
+                event="scan",
+                ua=self.headers.get("User-Agent") or "",
+                geo=geo,
+                tcp_os=str(tcp_info.get("osGuess") or ""),
+                dedup_sec=4.0,
+            )
             self._send_json({
                 "ok": True,
                 "serverTimeMs": round(time.time() * 1000, 2),
@@ -2684,6 +2976,33 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         if VISIBILITY_VIEW.handle_post(self, path):
             return
 
+        if path.startswith("/api/who/admin/"):
+            qs_post = urllib.parse.parse_qs(parsed.query)
+            if path == "/api/who/admin/logout":
+                if ADMIN_AUTH is None:
+                    self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                is_https = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower() == "https"
+                cookie_flags = f"Path=/; HttpOnly; SameSite=Strict{'; Secure' if is_https else ''}"
+                self._send_json(
+                    {"ok": True},
+                    extra_headers={"Set-Cookie": f"{ADMIN_AUTH.COOKIE_NAME}=; Max-Age=0; {cookie_flags}"},
+                )
+                return
+
+            if path.startswith("/api/who/admin/share/") and path.endswith("/delete"):
+                if not self._require_admin(qs_post):
+                    return
+                assert ADMIN_STORE is not None
+                sid = path.removeprefix("/api/who/admin/share/").removesuffix("/delete").strip("/")
+                deleted = get_share_store().delete(sid)
+                ADMIN_STORE.delete_share_meta(sid)
+                self._send_json({"ok": True, "deleted": deleted})
+                return
+
+            self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+            return
+
         if path != "/api/who/share":
             self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
             return
@@ -2708,10 +3027,21 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         raw_bytes = self.rfile.read(length)
         try:
             raw_obj = json.loads(raw_bytes.decode("utf-8", errors="strict"))
-            sid, created_at, _ = get_share_store().create(raw_obj)
+            sid, created_at, clean_rep = get_share_store().create(raw_obj)
         except Exception:
             self._send_json({"ok": False, "error": "invalid_share_payload"}, status=HTTPStatus.BAD_REQUEST)
             return
+
+        record_admin_visit_async(
+            ip=client_ip,
+            event="share_create",
+            ua=self.headers.get("User-Agent") or "",
+            share_id=sid,
+            score=int(clean_rep.get("score") or 0),
+            grade=str(clean_rep.get("grade") or ""),
+            created_at=created_at,
+            dedup_sec=0.0,
+        )
 
         origin_prefix, base_href = self._origin_and_base(mounted_under_who)
         self._send_json({
@@ -2846,6 +3176,8 @@ def run_self_test() -> None:
         WhoProbeHandler(sock, ("127.0.0.1", 50123), None)
         response = HTTPResponse(MemorySocket(sock.outgoing.getvalue()), method=method)
         response.begin()
+        if response.status >= 400:
+            raise urllib.error.HTTPError(req.full_url, response.status, response.reason, response.headers, response)
         return response
 
     with tempfile.TemporaryDirectory(prefix="whoprobe_test_") as tmp_dir:
@@ -2991,6 +3323,85 @@ def run_self_test() -> None:
             assert evaluate_tcp_continuity(
                 syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=0, hello_tsval=2_850_000_000, dt_sec=0.050
             )[1] is True
+
+            # Exercise the opt-in administrator routes with the same offline HTTP fixture.
+            global ADMIN_AUTH, ADMIN_STORE
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/admin", timeout=3)
+                raise AssertionError("/admin must return 404 when ADMIN_AUTH is None")
+            except urllib.error.HTTPError as he:
+                assert he.code == 404
+
+            test_secret = secrets.token_urlsafe(24)
+            adm_tmp_obj = tempfile.TemporaryDirectory()
+            ADMIN_AUTH = admin_store.AdminAuth(test_secret)
+            ADMIN_STORE = admin_store.AdminStore(adm_tmp_obj.name)
+            try:
+                for unauth_url in (
+                    f"http://127.0.0.1:{port}/admin",
+                    f"http://127.0.0.1:{port}/admin?k=wrongtoken000000",
+                    f"http://127.0.0.1:{port}/api/who/admin/overview",
+                ):
+                    try:
+                        urllib.request.urlopen(unauth_url, timeout=3)
+                        raise AssertionError(f"{unauth_url} must return 404")
+                    except urllib.error.HTTPError as he:
+                        assert he.code == 404
+
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/admin?k={test_secret}", timeout=3) as r_lg:
+                    assert r_lg.status == 200
+                    set_ck = r_lg.headers.get("Set-Cookie") or ""
+                    assert "wp_adm=" in set_ck and "HttpOnly" in set_ck
+                    adm_cookie = set_ck.split(";", 1)[0]
+
+                # 模拟真实访客检测与打开分享页
+                GEO_CACHE.set("36.21.224.142", {"ok": True, "countryCode": "CN", "city": "Hangzhou", "asn": "AS140486", "isp": "China Telecom"})
+                ADMIN_STORE.record_visit(
+                    ip="36.21.224.142",
+                    event="scan",
+                    ua="Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Version/18.7 Safari/604.1",
+                    geo=GEO_CACHE.get("36.21.224.142"),  # type: ignore[arg-type]
+                    tcp_os="macOS / iOS (Darwin)",
+                    dedup_sec=0.0,
+                )
+                req_view = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/r/{sid}",
+                    headers={"X-Real-IP": "36.21.224.142", "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) Chrome/136.0.0.0"},
+                )
+                with urllib.request.urlopen(req_view, timeout=3) as _:
+                    pass
+                time.sleep(0.15)
+
+                req_ov = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/who/admin/overview?days=30",
+                    headers={"Cookie": adm_cookie},
+                )
+                with urllib.request.urlopen(req_ov, timeout=3) as r_ov:
+                    ov = json.loads(r_ov.read().decode("utf-8"))
+                    assert ov["ok"] is True and ov["kpis"]["todayUv"] >= 1 and ov["kpis"]["todayShareViews"] >= 1
+
+                req_vs = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/who/admin/visits",
+                    headers={"Cookie": adm_cookie},
+                )
+                with urllib.request.urlopen(req_vs, timeout=3) as r_vs:
+                    vs = json.loads(r_vs.read().decode("utf-8"))
+                    assert vs["total"] >= 2
+                    sv_row = next(x for x in vs["items"] if x["event"] == "share_view")
+                    assert sv_row["shareId"] == sid and sv_row["shareSummary"]["exists"] is True
+
+                req_sd = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/who/admin/share/{sid}",
+                    headers={"Cookie": adm_cookie},
+                )
+                with urllib.request.urlopen(req_sd, timeout=3) as r_sd:
+                    sd = json.loads(r_sd.read().decode("utf-8"))
+                    assert sd["exists"] is True and sd["meta"]["viewCount"] == 1 and len(sd["viewers"]) == 1
+            finally:
+                ADMIN_AUTH = None
+                ADMIN_STORE = None
+                adm_tmp_obj.cleanup()
+
             print(f"SELF-TEST OK (offline) | ja4t={ja4t} | etag={et1['etagId']} | share={sid}")
 
 
@@ -2999,9 +3410,10 @@ def _parse_host_port(spec: str, default_port: int) -> tuple[str, int]:
     return (host or "127.0.0.1", int(p)) if p.isdigit() else (spec, default_port)
 
 
-def main() -> None:
+def main(*, enable_builtin_admin: bool = True) -> None:
     global SNIFFER, TLS_BRIDGE, QUIC_COLLECTOR, ENABLE_ACTIVE_443, TRUSTED_EDGES, VISIBILITY_VIEW
-    parser = argparse.ArgumentParser(description="WhoProbe v7.8：网站可见性、协议与出口诊断")
+    global ADMIN_AUTH, ADMIN_STORE
+    parser = argparse.ArgumentParser(description="WhoProbe v7.9：网站可见性、协议与出口诊断")
     visibility.add_arguments(parser)
     visibility_dns.add_arguments(parser)
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
@@ -3017,7 +3429,9 @@ def main() -> None:
     parser.add_argument("--tls-sni", action="append", default=[], help="额外 SNI 证书映射: domain=cert_path,key_path")
     parser.add_argument("--h2c-backend", default="127.0.0.1:10082", help="解密后 HTTP/2 (h2c) 转发目标 (默认 127.0.0.1:10082)")
     parser.add_argument("--h1-backend", default="127.0.0.1:10081", help="解密后 HTTP/1.1 转发目标 (默认 127.0.0.1:10081)")
-    parser.add_argument("--data-dir", default="", help="可选分享快照 SQLite 目录 (默认使用 STATE_DIRECTORY 或 ./data)")
+    parser.add_argument("--data-dir", default="", help="可选分享快照与统计 SQLite 目录 (默认使用 STATE_DIRECTORY 或 ./data)")
+    parser.add_argument("--admin-token", default="", help="可选管理后台访问口令 (或通过 WHOPROBE_ADMIN_TOKEN / LoadCredential admin_token 注入)")
+    parser.add_argument("--admin-token-file", default="", help="可选管理后台口令文件路径")
     active = parser.add_mutually_exclusive_group()
     active.add_argument("--active-probe", action="store_true",
                         help="允许访客经 X-Who-Active-Probe: 1 同意对自身原始公网对端做回探（默认禁用）")
@@ -3031,10 +3445,26 @@ def main() -> None:
         run_self_test()
         return
 
-    if args.data_dir:
-        get_share_store(args.data_dir)
-    else:
-        get_share_store()
+    data_dir_arg = args.data_dir or None
+    get_share_store(data_dir_arg)
+
+    if enable_builtin_admin:
+        cred_dir_env = os.environ.get("CREDENTIALS_DIRECTORY", "")
+        adm_token = (args.admin_token or os.environ.get("WHOPROBE_ADMIN_TOKEN") or "").strip()
+        if not adm_token:
+            cand_file = args.admin_token_file or (str(Path(cred_dir_env) / "admin_token") if cred_dir_env else "")
+            if cand_file and Path(cand_file).is_file():
+                try:
+                    adm_token = Path(cand_file).read_text(encoding="utf-8").strip()
+                except OSError:
+                    adm_token = ""
+        if adm_token:
+            try:
+                ADMIN_AUTH = admin_store.AdminAuth(adm_token)
+                ADMIN_STORE = admin_store.AdminStore(data_dir_arg)
+                print("[admin] 已启用管理后台与访问审计 (/admin)")
+            except Exception as exc:
+                print(f"[admin] 未能启用管理后台: {exc}")
 
     try:
         settings = visibility.Settings.from_args(args)

@@ -1,4 +1,4 @@
-# WhoProbe v7.8 · 网站能看到什么
+# WhoProbe v7.9 · 网站能看到什么
 
 首页「网站能看到什么」以**加载这一页的 HTTP 导航**为样本：展示本站应用收到的请求、网络对端、可信入口协商的协议，以及能关联到同一连接的抓包。区分浏览器脚本可读、第三方情报推断和未测项；分流环境下，不同网站见到的地址可能不同。
 
@@ -191,14 +191,20 @@ SNIFF_IFACE=ens5 docker compose --profile sniffer up -d whoprobe-sniffer
 | `GET /api/who/etag` | 零数据库无状态 HTTP `ETag` / `If-None-Match` 缓存追踪实测接口 |
 | `GET /api/who/ping?seq=...` | 微秒级 `serverPerfUs` 单调时钟戳与微脉冲粘包/RTT 测距接口 |
 | `GET /api/who/ws-ping` | WebSocket 升级后由服务端主动发送两轮 RFC 6455 `0x89 Ping` 控制帧并计时 `0x8A Pong` 返回 |
-| `GET /api/who/quic` | 查询 UDP `:443` `QUICInitialCollector` 实时解密的 `JA4Q` 与 `quic_transport_parameters` |
-| `GET /api/who/tls2` | 查询同一客户端连续多次独立 TLS 握手的扩展洗牌 (`tlsPermutation`) 与 PSK 状态 |
+| `GET /api/who/quic` | 报告独立 QUIC Initial 采集器是否启动；无同连接证据时不返回指纹 |
+| `GET /api/who/tls2` | 本轮标识 `X-Who-Run-Token` 下已明确关联的 TLS 扩展与 PSK 提议 |
+| `GET /api/who/visibility/request` | 单次探针请求的脱敏收据，与首页加载时的原始导航收据分开 |
+| `GET /api/who/visibility/sample?challenge=...` | 实测端点回传所见对端与 HTTP 协议，仅对已配置来源开放跨源读取 |
+| `GET /api/who/visibility/bgp?prefix=...` | 查询公共 BGP 前缀的 RIPE RIS 起源历史 |
+| `POST /api/who/visibility/dns/start`、`/api/who/visibility/dns/result` | 自有权威 DNS 会话的创建与限定读取（须配置） |
 | `GET /sw-probe.js` | 同源零缓存 `SharedWorker` / `ServiceWorker` 第 4、5 界沙箱探针脚本 |
+| `GET /admin?k=<token>` | 隐身令牌式管理后台（未带正确 `?k=<token>` 时直接伪装返回 `404`，零登录框暴露；验证通过后直达后台并签发会话 Cookie） |
 
 ```text
 usage: probe.py [-h] [--host HOST] [--port PORT] [--sniff-iface SNIFF_IFACE]
                 [--sniff-port SNIFF_PORT] [--quic-port QUIC_PORT]
                 [--tls-bridge-port PORT --tls-cert PEM --tls-key PEM]
+                [--admin-token TOKEN | --admin-token-file PATH]
                 [--trusted-edge IP_OR_CIDR] [--active-probe] [--self-test]
                 [--visibility-origin ORIGIN] [--visibility-h3-url URL] …
 ```
@@ -216,7 +222,7 @@ usage: probe.py [-h] [--host HOST] [--port PORT] [--sniff-iface SNIFF_IFACE]
 
 ## 隐私与合规声明
 
-- **观测数据限时保留**：抓包摘要、自有 DNS 会话和情报缓存在内存中到期删除，不记录访问日志。只有用户主动创建的脱敏分享快照写入 SQLite，原始请求收据和对照结果不在其中。独立部署的 CDN、反代和 DNS 日志需按各自策略管理。
+- **观测数据限时保留**：抓包摘要、自有 DNS 会话和情报缓存在内存中到期；原始请求收据、对照结果不进入公开分享快照。默认只在 SQLite 保留用户主动创建的脱敏快照。若启用可选管理后台，则另在私有 SQLite 记录访问与分享审计（90 天自动轮转）；CDN 和反代日志也由部署者单独管理。
 - **合规用途**：本项目仅供网络安全研究、反欺诈风控原理解析、跨境网络排障及个人隐私暴露面自检使用。
 
 ## License

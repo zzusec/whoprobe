@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="relative min-h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>WhoProbe · 管理后台 — 每日访客、真实 IP 与分享页审计</title>
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.8.1">
+  <link rel="stylesheet" href="./assets/style.css?v=7.8.1">
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("whoprobe:theme") === "dark") {
+          document.documentElement.classList.add("dark");
+        }
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-[#F5F6F8] text-zinc-900 antialiased dark:bg-[#0B0C0E] dark:text-zinc-100">
+
+  <!-- Sticky Top Command Bar -->
+  <header class="sticky top-0 z-40 w-full bg-[#F5F6F8]/90 backdrop-blur-xl border-b border-zinc-950/[0.06] dark:bg-[#0B0C0E]/90 dark:border-white/[0.06]">
+    <div class="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex flex-wrap items-center justify-between gap-3 py-2.5 min-h-[54px]">
+        <div class="flex items-center gap-2.5">
+          <a href="./" class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950" title="返回检测前台">
+            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/></svg>
+          </a>
+          <div class="flex items-center gap-2">
+            <span class="text-[15px] font-semibold tracking-tight text-zinc-950 dark:text-white">WhoProbe</span>
+            <span class="py-0.5 px-2 rounded-md text-[11px] font-semibold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">管理后台</span>
+          </div>
+          <span id="admLastSync" class="hidden md:inline text-xs font-mono text-zinc-500 dark:text-zinc-400"></span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <a href="./" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-zinc-700 bg-white ring-1 ring-zinc-950/[0.08] hover:bg-zinc-50 transition dark:bg-[#14171C] dark:text-zinc-300 dark:ring-white/[0.08] dark:hover:bg-white/[0.05]">打开检测站 ↗</a>
+          <button id="btnRefreshAdm" type="button" class="py-1.5 px-3 inline-flex items-center gap-1.5 text-xs font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">
+            <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+            <span>刷新数据</span>
+          </button>
+          <button id="btnAdmTheme" type="button" class="p-1.5 rounded-lg bg-white ring-1 ring-zinc-950/[0.08] text-zinc-700 hover:bg-zinc-50 transition dark:bg-[#14171C] dark:ring-white/[0.08] dark:text-zinc-300" title="切换深浅色主题">
+            <svg class="size-4 dark:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            <svg class="size-4 hidden dark:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          </button>
+          <button id="btnAdmLogout" type="button" class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 transition dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25" title="清除本机管理会话 Cookie">锁定退出</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Authenticated Dashboard Workbench -->
+  <main id="dashView" class="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-4">
+
+    <!-- Row 1: 5 Core Traffic & Share KPI Cards -->
+    <section class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div class="surface-sheet rounded-2xl p-4 space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400">今日独立访客 (UV)</span>
+          <span id="kpiDeltaBadge" class="py-0.5 px-1.5 rounded text-[10.5px] font-mono font-semibold bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">--</span>
+        </div>
+        <div id="kpiTodayUv" class="text-2xl sm:text-[28px] font-bold font-mono tabular-nums text-zinc-950 dark:text-white">--</div>
+        <div id="kpiTodaySub" class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400 truncate">总访问 -- 次 · 检测 -- 次</div>
+      </div>
+
+      <div class="surface-sheet rounded-2xl p-4 space-y-1.5">
+        <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400">昨日独立访客 (UV)</div>
+        <div id="kpiYestUv" class="text-2xl sm:text-[28px] font-bold font-mono tabular-nums text-zinc-950 dark:text-white">--</div>
+        <div id="kpiYestSub" class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400 truncate">昨日总访问 -- 次</div>
+      </div>
+
+      <div class="surface-sheet rounded-2xl p-4 space-y-1.5">
+        <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400">近 7 日 / 30 日访客</div>
+        <div id="kpi7dUv" class="text-2xl sm:text-[28px] font-bold font-mono tabular-nums text-zinc-950 dark:text-white">--</div>
+        <div id="kpi30dSub" class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400 truncate">30日独立 IP -- · 访问 --</div>
+      </div>
+
+      <div class="surface-sheet rounded-2xl p-4 space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400">分享页打开总计</span>
+          <span id="kpiTodayShareBadge" class="py-0.5 px-1.5 rounded text-[10.5px] font-mono font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">今日 0</span>
+        </div>
+        <div id="kpiShareViews" class="text-2xl sm:text-[28px] font-bold font-mono tabular-nums text-zinc-950 dark:text-white">--</div>
+        <div id="kpiShareSub" class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400 truncate">在线有效分享报告 -- 份</div>
+      </div>
+
+      <div class="col-span-2 lg:col-span-1 surface-sheet rounded-2xl p-4 space-y-2">
+        <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400">热门来源地区 (近30日)</div>
+        <div id="kpiTopRegions" class="space-y-1 text-xs font-mono text-zinc-700 dark:text-zinc-300">
+          <div class="text-zinc-400">暂无统计</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 2: Interactive 30-Day Daily UV / PV Bar Chart -->
+    <section class="surface-sheet rounded-2xl p-4 sm:p-5 space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-baseline gap-2">
+          <h2 class="text-sm font-semibold text-zinc-950 dark:text-white">近 30 天每日访问趋势</h2>
+          <span class="text-xs text-zinc-500 dark:text-zinc-400">深色为独立访客 IP 数 (UV)，浅底为总访问次数 (PV) · 点击任意日期柱筛选当天 IP</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btnClearDayFilter" type="button" hidden class="py-1 px-2.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 transition dark:bg-blue-500/15 dark:text-blue-300"></button>
+        </div>
+      </div>
+      <div id="dailyChartBox" class="h-36 sm:h-40 flex items-end gap-1 sm:gap-1.5 pt-4 select-none"></div>
+    </section>
+
+    <!-- Row 3: 3-Tab Workspace (Visitor Stream | Share Gallery & Previews | Unique IPs) -->
+    <section class="space-y-2.5">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <nav id="admTabs" class="inline-flex items-center gap-1 p-1 rounded-xl bg-zinc-200/70 dark:bg-[#15181F]" role="tablist">
+          <button type="button" data-admtab="visits" aria-selected="true" class="adm-tab py-2 px-3.5 rounded-lg text-xs font-semibold bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white">
+            实时访客与 IP 明细 <span id="badgeVisitsCnt" class="ms-1 py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-100 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">0</span>
+          </button>
+          <button type="button" data-admtab="shares" aria-selected="false" class="adm-tab py-2 px-3.5 rounded-lg text-xs font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
+            分享页总览与画面预览 <span id="badgeSharesCnt" class="ms-1 py-0.5 px-1.5 rounded-full font-mono text-[11px] bg-zinc-300/60 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">0</span>
+          </button>
+          <button type="button" data-admtab="ips" aria-selected="false" class="adm-tab py-2 px-3.5 rounded-lg text-xs font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100">
+            按独立 IP 汇总
+          </button>
+        </nav>
+
+        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <div id="eventFilterPills" class="inline-flex rounded-lg bg-zinc-200/65 p-0.5 dark:bg-[#15181F] text-xs">
+            <button type="button" data-evf="" class="evf-btn py-1 px-2.5 rounded-md font-medium bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white">全部</button>
+            <button type="button" data-evf="scan" class="evf-btn py-1 px-2.5 rounded-md font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400">主页检测</button>
+            <button type="button" data-evf="share_view" class="evf-btn py-1 px-2.5 rounded-md font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400">打开分享页</button>
+            <button type="button" data-evf="share_create" class="evf-btn py-1 px-2.5 rounded-md font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400">生成分享</button>
+            <button type="button" data-evf="ip_query" class="evf-btn py-1 px-2.5 rounded-md font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400">查外部IP</button>
+          </div>
+          <input id="admSearchInput" type="search" placeholder="搜 IP / 城市 / 运营商 / #分享码…" class="flex-1 sm:w-60 py-1.5 px-3 rounded-lg text-xs bg-white ring-1 ring-zinc-950/[0.08] text-zinc-900 placeholder:text-zinc-500 focus:outline-none dark:bg-[#14171C] dark:ring-white/[0.08] dark:text-zinc-100">
+        </div>
+      </div>
+
+      <!-- Tab Panel 1: Real-time Visitor Log Table -->
+      <div id="panelAdmVisits" data-admpanel="visits" class="surface-sheet rounded-2xl overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-zinc-950/[0.06] bg-zinc-50/70 text-[11px] font-semibold text-zinc-500 dark:border-white/[0.07] dark:bg-white/[0.02] dark:text-zinc-400">
+                <th class="py-3 px-4 whitespace-nowrap">时间 (UTC+8)</th>
+                <th class="py-3 px-3 whitespace-nowrap">类型</th>
+                <th class="py-3 px-3 whitespace-nowrap">访客真实 IP</th>
+                <th class="py-3 px-3 whitespace-nowrap">归属地与运营商 (ASN)</th>
+                <th class="py-3 px-3 whitespace-nowrap">终端系统 / 浏览器 / 栈</th>
+                <th class="py-3 px-4 whitespace-nowrap">关联分享页 / 查询目标（点击看画面）</th>
+              </tr>
+            </thead>
+            <tbody id="visitsTableBody" class="divide-y divide-zinc-950/[0.05] dark:divide-white/[0.05]"></tbody>
+          </table>
+        </div>
+        <div id="visitsPager" class="px-4 py-3 border-t border-zinc-950/[0.06] dark:border-white/[0.07] flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+          <span id="visitsPageInfo">共 0 条记录</span>
+          <div class="flex items-center gap-2">
+            <button id="btnPrevPage" type="button" disabled class="py-1 px-2.5 rounded-lg ring-1 ring-zinc-950/[0.08] bg-white text-zinc-700 disabled:opacity-40 dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">上一页</button>
+            <button id="btnNextPage" type="button" disabled class="py-1 px-2.5 rounded-lg ring-1 ring-zinc-950/[0.08] bg-white text-zinc-700 disabled:opacity-40 dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">下一页</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab Panel 2: Share Pages Visual Gallery -->
+      <div id="panelAdmShares" data-admpanel="shares" hidden class="space-y-3">
+        <div id="sharesGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3.5"></div>
+      </div>
+
+      <!-- Tab Panel 3: Aggregated Top Unique Visitor IPs -->
+      <div id="panelAdmIps" data-admpanel="ips" hidden class="surface-sheet rounded-2xl overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-zinc-950/[0.06] bg-zinc-50/70 text-[11px] font-semibold text-zinc-500 dark:border-white/[0.07] dark:bg-white/[0.02] dark:text-zinc-400">
+                <th class="py-3 px-4 whitespace-nowrap">访客 IP</th>
+                <th class="py-3 px-3 whitespace-nowrap">归属地与运营商</th>
+                <th class="py-3 px-3 whitespace-nowrap">常用终端与浏览器</th>
+                <th class="py-3 px-3 whitespace-nowrap">检测 / 看分享 / 发分享</th>
+                <th class="py-3 px-3 whitespace-nowrap">首次 / 最近来访</th>
+                <th class="py-3 px-4 whitespace-nowrap">打开或生成的分享页</th>
+              </tr>
+            </thead>
+            <tbody id="ipsTableBody" class="divide-y divide-zinc-950/[0.05] dark:divide-white/[0.05]"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Full-Fidelity Share Snapshot Preview & Viewer Trace Modal -->
+  <div id="shareDetailModal" hidden role="dialog" aria-modal="true" class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-xs">
+    <div class="surface-sheet w-full max-w-[860px] max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-zinc-950/[0.06] dark:border-white/[0.08] flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div class="flex items-center gap-2 min-w-0">
+          <span id="mdlShareIdBadge" class="py-0.5 px-2 rounded-md font-mono text-xs font-bold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">#--</span>
+          <h3 id="mdlShareTitle" class="text-sm font-semibold text-zinc-950 dark:text-white truncate">分享页画面与访客溯源</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <a id="mdlOpenPublicBtn" href="#" target="_blank" rel="noopener" class="py-1 px-2.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-500 transition">打开真实分享页 ↗</a>
+          <button id="mdlDeleteShareBtn" type="button" class="py-1 px-2.5 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 transition dark:bg-rose-500/15 dark:text-rose-300">删除此分享</button>
+          <button id="mdlCloseBtn" type="button" class="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/[0.08] dark:hover:text-white">
+            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="mdlBody" class="p-5 overflow-y-auto space-y-5 text-xs"></div>
+    </div>
+  </div>
+
+  <div id="admToast" hidden class="fixed bottom-5 right-5 z-50 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-950 dark:border-white"></div>
+
+  <script src="./assets/admin.js?v=7.8.1"></script>
+</body>
+</html>

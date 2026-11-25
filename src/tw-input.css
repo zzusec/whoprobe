@@ -2,7 +2,9 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @source "../static/index.html";
+@source "../static/admin.html";
 @source "../static/app.js";
+@source "../static/admin.js";
 
 @theme {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif;

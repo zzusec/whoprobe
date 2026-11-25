@@ -1,4 +1,4 @@
-/* WhoProbe v7.7.0 — 191-Probe L3–L7 Forensic, QUIC Initial JA4Q, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.7.1 — 191-Probe L3–L7 Forensic, QUIC Initial JA4Q, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -1493,7 +1493,11 @@
       const ipidStep = (tcp.synIpId != null && tcp.helloIpId != null)
         ? (tcp.synIpId === 0 && tcp.helloIpId === 0 ? "IPID=0恒零(Linux/Apple特征)" : `IPID ${tcp.synIpId}→${tcp.helloIpId}`)
         : (tcp.synIpId != null ? `SYN IPID=${tcp.synIpId}` : "IPID=–");
-      const hzTxt = tcp.tsHz != null ? `TS时钟≈${tcp.tsHz}Hz` : (tcp.synTsval != null ? `TSval=${tcp.synTsval}` : "无TS时间戳");
+      const hzTxt = tcp.tsHz != null
+        ? `TS时钟≈${tcp.tsHz}Hz`
+        : tcp.tsNote === "ts_stripped_by_middlebox"
+        ? "TS被运营商网关剥离(5G/NAT常见)"
+        : (tcp.synTsval != null ? `TSval=${tcp.synTsval}` : "无TS时间戳");
       const ecnTxt = tcp.ecn ? "ECN开启" : "ECN未开";
       const spoofTxt = tcp.synSpoofSuspect ? " · 疑似无状态SYN改包！" : "";
       setProbe("ipquirk", `${dfTxt} · ${ipidStep} · ${hzTxt} · ${ecnTxt}${spoofTxt}`, {
@@ -5167,8 +5171,10 @@
       let uConflict = "";
       if (cb === "Firefox" && (!sdpMoz || ulen === 4)) {
         uConflict = `自称 Firefox，但 SDP 呈现 libwebrtc 特征 (Origin=${sdpMoz ? "SDPARTA" : "o=-"}, ufrag=${ulen}字符)`;
-      } else if ((cb === "Chrome" || cb === "Edge" || cb === "Opera" || cb === "Safari" || cb === "iOSWebKit") && (sdpMoz || ulen === 8)) {
+      } else if ((cb === "Chrome" || cb === "Edge" || cb === "Opera") && (sdpMoz || ulen === 8)) {
         uConflict = `自称 ${cb}，但 SDP 暴露 Firefox nICEr 媒体栈特征 (${sdpMoz ? "THIS_IS_SDPARTA" : `ufrag=${ulen}字符`})`;
+      } else if ((cb === "Safari" || cb === "iOSWebKit") && sdpMoz) {
+        uConflict = `自称 ${cb}，但 SDP 暴露 Firefox 专属 THIS_IS_SDPARTA 签名`;
       }
       R.ufragConflict = uConflict;
       const engGuess = sdpMoz || ulen === 8 ? "Firefox nICEr (8字符)" : ulen === 4 ? "libwebrtc (4字符)" : `ufrag=${ulen}字符`;
@@ -7963,7 +7969,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.7.0",
+        version: "7.7.1",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,

@@ -810,6 +810,43 @@ def record_tls_hello_sample(src_ip: str, tls_info: dict) -> dict:
     }
 
 
+def evaluate_tcp_continuity(
+    *,
+    syn_ttl: int,
+    hello_ttl: int,
+    syn_had_ts: bool,
+    syn_tsval: int | None,
+    hello_tsval: int | None,
+    dt_sec: float,
+) -> tuple[int | None, bool, str | None]:
+    """
+    校验同一条 TCP 连接 (seq == syn_seq + 1) 上 SYN 与首包 ClientHello 的跨包连续性。
+    兼容 5G 蜂窝 UPF/CGNAT 剥离 TSopt (RFC 7323 §3.2)、多核网关微秒级负偏置与 1MHz 高频时钟，
+    仅在同连接 TTL 突变 ≥30 或有符号 TSval 断层 (>25,000,000 / <-50,000) 时判定无状态 SYN 改包。
+    """
+    ttl_jump = abs(int(hello_ttl) - int(syn_ttl))
+    if ttl_jump >= 30:
+        return None, True, f"ttl_jump_{syn_ttl}_to_{hello_ttl}"
+
+    if syn_tsval is not None and hello_tsval is not None and dt_sec >= 0.008:
+        signed_delta = ((hello_tsval - syn_tsval + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+        if signed_delta > 25_000_000:
+            return None, True, "tsval_discontinuity"
+        if signed_delta < -50_000:
+            return None, True, "tsval_backward_jump"
+        if signed_delta <= 0:
+            return None, False, "cgnat_or_subtick_skew"
+        ts_hz = round(signed_delta / dt_sec)
+        if 10 <= ts_hz <= 2_500_000:
+            return ts_hz, False, None
+        return None, False, "burst_compressed_rtt"
+
+    if syn_had_ts and hello_tsval is None:
+        return None, False, "ts_stripped_by_middlebox"
+
+    return None, False, None
+
+
 class LinuxPacketSniffer:
     """
     Linux AF_PACKET 只读旁路抓包器。
@@ -906,7 +943,7 @@ class LinuxPacketSniffer:
                     continue
 
                 tcp_start = 14 + ihl
-                src_port, dst_port = struct.unpack("!HH", pkt[tcp_start : tcp_start + 4])
+                src_port, dst_port, tcp_seq = struct.unpack("!HHI", pkt[tcp_start : tcp_start + 8])
                 if dst_port != self.port:
                     continue
                 data_offset = (pkt[tcp_start + 12] >> 4) * 4
@@ -925,7 +962,7 @@ class LinuxPacketSniffer:
                     opts_raw = pkt[tcp_start + 20 : tcp_start + data_offset]
                     opts, mss, wscale = parse_tcp_options(opts_raw)
                     syn_tsval = extract_tcp_tsval(opts_raw)
-                    syn_cache.set(conn_key, (now_mono, syn_tsval, "ts" in opts), ttl_sec=10.0)
+                    syn_cache.set(conn_key, (now_mono, tcp_seq, ttl, syn_tsval, "ts" in opts), ttl_sec=10.0)
                     init_ttl = infer_initial_ttl(ttl)
                     os_guess, os_family = guess_tcp_os(init_ttl, window, opts)
                     rec["tcp"] = {
@@ -948,7 +985,8 @@ class LinuxPacketSniffer:
                         "ecn": bool(flags & 0xC0) or ((ip_tos & 0x03) != 0),
                         "synTsval": syn_tsval,
                         "tsHz": prev_tcp.get("tsHz"),
-                        "synSpoofSuspect": prev_tcp.get("synSpoofSuspect", False),
+                        "tsNote": prev_tcp.get("tsNote"),
+                        "synSpoofSuspect": False,
                         "handshakeRttMs": prev_tcp.get("handshakeRttMs"),
                         "minHandshakeRttMs": prev_tcp.get("minHandshakeRttMs"),
                         "capturedAt": round(time.time(), 2),
@@ -961,12 +999,16 @@ class LinuxPacketSniffer:
                 if not payload:
                     continue
                 if len(payload) >= 6 and payload[0] == 0x16 and payload[1] == 0x03 and payload[5] == 0x01:
-                    # SYN -> ClientHello 首包时间差即服务端到客户端/代理节点的真实 TCP 往返握手 RTT，
-                    # 同时利用同五元组 TSval 增量测算发包端内核物理时钟频率并抓捕无状态 SYN 改包器
+                    # SYN -> ClientHello 首包时间差即服务端到客户端/代理节点的真实 TCP 往返握手 RTT；
+                    # 必须校验 tcp_seq == (syn_seq + 1) & 0xFFFFFFFF 锁定同一条 TCP 连接，避免 5G CGNAT 共享端口串扰
                     hello_tsval = extract_tcp_tsval(pkt[tcp_start + 20 : tcp_start + data_offset])
                     syn_entry = syn_cache.get(conn_key)
-                    if isinstance(syn_entry, tuple) and len(syn_entry) == 3:
-                        syn_t, syn_tsval, syn_had_ts = syn_entry
+                    if (
+                        isinstance(syn_entry, tuple)
+                        and len(syn_entry) == 5
+                        and tcp_seq == ((syn_entry[1] + 1) & 0xFFFFFFFF)
+                    ):
+                        syn_t, _syn_seq, syn_ttl, syn_tsval, syn_had_ts = syn_entry
                         syn_cache.set(conn_key, None, ttl_sec=0.0)
                         dt_sec = now_mono - syn_t
                         rtt_ms = round(dt_sec * 1000.0, 1)
@@ -978,15 +1020,17 @@ class LinuxPacketSniffer:
                                 min(old_min, rtt_ms) if isinstance(old_min, (int, float)) else rtt_ms
                             )
                             tcp_obj["helloIpId"] = ip_id
-                            if syn_tsval is not None and hello_tsval is not None and dt_sec >= 0.008:
-                                ts_delta = (hello_tsval - syn_tsval) & 0xFFFFFFFF
-                                ts_hz = round(ts_delta / dt_sec)
-                                tcp_obj["tsHz"] = ts_hz
-                                tcp_obj["synSpoofSuspect"] = bool(
-                                    ts_delta > 5_000_000 or (dt_sec >= 0.02 and ts_hz > 25000)
-                                )
-                            elif syn_had_ts and hello_tsval is None:
-                                tcp_obj["synSpoofSuspect"] = True
+                            ts_hz, spoof_suspect, ts_note = evaluate_tcp_continuity(
+                                syn_ttl=syn_ttl,
+                                hello_ttl=ttl,
+                                syn_had_ts=syn_had_ts,
+                                syn_tsval=syn_tsval,
+                                hello_tsval=hello_tsval,
+                                dt_sec=dt_sec,
+                            )
+                            tcp_obj["tsHz"] = ts_hz
+                            tcp_obj["tsNote"] = ts_note
+                            tcp_obj["synSpoofSuspect"] = spoof_suspect
                             rec["tcp"] = tcp_obj
                             PACKET_CACHE.set(src_ip, rec)
 
@@ -2582,6 +2626,28 @@ def run_self_test() -> None:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/r/{sid}", timeout=3) as r_page:
                 p_html = r_page.read().decode("utf-8")
                 assert "__WHOPROBE_SHARED__" in p_html and f"/r/{sid}.svg" in p_html
+
+            # 4) 验证 5G 蜂窝 CGNAT TSopt 剥离、多核负向微偏置、32 位正常回绕、1MHz 高频时钟与真实 osfuscate 改包判据
+            assert evaluate_tcp_continuity(
+                syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=123456, hello_tsval=None, dt_sec=0.055
+            ) == (None, False, "ts_stripped_by_middlebox")
+            assert evaluate_tcp_continuity(
+                syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=500001, hello_tsval=499999, dt_sec=0.045
+            ) == (None, False, "cgnat_or_subtick_skew")
+            hz_wrap, sp_wrap, _ = evaluate_tcp_continuity(
+                syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=0xFFFFFFF0, hello_tsval=0x00000020, dt_sec=0.048
+            )
+            assert sp_wrap is False and hz_wrap == 1000
+            hz_1m, sp_1m, _ = evaluate_tcp_continuity(
+                syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=1_000_000, hello_tsval=1_060_000, dt_sec=0.060
+            )
+            assert sp_1m is False and hz_1m == 1_000_000
+            assert evaluate_tcp_continuity(
+                syn_ttl=116, hello_ttl=52, syn_had_ts=False, syn_tsval=None, hello_tsval=None, dt_sec=0.050
+            )[1] is True
+            assert evaluate_tcp_continuity(
+                syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=0, hello_tsval=2_850_000_000, dt_sec=0.050
+            )[1] is True
 
             print(f"SELF-TEST OK on 127.0.0.1:{port} | ja4t={ja4t} | etag={et1['etagId']} | share={sid}")
         finally:

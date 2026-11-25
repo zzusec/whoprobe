@@ -1,6 +1,6 @@
 {
   "name": "whoprobe",
-  "version": "7.7.0",
+  "version": "7.7.1",
   "description": "191-probe L3–L7 browser, protocol-stack, QUIC Initial JA4Q, :443 Reality & proxy-port back-scan & multi-source BGP/DNSBL egress reputation inspector",
   "private": true,
   "license": "MIT",

@@ -1,5 +1,17 @@
 # Changelog
 
+## [v7.7.1] - 2026-11-25
+
+### Fixed — 修复真机 5G 蜂窝网络（CGNAT）下「TSval 时钟突变」高危误报与小屏标题折行
+- **消除 5G 蜂窝 UPF / CGNAT 网关下 `synSpoofSuspect` 误报 (`probe.py` · `evaluate_tcp_continuity`)**：
+  - **原因 1（运营商网关剥离 `TSopt`）**：国内三大运营商 5G UPF / CGNAT（如 `36.21.*` 电信蜂窝池）常在返回的 `SYN-ACK` 中剥离 TCP Timestamp 选项（或在硬件 NAT Fastpath 剥离数据包 TCP 选项）；iPhone（iOS）严格遵循 RFC 7323 §3.2 在 `ClientHello` 中不再携带 `TSopt`，旧逻辑将 `syn_had_ts && hello_tsval is None` 误判为无状态 SYN 改包。
+  - **原因 2（无符号减法下溢与 1MHz 高频时钟）**：旧逻辑使用 `(hello_tsval - syn_tsval) & 0xFFFFFFFF`，当 CGNAT 多转发核间存在 `-1 ~ -5ms` 微小计数偏置时无符号下溢为 `4.29×10⁹`，且 `25kHz` 上限会误伤 `1MHz` 微秒级 RFC 7323 时钟与 5G 空口突发释放。现改为 32 位有符号模差值，兼容微小负向抖动与最高 `2.5MHz` 高精度时钟。
+  - **原因 3（共享 CGNAT IP 跨连接粘滞与端口复用串扰）**：`LinuxPacketSniffer` 现严格校验 `tcp_seq == (syn_seq + 1) & 0xFFFFFFFF` 锁定同一 TCP 套接字，且每次新 `SYN` 重置 `synSpoofSuspect`，杜绝同 CGNAT 公网 IP 下其他会话串扰；同时新增同连接 `TTL` 跨包跳变（`≥30`）检测以精准锁定真实 `osfuscate` 单包改包。
+- **WebKit / Safari `ice-ufrag` 长度兼容 (`static/app.js`)**：在 `Safari` / `iOSWebKit` 上仅当出现 Firefox 专属 `THIS_IS_SDPARTA` 签名时才报 SDP 引擎冲突，兼容不同 WebKit 版本的 `ice-ufrag` 长度。
+- **移动端首屏健康度卡片顶栏防断字 (`static/index.html`)**：修复小屏手机同时展示「分享结果」「比上次多 X 处」「伪装自检」时，将「抗风控健康度」挤成单字折行（`度` / `果` / `检`）的排版问题。
+
+---
+
 ## [v7.7.0] - 2026-11-25
 
 ### Added — 9 项协议栈深水区、五界沙箱、GPU ALU 尾数与行为生物动力学探针（182 → 191 项）

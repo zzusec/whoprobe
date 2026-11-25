@@ -1,4 +1,4 @@
-/* WhoProbe v7.4.0 — 162-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.5.0 — 174-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -41,14 +41,19 @@
   };
 
   /* ---------- Passive input-event trust recorder (armed at script load, summarized at the end of each scan) ---------- */
-  const INPUT_LOG = { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, pts: [] };
+  const INPUT_LOG = { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, cdpCoord: 0, ptrEvents: 0, pts: [] };
   function resetInputLog() {
-    Object.assign(INPUT_LOG, { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, pts: [] });
+    Object.assign(INPUT_LOG, { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, cdpCoord: 0, ptrEvents: 0, pts: [] });
   }
   (function armInputRecorder() {
     const opt = { capture: true, passive: true };
     const rec = e => {
       if (e.isTrusted === false) INPUT_LOG.untrusted++;
+      // brotector：CDP Input.dispatchMouseEvent 生成的事件 screenX/Y 恰等于 pageX/Y（窗口偏移为 0）；全屏与键盘触发（坐标全 0）豁免
+      if ((e.type === "mousemove" || e.type === "mousedown") && (e.screenX || e.screenY)) {
+        INPUT_LOG.ptrEvents++;
+        if (e.screenX === e.pageX && e.screenY === e.pageY && window.outerHeight - window.innerHeight > 1) INPUT_LOG.cdpCoord++;
+      }
       switch (e.type) {
         case "mousemove": {
           INPUT_LOG.moves++;
@@ -158,7 +163,7 @@
   const getText = (url, ms = 5500) =>
     fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(ms) }).then(r => r.ok ? r.text() : Promise.reject(new Error(r.status)));
 
-  /* ---------- 8 Groups & 162 Genuine Probes Catalog ---------- */
+  /* ---------- 8 Groups & 174 Genuine Probes Catalog ---------- */
   const GROUPS = [
     ["net", "服务端与协议栈透视", "由服务端网卡 AF_PACKET 旁路抓包、主动 :443 反向握手与微脉冲时序直接读取，JS 插件无法伪造"],
     ["rep", "出口信誉、BGP 路由与黑名单情报", "融合 8 源欺诈库加权几率投票、RDAP 租赁/广播核验、12 项 DNSBL、15 项威胁段与同 /24 脏邻居连坐"],
@@ -170,7 +175,7 @@
     ["fp", "跨站指纹与无痕留痕追踪", "综合指纹、跨浏览器物理硬件码、无状态 ETag 缓存追踪与亚像素渲染哈希"]
   ];
 
-  // [id, group, title, maskSensitive, whyDesc] — Exactly 162 probes
+  // [id, group, title, maskSensitive, whyDesc] — Exactly 174 probes
   const SNIFFERS = [
     // Group 1: net (29)
     ["ip", "net", "当前连接出口 IP", true, "服务端 TCP Socket 与反向代理直接看到的客户端公网地址及 IP 协议版本。"],
@@ -227,6 +232,7 @@
     ["warp", "exit", "Cloudflare WARP 与 Gateway", false, "检测流量是否经过 Cloudflare WARP 隧道或 Zero Trust Gateway 企业网关。"],
     ["stack", "exit", "IPv4 与 IPv6 双栈独立出口", true, "分别强制通过纯 IPv4 与纯 IPv6 链路探测出口地址，许多代理仅接管 IPv4 而导致 IPv6 直连裸奔。"],
     ["rttgeo", "exit", "全球 18 区域 RTT 光速三角测距", false, "浏览器对 AWS 全球 18 个区域（含北京）端点做热连接往返测距，找出物理最近区域；若某区域往返低于「出口 IP 登记地 → 该区域」的光纤物理下限（≈ 距离 / 100 ms），即证明该路流量并未经过当前出口（规则分流）或出口 IP 属跨洲广播段。"],
+    ["aigeo", "exit", "AI / 社媒平台地区准入 (OpenAI·Claude·Gemini·TikTok)", false, "按 ChatGPT、Claude 等平台各自实际分流出口的国家，比对 OpenAI、Anthropic、Google Gemini 与 TikTok 官方不提供服务的地区（参考名单），避免注册或登录时直接被 unsupported_country 拦截。"],
 
     // Group 4: hdr (9)
     ["h_ua", "hdr", "HTTP User-Agent 请求头", false, "HTTP 请求头中实际携带的 User-Agent 字符串，与 JS navigator.userAgent 对比可抓出浅层改 UA 插件。"],
@@ -240,6 +246,7 @@
     ["h_ref", "hdr", "页面来源 Referer", false, "跳转到当前页面时的来源网页地址与导航入口类型。"],
     ["proxyhdr", "hdr", "代理转发头与 HTTPS 中间人注入", false, "TLS 已在本站终止，浏览器原生绝不会发送 Via / Forwarded / 预置 X-Forwarded-For 跳数 / CF-Worker 等头；一旦出现，说明请求经过了 HTTPS 解密代理、企业网关、杀软 Web 防护或 Cloudflare Worker 反代。"],
     ["h_lfmt", "hdr", "Accept-Language q 权重格式核验", false, "校验 HTTP 语言头 q 权重是否严格递减、格式合法，且不含 JS navigator.languages 之外的语种——ModHeader 类插件或中间层改写语言头时常在此露馅。"],
+    ["chgrease", "hdr", "Sec-CH-UA GREASE 品牌算法校验", false, "Chromium 以主版本号为种子生成 \"Not?A?Brand\" 伪品牌与版本（8 / 99 / 24）；改 UA 工具与指纹浏览器常沿用旧格式或乱填，本探针按算法复算并比对 HTTP 头与 JS userAgentData。"],
 
     // Group 5: loc (11)
     ["langs", "loc", "navigator.languages 语言列表", false, "JS 读取的浏览器首选与备选语言全列表，反映用户日常阅读语种。"],
@@ -248,6 +255,7 @@
     ["tzoff", "loc", "Date 与 Intl 双源时区校验", false, "交叉核对 Date.prototype.getTimezoneOffset() 与 Intl 时区偏移，劣质改时区插件常只改其一。"],
     ["tzdst", "loc", "夏令时规则与历史时区偏移核验", false, "对今年冬/夏季及 2005、2015 年多个时间点分别用 Date.getTimezoneOffset 与 Intl IANA 规则计算偏移；只 Hook 固定偏移的改时区插件会在夏令时切换或历史规则上露馅。"],
     ["clocksrc", "loc", "Date 时钟源内部一致性", false, "比对 Date.now()、new Date()、Date.parse(ISO) 与 performance 单调时钟，并与服务端校时交叉印证；libfaketime / 改时间插件只 Hook 部分接口时会出现秒级断裂。"],
+    ["tzname", "loc", "Date 时区名称语言（界面语言泄露）", false, "new Date().toString() 括号内的时区名由浏览器界面 / ICU 默认语言决定（如「中国标准时间」），与 navigator.languages 独立；改了语言列表却没改界面语言时会在此露出原始语种。"],
     ["hour", "loc", "默认时钟制式（12/24 小时）", false, "当前语言区域默认采用的小时计数制式及本地格式化时间样本。"],
     ["week", "loc", "每周起始日习惯", false, "Intl.Locale.weekInfo 暴露的一周第一天（如中国/欧洲为周一，美国/日本多为周日）。"],
     ["fmt", "loc", "数字分组与日期格式", false, "本地化长数字千分位小数点样式与年月日排列格式。"],
@@ -293,6 +301,9 @@
     ["engver", "dev", "JS 语法特性反推真实内核版本", false, "逐一测试 Chromium 97–136+ 各版本引入的原生 JS API，直接拆穿指纹浏览器虚报高版本 UA 的行为。"],
     ["wasmfeat", "dev", "WebAssembly 特性矩阵与内核代际", false, "逐项校验 13 项 WASM 提案字节码（SIMD、异常处理、尾调用、GC、Relaxed SIMD、线程等）与 JSPI，按各特性正式上线版本反推 V8 / SpiderMonkey 真实代际，拆穿虚报新版 UA 的旧内核。"],
     ["fontlocal", "dev", "FontFace local() 字体旁路核验", false, "绕过 Canvas 字宽测量，直接用 CSS Font Loading API 的 local() 加载 17 款系统标志性字体，与 Canvas 字体探测交叉比对，识破只 Hook measureText 的字体伪装与跨系统虚报。"],
+    ["cpuarch", "dev", "浮点 NaN 位模式 CPU 架构", false, "Infinity − Infinity 生成的 NaN 在 x86 与 ARM 上高字节不同（0xFF vs 0x7F），与 Client Hints / UA 自报架构比对，可识破手机 UA 跑在 x86 模拟器 / 云手机上的情形（FingerprintJS architecture 同款）。"],
+    ["sysfont", "dev", "CSS 系统字体关键字与系统色", false, "解析 font: caption / menu / message-box 等系统字体关键字与 Canvas / Highlight / AccentColor 等系统色，渲染引擎直接取自宿主操作系统，可反证伪装系统（CreepJS 同款）。"],
+    ["navprops", "dev", "navigator 厂商属性一致性", false, "核对 vendor、productSub、eval.toString 长度、appVersion、oscpu / buildID、userAgentData、H.264 专利解码与 15 种厂商全局对象（FingerprintJS vendorFlavors）是否与自报浏览器一致——Akamai / BotD 同款检查。"],
     ["cssv", "dev", "CSS 特性反推渲染引擎版本", false, "测试 :has()、color-mix()、anchor-name、reading-flow 等现代 CSS 特性，锁定真实 Blink 内核代际。"],
     ["apis", "dev", "硬件敏感接口暴露面", false, "统计 WebUSB、WebHID、WebSerial、MIDI、NFC、本地字体访问等 12 项硬件 API 是否存在。"],
     ["emoji", "dev", "系统字库 Emoji 版本代际", false, "利用 Canvas 测量 Emoji 12.0 至 16.0 新字符渲染宽度，反推操作系统内置字体新旧程度。"],
@@ -316,6 +327,11 @@
     ["winchrome", "brw", "窗口外框与无头渲染尺寸", false, "对比 outerWidth/outerHeight 与视口尺寸：无头 Chrome 外框为 0 或与视口完全相同，开发者工具停靠会产生异常巨大的外框差（已排除页面缩放与全屏干扰）。"],
     ["incog", "brw", "无痕 / 隐私浏览窗口识别", false, "Chromium 依据临时存储配额与 JS 堆上限比值、Safari 依据 OPFS getDirectory 异常、Firefox 依据存储 SecurityError 判断当前是否处于无痕窗口。"],
     ["input", "brw", "交互事件可信度与轨迹", false, "捕获检测期间全部鼠标 / 触摸 / 键盘事件：isTrusted=false 的合成事件直接实锤脚本操控，并统计鼠标轨迹机械直线占比（检测期间未操作属正常）。"],
+    ["autokeys", "brw", "自动化 / 爬虫框架全局标记全量扫描", false, "扫描 Selenium / ChromeDriver($cdc_) / Watir / PhantomJS / Nightmare / Cypress / TestCafe / WebdriverIO / Playwright / Puppeteer exposeFunction / CEF / CefSharp / Awesomium / Sequentum 等 60 余个全局变量与 document 标记（BotD、PerimeterX、Akamai、TikTok 风控同款清单）。"],
+    ["jsenv", "brw", "宿主运行时（Node / Electron / jsdom / WebView）", false, "检测 process / Buffer / require / global 等 Node 全局、Electron 与 NW.js、jsdom UA，以及 WKWebView / React Native / Flutter / 微信 JSBridge 等应用内容器——TikTok webmssdk 会据此区分真实浏览器与脚本宿主。"],
+    ["headless", "brw", "无头浏览器渲染特征", false, "HeadlessChrome 品牌、破损图片 0×0（旧版无头）、plugins 与 PDF 查看器矛盾、connection.rtt=0、语音引擎为空、软件 GPU 与 800×600 / 1280×720 默认视口（CreepJS、Sannysoft、BotD 同款；ActiveText 系统色仅记录，现代 Chrome 已不再区分）。"],
+    ["stealth", "brw", "隐身补丁残留（stealth / undetected）", false, "puppeteer-extra-stealth、undetected-chromedriver 与指纹浏览器常见破绽：webdriver 被删成 undefined、window.chrome 事后注入或函数伪造、srcdoc iframe 代理回主窗口、原生 getter 错误栈出现 Proxy 帧、伪造 PluginArray。"],
+    ["focus", "brw", "页面焦点、可见性与用户激活", false, "document.hasFocus()、visibilityState 与 navigator.userActivation：无头或后台自动化常见「页面可见却从未获得焦点、也从无用户手势」。"],
     ["adblock", "brw", "广告拦截插件双重实测", false, "结合页面多类名广告 DOM 诱饵隐藏检测与 Google 广告脚本网络请求拦截对照（排除断网误判）。"],
     ["ext", "brw", "页面注入痕迹识别扩展", false, "检测加密钱包全局对象（MetaMask/OKX/Phantom/Rabby）、DevTools 钩子与翻译/暗色插件 DOM 标记。"],
     ["extwar", "brw", "Chrome 扩展公开资源扫描", false, "并发探测 36 款主流代理、改指纹、脚本管理器、钱包与密码管理扩展暴露的 chrome-extension:// 静态资源。"],
@@ -337,6 +353,7 @@
     ["glimg", "fp", "WebGL 着色器像素回读指纹", false, "使用自定义片元着色器渲染正余弦渐变三角形并逐像素 readPixels 回读，捕捉 GPU 浮点舍入差异。"],
     ["audio", "fp", "OfflineAudio 音频压缩指纹", false, "离线渲染 10kHz 三角波经动态压缩器处理后的采样幅值总和，不同音频栈与架构存在细微差异。"],
     ["aunoise", "fp", "ConstantSource 音频加噪检测", false, "离线渲染恒定 0.5 幅值直流音频源并回读全部采样，任何偏离 0.5 的微小抖动均证明存在防指纹音频篡改。"],
+    ["audiolat", "fp", "AudioContext 基础延迟指纹", false, "AudioContext.baseLatency / outputLatency 与采样率由操作系统音频栈决定（如 macOS 256 帧、Windows 480 帧），属 FingerprintJS 稳定指纹源之一。"],
     ["fonts", "fp", "已安装代表性字体清单", false, "通过 Canvas 72px 多族基线宽度比对，无弹窗检测 52 款中英日韩、编程、Adobe 设计与 Office 字体。"],
     ["fontfp", "fp", "字体集合哈希与软件画像", false, "根据本机已安装字体组合计算唯一哈希，并推断开发、设计或商务办公软件环境。"],
     ["domrect", "fp", "DOMRect 旋转排版亚像素指纹", false, "对旋转倾斜文字块调用 getClientRects 与 Range.getBoundingClientRect，提取小数点后 6 位排版特征。"],
@@ -904,13 +921,14 @@
     }
   }
 
-  function switchWorkspaceTab(tabId) {
+  function switchWorkspaceTab(tabId, opts = {}) {
     if (!tabId) return;
     activeWorkspaceTab = tabId;
     $$("#workspaceTabs .ws-tab").forEach(btn => {
       const on = btn.dataset.wstab === tabId;
       btn.setAttribute("aria-selected", on ? "true" : "false");
-      btn.className = "ws-tab shrink-0 py-2 px-3.5 inline-flex items-center gap-2 rounded-lg text-xs transition " + (
+      btn.tabIndex = on ? 0 : -1;
+      btn.className = "ws-tab shrink-0 min-w-0 py-2 px-2 sm:px-3.5 inline-flex items-center justify-center gap-1.5 sm:gap-2 rounded-lg text-xs transition " + (
         on
           ? "font-semibold bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white"
           : "font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
@@ -919,6 +937,44 @@
     $$("[data-wspanel]").forEach(panel => {
       panel.hidden = panel.dataset.wspanel !== tabId;
     });
+    // 吸顶标签栏已贴住顶部时，切换后把新面板顶部带回视口，避免停留在旧面板的滚动深处
+    const bar = $("#workspaceBar");
+    if (opts.keepScroll || !bar) return;
+    const hdrH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hdr-h")) || 0;
+    if (bar.getBoundingClientRect().top <= hdrH + 2) {
+      const sec = bar.parentElement;
+      const y = sec.getBoundingClientRect().top + window.scrollY - hdrH - 6;
+      window.scrollTo({ top: y, behavior: mq("(prefers-reduced-motion: reduce)") ? "auto" : "smooth" });
+    }
+  }
+
+  /* ---------- Check card visual tokens (shared by live run & shared snapshot) ---------- */
+  function ckCardClass(level, active) {
+    const issue = level === "bad" || level === "warn";
+    const stripe = level === "bad"
+      ? "border-l-[3px] border-l-rose-500"
+      : level === "warn"
+      ? "border-l-[3px] border-l-amber-500 dark:border-l-amber-400"
+      : "border-l-zinc-200/80 dark:border-l-white/[0.07]";
+    return `ck-card group rounded-xl border border-zinc-200/80 bg-white ${stripe} ${issue ? "px-4 py-3" : "px-4 py-2.5"} cursor-pointer transition-colors hover:bg-zinc-50/70 dark:bg-[#151820] dark:border-white/[0.07] dark:hover:bg-[#181b24] ${active ? "" : "opacity-50"}`;
+  }
+  function ckValClass(level, expanded) {
+    const issue = level === "bad" || level === "warn";
+    return `ck-val maskable mt-1 text-xs leading-relaxed ${issue ? "text-zinc-700 dark:text-zinc-300" : "text-zinc-500 dark:text-zinc-400"} ${expanded ? "" : issue ? "line-clamp-3 sm:line-clamp-2" : "truncate"}`;
+  }
+  function ckTitleClass(level) {
+    const issue = level === "bad" || level === "warn";
+    return `ck-title text-[13px] ${issue ? "font-semibold text-zinc-950 dark:text-white" : "font-medium text-zinc-800 dark:text-zinc-200"}`;
+  }
+  function setCheckDrawer(row, open) {
+    const dr = row && $(".ck-drawer", row);
+    if (!dr) return;
+    dr.hidden = !open;
+    row.dataset.open = open ? "1" : "";
+    const how = $(".ck-howto", row);
+    if (how) how.setAttribute("aria-expanded", open ? "true" : "false");
+    const val = $(".ck-val", row);
+    if (val && row.dataset.proto === "0") val.className = ckValClass(row.dataset.level || "info", open);
   }
 
   const SCEN_ICONS = {
@@ -944,10 +1000,10 @@
     if (sg) {
       sg.innerHTML = SCENARIOS_META.map(([id, name, sub]) => `
         <div data-scen="${esc(id)}" class="rounded-xl ring-1 ring-zinc-950/[0.06] bg-zinc-50/75 p-3.5 flex flex-col justify-between gap-2.5 dark:bg-white/[0.025] dark:ring-white/[0.07]">
-          <div class="flex items-center justify-between gap-1.5">
+          <div class="flex flex-wrap items-center justify-between gap-x-1.5 gap-y-1">
             <span class="inline-flex items-center gap-1.5 min-w-0">
               <span class="sc-icon shrink-0 text-zinc-500 dark:text-zinc-400">${SCEN_ICONS[id] || ""}</span>
-              <span class="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">${esc(name)}</span>
+              <span class="text-xs font-semibold text-zinc-900 dark:text-zinc-100 whitespace-nowrap">${esc(name)}</span>
             </span>
             <span class="sc-badge inline-flex items-center py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 bg-zinc-200/70 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">待确认</span>
           </div>
@@ -991,25 +1047,31 @@
     const coreBox = $("#coreChecksList"), protoBox = $("#protoChecksList");
     if (coreBox) {
       coreBox.innerHTML = CORE_CHECKS.map(([id, title], idx) => `
-        <div data-ck="${esc(id)}" data-idx="${idx}" data-proto="0" class="ck-card rounded-xl border border-zinc-200/80 border-l-[3px] border-l-zinc-300 bg-white px-4 py-3 transition dark:bg-[#151820] dark:border-white/[0.07] dark:border-l-zinc-700">
-          <div class="flex items-start justify-between gap-2.5">
+        <div data-ck="${esc(id)}" data-idx="${idx}" data-proto="0" data-level="info" class="${ckCardClass("info", true)}">
+          <div class="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-2.5">
             <div class="flex items-start gap-2.5 min-w-0 flex-1">
               <span class="ck-badge mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">…</span>
               <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <span class="text-[13px] font-semibold text-zinc-950 dark:text-zinc-100">${esc(title)}</span>
+                <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                  <span class="ck-title text-[13px] font-semibold text-zinc-950 dark:text-zinc-100">${esc(title)}</span>
                   <span class="ck-diff inline-flex items-center gap-1 py-0.5 px-1.5 rounded font-mono text-[10.5px] font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">待核验</span>
                   <span class="ck-tag sr-only"></span>
                 </div>
-                <p class="ck-val maskable mt-1 text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2 leading-relaxed">等待探针汇总…</p>
+                <p class="${ckValClass("info", false)}">等待探针汇总…</p>
               </div>
             </div>
-            <div class="flex items-center gap-1 shrink-0">
-              <button type="button" data-retest="${esc(id)}" hidden class="ck-retest py-1 px-2 rounded-md text-[11px] font-medium ring-1 ring-zinc-950/[0.08] bg-zinc-50 text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-800 dark:ring-white/[0.08] dark:text-zinc-300 dark:hover:bg-zinc-700 transition">重测</button>
-              <button type="button" data-howto="${esc(id)}" class="ck-howto py-1 px-2 rounded-md text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100 transition">原理</button>
+            <div class="ck-actions flex items-center gap-0.5 shrink-0 ps-[30px] sm:ps-0 -ms-2 sm:ms-0">
+              <button type="button" data-retest="${esc(id)}" hidden class="ck-retest py-1 px-2 inline-flex items-center gap-1 rounded-md text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 disabled:opacity-60 dark:text-zinc-400 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100 transition">
+                <svg class="size-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+                <span class="ck-retest-label">重测</span>
+              </button>
+              <button type="button" data-howto="${esc(id)}" aria-expanded="false" class="ck-howto py-1 px-2 inline-flex items-center gap-1 rounded-md text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100 transition">
+                <span class="ck-howto-label">原理</span>
+                <svg class="size-3 shrink-0 transition-transform duration-150 group-data-[open=1]:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
             </div>
           </div>
-          <div class="ck-drawer mt-2.5 pt-2.5 border-t border-zinc-950/[0.06] text-xs leading-relaxed text-zinc-700 space-y-1.5 dark:border-white/[0.07] dark:text-zinc-300" hidden></div>
+          <div class="ck-drawer mt-2.5 pt-2.5 border-t border-zinc-950/[0.06] text-xs leading-relaxed text-zinc-700 space-y-1.5 cursor-auto dark:border-white/[0.07] dark:text-zinc-300" hidden></div>
         </div>
       `).join("");
     }
@@ -1030,7 +1092,7 @@
     }
     $$("[data-ck]").forEach(el => { CHECK_EL[el.dataset.ck] = el; });
 
-    // 4. Category Tabs & 162 Sniffer Explorer Rows
+    // 4. Category Tabs & 174 Sniffer Explorer Rows
     const tabsBox = $("#groupTabs");
     if (tabsBox) {
       const counts = {};
@@ -4240,10 +4302,12 @@
     const parts = [`鼠标移动 ${L.moves}`, `点击 ${L.clicks}`, `按键 ${L.keys}`, `触摸 ${L.touches}`, `滚轮 ${L.wheels}`].filter(s => !/ 0$/.test(s));
     const flags = [];
     if (L.untrusted) flags.push(`${L.untrusted} 个 isTrusted=false 合成事件`);
+    R.inputCdpCoord = L.cdpCoord >= 3 && L.cdpCoord / Math.max(1, L.ptrEvents) > 0.8 ? L.cdpCoord : 0;
+    if (R.inputCdpCoord) flags.push(`${L.cdpCoord}/${L.ptrEvents} 个鼠标事件 screenX/Y = pageX/Y（CDP 派发特征）`);
     if (ratio != null && ratio >= 0.9) flags.push(`轨迹 ${Math.round(ratio * 100)}% 为机械直线`);
     if (L.moves >= 30 && L.zeroMove / L.moves > 0.9) flags.push("movementX/Y 恒为 0");
     setProbe("input", flags.length ? `${flags.join(" · ")} · ${parts.join(" / ")}` : `${parts.join(" / ")} · 全部为可信原生事件${ratio != null ? ` · 直线段 ${Math.round(ratio * 100)}%` : ""}`, {
-      tone: L.untrusted ? "bad" : flags.length ? "warn" : "ok"
+      tone: L.untrusted || R.inputCdpCoord ? "bad" : flags.length ? "warn" : "ok"
     });
   }
 
@@ -4357,6 +4421,516 @@
       ? `格式异常：${issues.join("；")}`
       : `${toks.length} 项 · q 权重递减合规 · 语种与 navigator.languages 吻合${reduced ? " · 仅发送首选语言（精简策略）" : ""}`,
     { tone: issues.length ? "bad" : "ok" });
+  }
+
+  /* ---------- v7.5 Big-Vendor Anti-Bot Probes (12 items): autokeys · jsenv · headless · stealth · focus · cpuarch · sysfont · navprops · tzname · chgrease · aigeo · audiolat
+     参考：TikTok webmssdk、Akamai sensor_data、PerimeterX/HUMAN、DataDome、Cloudflare 挑战脚本，以及 GitHub 开源
+     fingerprintjs/BotD、fingerprintjs (sources)、abrahamjuliot/CreepJS、bot.sannysoft.com、rebrowser-bot-detector、brotector ---------- */
+
+  const nativeFnRe = /\{\s*\[native code\]\s*\}\s*$/;
+  const isNativeFn = fn => { try { return typeof fn === "function" && nativeFnRe.test(Function.prototype.toString.call(fn)); } catch (e) { return false; } };
+  const claimedBrowser = () => {
+    const ua = navigator.userAgent || "";
+    if (/Edg\//.test(ua)) return "Edge";
+    if (/OPR\//.test(ua)) return "Opera";
+    if (/Firefox\//.test(ua) && !/Seamonkey/i.test(ua)) return "Firefox";
+    if (/CriOS|FxiOS|EdgiOS/.test(ua)) return "iOSWebKit";
+    if (/Chrome\//.test(ua) || /Chromium\//.test(ua)) return "Chrome";
+    if (/Safari\//.test(ua) && /Version\//.test(ua)) return "Safari";
+    return "";
+  };
+  const chromeMajor = () => +((/Chrom(?:e|ium)\/(\d+)/.exec(navigator.userAgent) || [])[1] || 0);
+
+  // (1) Automation / crawler framework global markers (BotD distinctiveProperties + PerimeterX/Akamai/TikTok key lists)
+  const AUTO_WINDOW_KEYS = [
+    ["Selenium", ["_Selenium_IDE_Recorder", "_selenium", "calledSelenium", "callSelenium", "__selenium_evaluate", "__selenium_unwrapped", "__webdriver_script_fn", "__webdriver_script_func", "__webdriver_evaluate", "__webdriver_unwrapped", "__driver_evaluate", "__driver_unwrapped", "__fxdriver_evaluate", "__fxdriver_unwrapped", "__webdriverFunc", "_WEBDRIVER_ELEM_CACHE", "ChromeDriverw", "webdriver", "_webdriver"]],
+    ["Watir", ["__lastWatirAlert", "__lastWatirConfirm", "__lastWatirPrompt"]],
+    ["PhantomJS", ["callPhantom", "_phantom"]],
+    ["Phantomas", ["__phantomas"]],
+    ["Nightmare", ["__nightmare", "nightmare"]],
+    ["Cypress", ["Cypress", "__cypress"]],
+    ["TestCafe", ["%hammerhead%", "%testCafeDriverInstance%"]],
+    ["WebdriverIO", ["wdioElectron"]],
+    ["Playwright", ["__playwright", "__pwInitScripts", "__playwright__binding__", "__pwWebSocketDispatch"]],
+    ["Puppeteer", ["__puppeteer_evaluation_script__", "__puppeteer_utility_world__"]],
+    ["CEF", ["RunPerfTest"]],
+    ["CefSharp", ["CefSharp", "cefSharp"]],
+    ["Awesomium", ["awesomium"]],
+    ["FMiner", ["fmget_targets"]],
+    ["Geb", ["geb"]],
+    ["Spynner", ["spynner_additional_js_loaded"]],
+    ["domAutomation", ["domAutomation", "domAutomationController"]]
+  ];
+  const AUTO_WEAK_KEYS = [["CoachJS", "emit"], ["Rhino", "spawn"]];
+  const AUTO_DOC_KEYS = ["__webdriver_evaluate", "__selenium_evaluate", "selenium-evaluate", "__webdriver_script_function", "__webdriver_script_func", "__webdriver_script_fn", "__fxdriver_evaluate", "__driver_unwrapped", "__webdriver_unwrapped", "__driver_evaluate", "__selenium_unwrapped", "__fxdriver_unwrapped", "$chrome_asyncScriptInfo", "__$webdriverAsyncExecutor", "$cdc_asdjflasutopfhvcZLmcf", "$cdc_asdjflasutopfhvcZLmcfl_"];
+  function probeAutoKeys() {
+    const hits = [], weak = [];
+    const has = k => { try { return k in window; } catch (e) { return false; } };
+    for (const [fw, keys] of AUTO_WINDOW_KEYS) {
+      const found = keys.filter(has);
+      if (found.length) hits.push(`${fw}(${found.slice(0, 2).join(",")})`);
+    }
+    for (const [fw, k] of AUTO_WEAK_KEYS) if (has(k)) weak.push(`${fw}?(${k})`);
+    try {
+      const docHit = AUTO_DOC_KEYS.filter(k => k in document);
+      if (docHit.length) hits.push(`document.${docHit[0]}`);
+      const winKeys = Object.getOwnPropertyNames(window);
+      const cdc = winKeys.find(k => /^([a-z]){3}_.*_(Array|Promise|Symbol)$/.test(k) || /^\$?cdc_[a-z0-9]/i.test(k));
+      if (cdc) hits.push(`ChromeDriver 注入变量 (${cdc.slice(0, 18)}…)`);
+      const docCdc = Object.getOwnPropertyNames(document).find(k => /^\$?cdc_|^\$wdc_/.test(k));
+      if (docCdc) hits.push("document.$cdc_ 标记");
+      // CDP Runtime.addBinding 会在 window 上留下空函数名的原生函数
+      const anonNative = winKeys.filter(k => { try { const v = window[k]; return typeof v === "function" && v.name === "" && isNativeFn(v); } catch (e) { return false; } });
+      if (anonNative.length) weak.push(`CDP addBinding?(${anonNative.slice(0, 2).join(",")})`);
+    } catch (e) {}
+    if (/PhantomJS|Headless|Electron|slimerjs/i.test(navigator.appVersion || "")) hits.push("appVersion 含 PhantomJS / Headless / Electron / SlimerJS");
+    if (typeof Function.prototype.bind !== "function") hits.push("缺少 Function.prototype.bind（PhantomJS）");
+    try { null[0](); } catch (e) { if (/PhantomJS/i.test(String(e && e.stack))) hits.push("错误栈含 PhantomJS"); }
+    try {
+      // rebrowser：主文档被 CDP Fetch.fulfillRequest / Playwright route.fulfill 拦截改写
+      const nav = performance.getEntriesByType("navigation")[0];
+      if (nav && nav.nextHopProtocol === "" && nav.transferSize > 0 && nav.deliveryType === "" && nav.workerStart === 0) hits.push("主文档响应被自动化框架拦截改写 (fulfillRequest)");
+    } catch (e) {}
+    try { if (/Sequentum/i.test(String(window.external))) hits.push("Sequentum (window.external)"); } catch (e) {}
+    try {
+      // Puppeteer exposeFunction / Playwright exposeBinding：页面上出现非原生且带绑定特征的全局函数
+      const binds = Object.getOwnPropertyNames(window).filter(k => {
+        try {
+          const v = window[k];
+          return typeof v === "function" && !isNativeFn(v) && /__puppeteer|exposeBinding|__playwright|binding\(|callBinding/i.test(Function.prototype.toString.call(v).slice(0, 400));
+        } catch (e) { return false; }
+      });
+      if (binds.length) hits.push(`exposeFunction 绑定 (${binds.slice(0, 2).join(",")})`);
+    } catch (e) {}
+    R.autoKeyHits = hits;
+    if (hits.length) R.botHits = Array.from(new Set([...(R.botHits || []), ...hits]));
+    setProbe("autokeys", hits.length
+      ? `检出 ${hits.length} 类自动化 / 爬虫框架标记：${hits.slice(0, 4).join(" · ")}`
+      : weak.length ? `未见强特征，存在通用全局名 ${weak.join(" · ")}（可能为页面脚本）` : `扫描 ${AUTO_WINDOW_KEYS.reduce((n, [, k]) => n + k.length, 0) + AUTO_DOC_KEYS.length} 个框架标记与 ChromeDriver 变量，全部未命中`,
+    { tone: hits.length ? "bad" : weak.length ? "warn" : "ok", why: "覆盖 Selenium / ChromeDriver / Watir / PhantomJS / Phantomas / Nightmare / Cypress / TestCafe / WebdriverIO / Playwright / Puppeteer / CEF / CefSharp / Awesomium / FMiner / Geb / Spynner / Sequentum 等 BotD、PerimeterX、Akamai 与 TikTok 风控脚本同款清单。" });
+  }
+
+  // (2) Host JS environment: Node / Electron / jsdom / NW.js / Tauri / App WebView bridges
+  function probeJsEnv() {
+    const bad = [], info = [];
+    try {
+      const p = window.process;
+      if (p && typeof p === "object") {
+        if (p.versions?.electron || p.type === "renderer") bad.push(`Electron ${p.versions?.electron || "渲染进程"}`);
+        else if (p.versions?.node) bad.push(`Node.js ${p.versions.node}`);
+      }
+    } catch (e) {}
+    try { if (typeof window.Buffer === "function" && window.Buffer.from) bad.push("Node Buffer 全局"); } catch (e) {}
+    try { if (typeof window.require === "function" && typeof window.module === "object") bad.push("CommonJS require/module"); } catch (e) {}
+    try { if (window.global === window && typeof window.process === "object") bad.push("Node global 别名"); } catch (e) {}
+    if (/jsdom/i.test(navigator.userAgent)) bad.push("jsdom UA");
+    if (/Electron\//.test(navigator.userAgent)) bad.push("Electron UA");
+    if (typeof window.nw === "object") bad.push("NW.js");
+    if (window.__TAURI__ || window.__TAURI_INTERNALS__) info.push("Tauri 桌面壳");
+    if (window.webkit?.messageHandlers) info.push("iOS WKWebView 原生桥");
+    if (window.ReactNativeWebView) info.push("React Native WebView");
+    if (window.flutter_inappwebview) info.push("Flutter InAppWebView");
+    if (window.AndroidBridge || window.JSBridge || window.WeixinJSBridge || window.__wxjs_environment) info.push("App 内置 WebView 桥 (微信/JSBridge)");
+    R.jsEnvBad = bad;
+    setProbe("jsenv", bad.length
+      ? `页面运行在非浏览器宿主：${bad.join(" · ")}`
+      : info.length ? `应用内容器：${info.join(" · ")}` : "标准浏览器运行时（未见 Node / Electron / jsdom / NW.js 注入）",
+    { tone: bad.length ? "bad" : info.length ? "warn" : "ok" });
+  }
+
+  // (3) Headless rendering & environment signals (CreepJS headless / Sannysoft / BotD)
+  async function probeHeadless() {
+    const hits = [], soft = [];
+    const ua = navigator.userAgent || "";
+    const desktop = !/Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+    const isChromium = R.engine === "V8";
+    try {
+      const d = document.createElement("div");
+      d.style.cssText = "position:absolute;left:-9999px;top:0;width:4px;height:4px;background-color:ActiveText";
+      document.body.appendChild(d);
+      const bg = getComputedStyle(d).backgroundColor;
+      d.remove();
+      R.activeTextColor = bg;
+    } catch (e) {}
+    try {
+      const img = document.createElement("img");
+      img.style.cssText = "position:absolute;left:-9999px;top:0";
+      const done = new Promise(r => { img.onerror = () => r(true); img.onload = () => r(false); });
+      img.src = "data:image/png;base64,d2hvcHJvYmU=";
+      document.body.appendChild(img);
+      const errored = await within(done, 1500, null);
+      const w = img.width, h = img.height;
+      img.remove();
+      R.brokenImg = errored ? `${w}×${h}` : null;
+      if (errored && isChromium && w === 0 && h === 0) hits.push("破损图片尺寸 0×0（有界面 Chrome 为 16×16 图标）");
+    } catch (e) {}
+    try {
+      const brands = (navigator.userAgentData?.brands || []).map(b => b.brand).join(",");
+      if (/Headless/i.test(brands)) hits.push("userAgentData 品牌含 HeadlessChrome");
+    } catch (e) {}
+    if (!navigator.languages || navigator.languages.length === 0) hits.push("navigator.languages 为空");
+    if (isChromium && desktop) {
+      const pl = navigator.plugins?.length ?? -1;
+      if (navigator.pdfViewerEnabled === true && pl === 0) hits.push("pdfViewerEnabled=true 但 plugins 为空");
+      if (navigator.pdfViewerEnabled === false && pl === 0) soft.push("PDF 查看器与插件全部缺失（无头或企业策略）");
+      if (navigator.connection && navigator.connection.rtt === 0) soft.push("connection.rtt = 0（无网络质量估算）");
+      if (/^(macOS|Windows)$/.test(R.dev?.os || "") && Array.isArray(R.voices) && speechSynthesis?.getVoices?.().length === 0) soft.push("系统语音合成引擎 0 个语音");
+    }
+    const iw = window.innerWidth, ih = window.innerHeight;
+    if (desktop && ((iw === 800 && ih === 600) || (iw === 1280 && ih === 720) || (iw === 1920 && ih === 1080 && window.outerHeight === ih))) {
+      soft.push(`视口恰为自动化框架默认尺寸 ${iw}×${ih}`);
+    }
+    if (R.gpuSoft) hits.push("WebGL 为 SwiftShader / llvmpipe 软件渲染");
+    try {
+      if (/Mesa OffScreen/i.test(R.gpuRaw || "")) hits.push("WebGL 渲染器 Mesa OffScreen（无头特征）");
+    } catch (e) {}
+    // ActiveText：Chromium 仅在 Windows 把它映射为系统超链接色，其余平台恒为默认纯红；自报 Windows 却是纯红 → 非真实 Windows
+    if (isChromium && R.dev?.os === "Windows" && R.activeTextColor === "rgb(255, 0, 0)" && !mq("(prefers-color-scheme: dark)")) {
+      soft.push("自报 Windows（浅色模式）但 ActiveText 为 Chromium 默认纯红");
+    }
+    // brotector：Worker 内 getHighEntropyValues 全空 → CDP setUserAgentOverride 未携带 metadata
+    if (isChromium && navigator.userAgentData?.getHighEntropyValues && typeof Worker === "function") {
+      try {
+        const src = "navigator.userAgentData&&navigator.userAgentData.getHighEntropyValues(['architecture','model','platformVersion','uaFullVersion','bitness']).then(v=>postMessage(v),()=>postMessage(null));if(!navigator.userAgentData)postMessage(null);";
+        const url = URL.createObjectURL(new Blob([src], { type: "application/javascript" }));
+        const wk = new Worker(url);
+        const v = await within(new Promise(r => { wk.onmessage = e => r(e.data); wk.onerror = () => r(null); }), 1500, null);
+        wk.terminate();
+        URL.revokeObjectURL(url);
+        if (v && ["architecture", "platformVersion", "uaFullVersion", "bitness"].every(k => !v[k]) && (R.hi?.platformVersion || R.hi?.uaFullVersion)) {
+          hits.push("Worker 内高熵 Client Hints 全为空（CDP UA 覆写未带 metadata）");
+        }
+      } catch (e) {}
+    }
+    R.headlessHits = hits;
+    R.headlessSoft = soft;
+    if (hits.length) R.botHits = Array.from(new Set([...(R.botHits || []), ...hits.map(h => `无头:${h.split("（")[0]}`)]));
+    setProbe("headless", hits.length
+      ? `${hits.length} 项无头特征：${hits.join(" · ")}${soft.length ? ` · 另有 ${soft.length} 项弱信号` : ""}`
+      : soft.length ? `弱信号：${soft.join(" · ")}` : `ActiveText ${R.activeTextColor || "-"} · 破损图 ${R.brokenImg || "-"} · 插件 ${navigator.plugins?.length ?? "-"} 个，未见无头渲染特征`,
+    { tone: hits.length ? "bad" : soft.length ? "warn" : "ok" });
+  }
+
+  // (4) Stealth-patch residue (puppeteer-extra-plugin-stealth / undetected-chromedriver / anti-detect browsers)
+  function probeStealth() {
+    const hits = [];
+    const cb = claimedBrowser();
+    const isChromium = R.engine === "V8";
+    const maj = chromeMajor();
+    const ownSrc = (() => { try { return (/(https?:\/\/[^\s)]+?app\.js)/.exec(new Error().stack || "") || [])[1] || "app.js"; } catch (e) { return "app.js"; } })();
+    if (isChromium && maj >= 89) {
+      if (navigator.webdriver === undefined) hits.push("navigator.webdriver 为 undefined（原生应为 false，删除式补丁）");
+      const wd = Object.getOwnPropertyDescriptor(Navigator.prototype, "webdriver");
+      if (!wd) hits.push("Navigator.prototype.webdriver 描述符被删除");
+      else if (wd.get && !isNativeFn(wd.get)) hits.push("webdriver getter 非原生");
+    }
+    if (isChromium && (cb === "Chrome" || cb === "Edge" || cb === "Opera") && !/Android/.test(navigator.userAgent)) {
+      if (!window.chrome) hits.push("自称 Chrome 却缺少 window.chrome");
+      else {
+        try {
+          if (Object.getOwnPropertyNames(window).slice(-50).includes("chrome") && Object.keys(window).slice(-50).includes("chrome")) hits.push("window.chrome 位于全局属性末尾（事后注入）");
+        } catch (e) {}
+        for (const k of ["loadTimes", "csi"]) {
+          const fn = window.chrome[k];
+          if (typeof fn === "function" && !isNativeFn(fn)) hits.push(`chrome.${k} 为 JS 伪造函数`);
+        }
+        if (window.chrome.app && typeof window.chrome.app.getDetails === "function" && !isNativeFn(window.chrome.app.getDetails)) hits.push("chrome.app 为伪造对象");
+      }
+    }
+    // srcdoc iframe：隐身补丁常把 contentWindow 代理回主窗口或遗漏 chrome 对象
+    try {
+      // CreepJS hasIframeProxy：未挂入 DOM 的 iframe 原生 contentWindow 必为 null，stealth 的 Proxy 会返回对象
+      const loose = document.createElement("iframe");
+      loose.srcdoc = "wp";
+      if (loose.contentWindow) hits.push("未挂载 iframe 的 contentWindow 非 null（iframe.contentWindow 补丁）");
+    } catch (e) {}
+    try {
+      const rt = window.chrome?.runtime;
+      for (const k of ["sendMessage", "connect"]) {
+        const fn = rt && rt[k];
+        if (typeof fn !== "function") continue;
+        let bad = Object.prototype.hasOwnProperty.call(fn, "prototype");
+        try { new fn(); bad = true; } catch (e) { if (!(e instanceof TypeError)) bad = true; }
+        if (bad) { hits.push(`chrome.runtime.${k} 为伪造函数（可被 new 或带 prototype）`); break; }
+      }
+    } catch (e) {}
+    try {
+      const f = document.createElement("iframe");
+      f.srcdoc = "<!doctype html><title>wp</title>";
+      f.style.cssText = "position:absolute;width:0;height:0;border:0;visibility:hidden";
+      f.setAttribute("aria-hidden", "true");
+      document.body.appendChild(f);
+      const cw = f.contentWindow;
+      if (cw === window) hits.push("srcdoc iframe.contentWindow 指向主窗口（Proxy 补丁）");
+      else if (cw) {
+        if (window.chrome && isChromium && !cw.chrome) hits.push("iframe 内 window.chrome 缺失");
+        if (cw.navigator && navigator.webdriver !== cw.navigator.webdriver) hits.push("iframe 与主页面 webdriver 不一致");
+        if (cw.navigator && navigator.plugins?.length !== cw.navigator.plugins?.length) hits.push("iframe 与主页面 plugins 数量不一致");
+      }
+      f.remove();
+    } catch (e) {}
+    // 原生 getter 非法调用的错误栈中出现 Proxy / Reflect / 扩展或注入脚本帧
+    const stackSuspect = [];
+    const probeStack = (label, get) => {
+      if (typeof get !== "function") return;
+      try { get.call(Object.create(null)); stackSuspect.push(`${label}(未抛错)`); } catch (e) {
+        const st = String(e && e.stack || "");
+        const lines = st.split("\n").slice(1).filter(l => !l.includes(ownSrc));
+        if (lines.some(l => /Proxy|Object\.apply|Reflect\.apply|newHandler|chrome-extension:|moz-extension:|safari-web-extension:|pptr:|__puppeteer|__playwright|UtilityScript\.|evaluation_script/.test(l))) stackSuspect.push(label);
+      }
+    };
+    for (const k of ["userAgent", "platform", "hardwareConcurrency", "deviceMemory", "languages", "webdriver", "plugins"]) {
+      probeStack(`navigator.${k}`, Object.getOwnPropertyDescriptor(Navigator.prototype, k)?.get);
+    }
+    probeStack("WebGL.getParameter", window.WebGLRenderingContext?.prototype?.getParameter);
+    probeStack("Canvas.toDataURL", window.HTMLCanvasElement?.prototype?.toDataURL);
+    if (stackSuspect.length) hits.push(`原生接口错误栈含代理帧 (${stackSuspect.slice(0, 3).join(", ")})`);
+    // PluginArray / MimeTypeArray 结构完整性（隐身补丁常用普通对象伪造）
+    try {
+      const pl = navigator.plugins, mt = navigator.mimeTypes;
+      if (window.PluginArray && pl && !(pl instanceof PluginArray)) hits.push("navigator.plugins 不是 PluginArray 实例");
+      if (pl && pl.length) {
+        if (window.Plugin && !(pl[0] instanceof Plugin)) hits.push("plugins[0] 不是 Plugin 实例");
+        if (pl.item(0) !== pl[0]) hits.push("plugins.item(0) 与下标访问不一致");
+        if (mt && mt.length && mt[0].enabledPlugin && !Array.from(pl).includes(mt[0].enabledPlugin)) hits.push("mimeTypes.enabledPlugin 不指向 plugins 成员");
+        // Chromium dom_plugin_array.cc：PDF 查看器可用时固定为 5 个内置 PDF 插件
+        if (isChromium && !/Android/.test(navigator.userAgent) && navigator.pdfViewerEnabled) {
+          const want = ["PDF Viewer", "Chrome PDF Viewer", "Chromium PDF Viewer", "Microsoft Edge PDF Viewer", "WebKit built-in PDF"];
+          const names = Array.from(pl).map(p => p.name);
+          if (names.length !== 5 || want.some(n => !names.includes(n))) hits.push(`插件名单非 Chromium 内置 PDF 五件套 (${names.slice(0, 3).join(", ") || "空"})`);
+          if (mt && mt.length !== 2) hits.push(`mimeTypes 数量 ${mt.length}（应为 application/pdf、text/pdf 两项）`);
+        }
+      }
+      if (window.MimeTypeArray && mt && Object.getPrototypeOf(mt) !== MimeTypeArray.prototype) hits.push("navigator.mimeTypes 原型不是 MimeTypeArray");
+    } catch (e) { hits.push("plugins 结构访问抛错"); }
+    R.stealthHits = hits;
+    setProbe("stealth", hits.length ? `抓获 ${hits.length} 处隐身补丁残留：${hits.slice(0, 3).join(" · ")}${hits.length > 3 ? "…" : ""}` : "webdriver、window.chrome、srcdoc iframe、原生 getter 错误栈与插件结构均为原生形态", {
+      tone: hits.length ? "bad" : "ok", why: hits.join("\n")
+    });
+  }
+
+  // (5) Page focus / visibility / sticky user activation
+  function probeFocus() {
+    const hf = typeof document.hasFocus === "function" ? document.hasFocus() : null;
+    const vis = document.visibilityState || "";
+    const act = navigator.userActivation;
+    R.pageFocus = { hf, vis, everActive: act ? act.hasBeenActive : null };
+    const parts = [vis === "visible" ? "页面可见" : vis === "hidden" ? "后台 / 隐藏标签页" : vis || "未知可见性", hf === true ? "窗口已聚焦" : hf === false ? "窗口未聚焦" : "", act ? (act.hasBeenActive ? "已有用户激活手势" : "尚无用户激活手势") : ""].filter(Boolean);
+    const odd = vis === "visible" && hf === false && act && !act.hasBeenActive && (R.winHeadless || (R.headlessHits || []).length);
+    setProbe("focus", parts.join(" · "), { tone: odd ? "warn" : "neutral" });
+  }
+
+  // (6) CPU architecture via Float32 NaN bit pattern (FingerprintJS architecture source)
+  function probeCpuArch() {
+    let byte = null;
+    try {
+      const f = new Float32Array(1), u = new Uint8Array(f.buffer);
+      f[0] = Infinity;
+      f[0] = f[0] - f[0];
+      byte = u[3];
+    } catch (e) {}
+    const arch = byte === 255 ? "x86" : byte === 127 ? "arm" : "";
+    R.cpuArch = arch;
+    const ua = navigator.userAgent || "";
+    const claims = [];
+    if (R.hi?.architecture) claims.push(["高熵 Client Hints", /arm/i.test(R.hi.architecture) ? "arm" : /x86/i.test(R.hi.architecture) ? "x86" : ""]);
+    if (/Android|iPhone|iPad|iPod/.test(ua)) claims.push(["移动端 UA", "arm"]);
+    if (/aarch64|armv\d/i.test(ua)) claims.push(["UA", "arm"]);
+    if (/x86_64|Win64; x64|WOW64|i686/i.test(ua) && !/Android/.test(ua)) claims.push(["UA", "x86"]);
+    const conflict = arch ? claims.filter(([, c]) => c && c !== arch && !(c === "x86" && /Windows/.test(ua))) : [];
+    R.cpuArchConflict = conflict.length ? `${conflict[0][0]} 自报 ${conflict[0][1]}，浮点 NaN 位模式实测 ${arch}` : "";
+    const emu = arch === "x86" && /Android|iPhone|iPad/.test(ua);
+    setProbe("cpuarch", arch
+      ? `${arch === "x86" ? "x86 / x86-64" : "ARM / AArch64"} (NaN 高字节 0x${byte.toString(16)})${conflict.length ? ` · 与${conflict[0][0]}矛盾` : ""}${emu ? " · 手机 UA 跑在 x86 上：模拟器 / 云手机特征" : ""}`
+      : "无法判定（非标准浮点实现）",
+    { tone: conflict.length || emu ? "bad" : "neutral" });
+  }
+
+  // (7) CSS system font keywords & system colors → host OS (CreepJS style)
+  function probeSysFont() {
+    try {
+      const el = document.createElement("div");
+      el.style.cssText = "position:absolute;left:-9999px;top:0";
+      document.body.appendChild(el);
+      const fams = {};
+      for (const k of ["caption", "icon", "menu", "message-box", "small-caption", "status-bar"]) {
+        el.style.font = k;
+        const cs = getComputedStyle(el);
+        fams[k] = `${cs.fontFamily} ${cs.fontSize}`;
+      }
+      const cols = [];
+      for (const c of ["Canvas", "CanvasText", "ButtonFace", "ButtonText", "Field", "Highlight", "HighlightText", "LinkText", "GrayText", "AccentColor"]) {
+        el.style.color = c;
+        cols.push(getComputedStyle(el).color);
+      }
+      el.remove();
+      const all = Object.values(fams).join(" | ");
+      const winFam = /Segoe UI|Microsoft YaHei|Tahoma|MS Shell Dlg|Yu Gothic UI|Malgun Gothic|Microsoft JhengHei/i.test(all);
+      const appleFam = /-apple-system|BlinkMacSystemFont|\.AppleSystemUIFont|\.SF NS|SF Pro|San Francisco|Lucida Grande/i.test(all);
+      const linuxFam = /Cantarell|Ubuntu|DejaVu|Liberation|Noto Sans(?! CJK SC)|Droid Sans/i.test(all);
+      const hint = winFam ? "Windows" : appleFam ? "Apple" : linuxFam ? "Linux" : "";
+      const os = R.dev?.os || "";
+      let conflict = "";
+      if (hint === "Windows" && /^(macOS|iOS|iPadOS|Linux|Android)$/.test(os)) conflict = `系统字体关键字解析为 Windows 字体，却自报 ${os}`;
+      else if (hint === "Apple" && /^(Windows|Linux|Android)$/.test(os)) conflict = `系统字体关键字解析为 Apple 字体，却自报 ${os}`;
+      else if (hint === "Linux" && /^(Windows|macOS|iOS|iPadOS)$/.test(os)) conflict = `系统字体关键字解析为 Linux 桌面字体，却自报 ${os}`;
+      R.sysFontConflict = conflict;
+      const caption = (fams.caption || "").split(" ")[0].replace(/"/g, "");
+      shortHashAsync(cols.join("|")).then(h => { R.sysColorHash = h; });
+      setProbe("sysfont", conflict ? conflict : `caption=${caption || "-"} · 推断宿主 ${hint || "未定"} · 系统色 ${cols.length} 项`, {
+        tone: conflict ? "bad" : "neutral",
+        why: `${Object.entries(fams).map(([k, v]) => `${k}: ${v}`).join("\n")}\n系统色: ${cols.join(", ")}`
+      });
+    } catch (e) { setNA("sysfont"); }
+  }
+  async function shortHashAsync(s) { return shortHash(await sha256(s)); }
+
+  // (8) navigator vendor-level property consistency (Akamai / BotD / FingerprintJS vendorFlavors)
+  const VENDOR_FLAVORS = ["chrome", "safari", "__crWeb", "__gCrWeb", "yandex", "__yb", "__ybro", "__firefox__", "__edgeTrackingPreventionStatistics", "webkit", "oprt", "samsungAr", "ucweb", "UCShellJava", "puffinDevice"];
+  function probeNavProps() {
+    const ua = navigator.userAgent || "";
+    const cb = claimedBrowser();
+    const issues = [];
+    const vendor = navigator.vendor;
+    if ((cb === "Chrome" || cb === "Edge" || cb === "Opera") && vendor !== "Google Inc.") issues.push(`vendor="${vendor}" 与 Chromium 系不符`);
+    if ((cb === "Safari" || cb === "iOSWebKit") && vendor !== "Apple Computer, Inc.") issues.push(`vendor="${vendor}" 与 Safari/WebKit 不符`);
+    if (cb === "Firefox" && vendor !== "") issues.push(`Firefox 的 vendor 应为空，实为 "${vendor}"`);
+    const ps = navigator.productSub;
+    if (cb === "Firefox" && ps !== "20100101") issues.push(`productSub=${ps}（Firefox 应为 20100101）`);
+    if (cb && cb !== "Firefox" && ps && ps !== "20030107") issues.push(`productSub=${ps}（Chromium/WebKit 应为 20030107）`);
+    let evalLen = null;
+    try { evalLen = Function.prototype.toString.call(eval).length; } catch (e) {}
+    if (evalLen != null) {
+      if ((cb === "Chrome" || cb === "Edge" || cb === "Opera") && evalLen !== 33) issues.push(`eval.toString 长度 ${evalLen}（V8 为 33）`);
+      if ((cb === "Firefox" || cb === "Safari") && evalLen !== 37) issues.push(`eval.toString 长度 ${evalLen}（SpiderMonkey/JSC 为 37）`);
+    }
+    const av = navigator.appVersion || "";
+    if ((cb === "Chrome" || cb === "Edge" || cb === "Opera" || cb === "Safari") && av && ua.startsWith("Mozilla/") && av !== ua.slice(8)) issues.push("appVersion 与 User-Agent 不同步");
+    if (/Headless/i.test(av)) issues.push("appVersion 含 Headless");
+    if (cb !== "Firefox" && navigator.oscpu !== undefined) issues.push("非 Firefox 却暴露 navigator.oscpu");
+    if (cb !== "Firefox" && navigator.buildID !== undefined) issues.push("非 Firefox 却暴露 navigator.buildID");
+    if (cb === "Firefox" && navigator.oscpu) {
+      const o = navigator.oscpu;
+      const osO = /Windows/.test(o) ? "Windows" : /Mac/.test(o) ? "macOS" : /Linux/.test(o) ? "Linux" : "";
+      const osU = /Windows/.test(ua) ? "Windows" : /Mac OS X/.test(ua) ? "macOS" : /Linux|Android/.test(ua) ? "Linux" : "";
+      if (osO && osU && osO !== osU) issues.push(`oscpu (${o}) 与 UA 系统 (${osU}) 矛盾`);
+    }
+    if ((cb === "Firefox" || cb === "Safari") && navigator.userAgentData) issues.push(`自称 ${cb} 却暴露 Chromium 专有 userAgentData`);
+    try {
+      const brands = (navigator.userAgentData?.brands || []).map(b => b.brand);
+      if (brands.includes("Microsoft Edge") && !/Edg\//.test(ua)) issues.push("userAgentData 为 Edge，UA 却不是 Edge");
+      if (brands.includes("Google Chrome") && /Edg\/|OPR\//.test(ua)) issues.push("userAgentData 为 Google Chrome，UA 却是 Edge/Opera");
+      if (brands.includes("Google Chrome")) {
+        const v = document.createElement("video");
+        if (v.canPlayType && v.canPlayType('video/mp4; codecs="avc1.42E01E"') === "") issues.push("自称 Google Chrome 却不支持 H.264（开源 Chromium / 自动化内置浏览器）");
+      }
+    } catch (e) {}
+    if (cb === "Safari" && /Macintosh|iPhone|iPad/.test(ua) && window.isSecureContext && typeof window.ApplePaySession === "undefined") issues.push("自称 Safari 却缺少 ApplePaySession");
+    const flavors = VENDOR_FLAVORS.filter(k => { try { return k in window; } catch (e) { return false; } });
+    if ((cb === "Chrome" || cb === "Edge") && flavors.includes("safari") && !flavors.includes("chrome")) issues.push("Chromium UA 却只有 Safari 厂商对象");
+    R.navPropIssues = issues;
+    setProbe("navprops", issues.length
+      ? `${issues.length} 处厂商属性矛盾：${issues.slice(0, 3).join(" · ")}${issues.length > 3 ? "…" : ""}`
+      : `vendor="${vendor}" · productSub ${ps || "-"} · eval ${evalLen ?? "-"} · 厂商对象 ${flavors.join("/") || "无"}，与 ${cb || "当前浏览器"} 一致`,
+    { tone: issues.length ? "bad" : "ok", why: issues.join("\n") });
+  }
+
+  // (9) Date().toString() time-zone name language (leaks browser UI / ICU locale independent of navigator.languages)
+  function probeTzName() {
+    let name = "", longName = "";
+    try { name = (/\(([^)]+)\)\s*$/.exec(new Date().toString()) || [])[1] || ""; } catch (e) {}
+    try { longName = new Intl.DateTimeFormat(undefined, { timeZoneName: "long" }).formatToParts(new Date()).find(p => p.type === "timeZoneName")?.value || ""; } catch (e) {}
+    const scriptOf = t => /[\u3040-\u30ff]/.test(t) ? "ja" : /[\uac00-\ud7af]/.test(t) ? "ko" : /[\u4e00-\u9fff]/.test(t) ? "zh" : /[\u0400-\u04ff]/.test(t) ? "ru" : /[\u0600-\u06ff]/.test(t) ? "ar" : /[\u0e00-\u0e7f]/.test(t) ? "th" : "";
+    const sc = scriptOf(name);
+    const prim = (R.langs || navigator.languages || []).map(l => String(l).toLowerCase().split("-")[0]);
+    const leak = sc && !prim.includes(sc) && !(sc === "zh" && prim.includes("ja"));
+    R.tzNameLeak = leak ? `Date 时区名「${name}」暴露 ${({ zh: "中文", ja: "日文", ko: "韩文", ru: "俄文", ar: "阿拉伯文", th: "泰文" })[sc]} 界面，而 navigator.languages 为 ${prim.slice(0, 2).join(",") || "空"}` : "";
+    setProbe("tzname", name ? `${name}${longName && longName !== name ? ` · Intl: ${longName}` : ""}${leak ? " · 界面语言泄露" : ""}` : "未暴露时区名称", { tone: leak ? "warn" : "neutral" });
+  }
+
+  // (10) Sec-CH-UA GREASE brand algorithm (Chromium: seed = major version)
+  function expectedGreaseBrand(major) {
+    const ch = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
+    return { brand: `Not${ch[major % 11]}A${ch[(major + 1) % 11]}Brand`, version: ["8", "99", "24"][major % 3] };
+  }
+  function parseChUa(h) {
+    return [...String(h || "").matchAll(/"([^"]+)"\s*;\s*v="([^"]+)"/g)].map(m => ({ brand: m[1], version: m[2] }));
+  }
+  function checkGrease(list, src) {
+    if (!list.length) return null;
+    const chromium = list.find(b => b.brand === "Chromium") || list.find(b => /Google Chrome|Microsoft Edge|Opera|Brave/.test(b.brand));
+    const major = chromium ? parseInt(chromium.version, 10) : 0;
+    const grease = list.find(b => /Not[^A-Za-z0-9]*A[^A-Za-z0-9]*Brand/i.test(b.brand));
+    if (!major || major < 110) return { src, major, skip: true };
+    const exp = expectedGreaseBrand(major);
+    if (!grease) return { src, major, ok: false, why: `${src} 缺少 GREASE 品牌（应为 "${exp.brand}";v="${exp.version}"）` };
+    const verMaj = String(grease.version).split(".")[0];
+    if (grease.brand !== exp.brand || verMaj !== exp.version) {
+      return { src, major, ok: false, why: `${src} GREASE 为 "${grease.brand}";v="${grease.version}"，Chromium ${major} 应为 "${exp.brand}";v="${exp.version}"` };
+    }
+    // 3 品牌时的固定排列：list=[GREASE, Chromium, 品牌]，shuffled[order[i]] = list[i]，order = ORDERS[major % 6]
+    if (list.length === 3 && chromium.brand === "Chromium") {
+      const third = list.find(b => b !== grease && b.brand !== "Chromium");
+      const ORDERS = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+      const order = ORDERS[major % 6];
+      const expOrder = [];
+      [grease.brand, "Chromium", third?.brand].forEach((b, i) => { expOrder[order[i]] = b; });
+      const got = list.map(b => b.brand);
+      if (third && got.join("|") !== expOrder.join("|")) {
+        return { src, major, ok: false, why: `${src} 品牌顺序 [${got.join(", ")}] 不符合 Chromium ${major} 的固定排列 [${expOrder.join(", ")}]` };
+      }
+    }
+    return { src, major, ok: true, got: `"${grease.brand}";v="${grease.version}"` };
+  }
+  function probeChGrease() {
+    const hdr = R.srv?.headers?.["sec-ch-ua"] || "";
+    const js = (navigator.userAgentData?.brands || []).map(b => ({ brand: b.brand, version: b.version }));
+    if (!hdr && !js.length) { R.greaseIssues = []; return setNA("chgrease", "非 Chromium 浏览器（不发送 Sec-CH-UA）"); }
+    const res = [checkGrease(parseChUa(hdr), "HTTP 头"), checkGrease(js, "JS userAgentData")].filter(Boolean);
+    const bad = res.filter(r => r.ok === false);
+    R.greaseIssues = bad.map(r => r.why);
+    const any = res.find(r => !r.skip);
+    if (!any) return setProbe("chgrease", `Chromium ${res[0]?.major || "?"} 早于 110，跳过 GREASE 算法校验`, { na: true });
+    setProbe("chgrease", bad.length ? `品牌伪造：${bad[0].why}` : `GREASE ${any.got} 与品牌顺序均符合 Chromium ${any.major} 生成算法`, { tone: bad.length ? "bad" : "ok" });
+  }
+
+  // (11) AI / social platform regional availability for the actual per-platform egress
+  const PLATFORM_BLOCKED = {
+    // 官方页面核对于 2026-11-24：help.openai.com supported-countries / anthropic.com/supported-countries / ai.google.dev available-regions
+    OpenAI: ["CN", "HK", "MO", "RU", "BY", "IR", "KP", "CU", "SY", "VE"],
+    Claude: ["CN", "HK", "MO", "RU", "BY", "IR", "KP", "CU", "SY", "VE", "YE", "AF", "MM", "XK", "EH"],
+    Gemini: ["CN", "HK", "MO", "RU", "BY", "IR", "KP", "CU", "AF", "MM"],
+    TikTok: ["CN", "HK", "IN", "IR", "KP", "AF"]
+  };
+  function probeAiGeo() {
+    const ex = R.exits || {};
+    const ccOf = { OpenAI: ex.ex_gpt?.cc || R.ipCC, Claude: ex.ex_claude?.cc || R.ipCC, Gemini: ex.ex_intl?.cc || R.ipCC, TikTok: R.ipCC };
+    const rows = Object.entries(PLATFORM_BLOCKED).map(([p, list]) => {
+      const cc = (ccOf[p] || "").toUpperCase();
+      return { p, cc, blocked: !!cc && list.includes(cc) };
+    });
+    if (!rows.some(r => r.cc)) return setNA("aigeo", "等待出口国家识别");
+    const blocked = rows.filter(r => r.blocked);
+    R.aiGeoBlocked = blocked.map(r => `${r.p}(${r.cc})`);
+    setProbe("aigeo", rows.map(r => `${r.p} ${r.cc ? flagEmoji(r.cc) + r.cc : "?"} ${r.blocked ? "✕" : "✓"}`).join(" · "), {
+      tone: blocked.length ? "bad" : "ok",
+      why: "按各平台实际分流出口国家比对官方不提供服务的地区（参考名单，以官方最新公告为准）。"
+    });
+  }
+
+  // (12) AudioContext base/output latency (FingerprintJS audioBaseLatency)
+  function probeAudioLatency() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return setNA("audiolat");
+      const ac = new AC();
+      const bl = ac.baseLatency, ol = ac.outputLatency, sr = ac.sampleRate;
+      try { ac.close(); } catch (e) {}
+      if (bl == null) return setNA("audiolat", "未暴露 baseLatency");
+      const frames = Math.round(bl * sr);
+      R.audioLatency = { bl, ol, sr, frames };
+      setProbe("audiolat", `baseLatency ${(bl * 1000).toFixed(2)} ms (${frames} 帧 @ ${sr} Hz)${ol ? ` · outputLatency ${(ol * 1000).toFixed(1)} ms` : ""}`);
+    } catch (e) { setNA("audiolat"); }
   }
 
   function initInteractiveProbes() {
@@ -4562,12 +5136,14 @@
       ],
       ua: [
         "请关闭任何改 User-Agent 的插件或开发者工具设备模拟模式，保持 HTTP 请求头、Sec-CH-UA-Platform 与显卡驱动平台三者自然一致。",
-        "冒充手机时，触控点数、主指针精度 (pointer: coarse)、悬停能力、ontouchstart、屏幕短边与 GPU 型号（Adreno / Mali / Apple GPU）必须同时成立；DevTools 设备模拟无法改变桌面显卡型号，需真机或云手机。"
+        "冒充手机时，触控点数、主指针精度 (pointer: coarse)、悬停能力、ontouchstart、屏幕短边与 GPU 型号（Adreno / Mali / Apple GPU）必须同时成立；DevTools 设备模拟无法改变桌面显卡型号，需真机或云手机。",
+        "Sec-CH-UA 的 GREASE 伪品牌由 Chromium 主版本号按固定算法生成（如 Chrome 136 为 \"Not.A/Brand\";v=\"99\"），vendor / productSub / eval.toString 长度 / appVersion 也必须与所报浏览器一致——手工拼接的 Client Hints 或改 UA 插件很难全部对齐，请勿跨浏览器内核伪装。"
       ],
       bot: [
         "当前浏览器暴露了 navigator.webdriver、CDP 调试协议附着或自动化框架注入标记（Selenium / Playwright / Puppeteer）。",
         "CDP 附着检测：只要 DevTools Protocol 的 Runtime 域被启用（开发者工具打开、Puppeteer / Playwright 默认行为），控制台序列化就会触发探针；手动排查时请关闭开发者工具后重测。",
         "无头窗口：outerWidth/outerHeight 为 0 或与视口完全相同属于无头 / Kiosk 特征；合成事件 (isTrusted=false) 则直接证明页面交互由脚本 dispatchEvent 伪造。",
+        "大厂同款清单：BotD / PerimeterX / Akamai / TikTok 会扫描 60 余个框架全局变量（$cdc_、__nightmare、Cypress、%hammerhead%…）、Node / Electron 宿主、ActiveText 纯红与破损图 0×0 等无头渲染特征，以及 stealth 插件留下的 webdriver=undefined、伪造 window.chrome、srcdoc iframe 代理与 Proxy 错误栈——打补丁只会留下更多破绽，建议直接使用真实有界面浏览器。",
         "正常使用请直接双击打开原生浏览器；自动化测试需配合底层 C++ 级补丁或真实无注入隔离环境。"
       ],
       fp: [
@@ -4639,6 +5215,9 @@
       const leakedCountries = sys.cc.map(countryName).join(" / ");
       const srcNames = sys.from.map(k => ({ fonts: "系统字库", voices: "离线语音包", kbd: "物理键盘布局" })[k] || k).join("、");
       out.syslang = { level: "warn", summary: `${srcNames}暴露系统装有 ${leakedCountries} 环境，与 ${ipCountry} 出口不一致` };
+    }
+    if (R.tzNameLeak && out.syslang.level !== "warn") {
+      out.syslang = { level: "warn", summary: R.tzNameLeak };
     }
 
     // 4. dns: Recursive DNS Resolver & EDNS Client Subnet vs Exit IP
@@ -5060,6 +5639,8 @@
       else if (R.engine === "SpiderMonkey" && claimedFf >= 122 && !wf.gc) fpbHits.push(`虚报 Firefox ${claimedFf}，但 WebAssembly GC（Firefox 120+）不可用`);
     }
     if (R.fontLocalOsConflict) fpbHits.push(`本地字体旁路：${R.fontLocalOsConflict}`);
+    if (R.cpuArchConflict) fpbHits.push(`CPU 架构矛盾：${R.cpuArchConflict}`);
+    if (R.sysFontConflict) fpbHits.push(R.sysFontConflict);
     if (R.gpuSoft) fpbHits.push("使用 SwiftShader / Basic Render 软件虚拟显卡");
 
     out.fpb = fpbHits.length
@@ -5079,6 +5660,8 @@
     if ((R.mobileHits || []).length >= 2) {
       uaMismatch.push(`自称移动设备但硬件与输入特征自相矛盾 (${R.mobileHits.slice(0, 3).join(" · ")})，典型 DevTools 设备模拟或改 UA 冒充`);
     }
+    if ((R.greaseIssues || []).length) uaMismatch.push(`Sec-CH-UA 品牌伪造：${R.greaseIssues[0]}`);
+    if ((R.navPropIssues || []).length) uaMismatch.push(`navigator 厂商属性矛盾：${R.navPropIssues.slice(0, 2).join("；")}`);
     out.ua = uaMismatch.length
       ? { level: "bad", summary: uaMismatch.join("；") }
       : { level: "ok", summary: `User-Agent、Client Hints 与硬件平台 (${R.osLabel || "未知"}) 三方一致` };
@@ -5086,7 +5669,11 @@
     // 19. bot: Automation & Headless Browser (WebDriver hooks, CDP attach, headless window frame, synthetic input events)
     const botBad = [...(R.botHits || [])];
     if ((R.inputUntrusted || 0) > 0) botBad.push(`${R.inputUntrusted} 个 isTrusted=false 合成输入事件`);
+    if (R.inputCdpCoord) botBad.push(`${R.inputCdpCoord} 个鼠标事件坐标呈 CDP 派发特征`);
+    if ((R.stealthHits || []).length) botBad.push(`隐身补丁残留 ${R.stealthHits.length} 处（${R.stealthHits[0]}）`);
+    if ((R.jsEnvBad || []).length) botBad.push(`非浏览器宿主 ${R.jsEnvBad.join("/")}`);
     const botWarn = [];
+    if ((R.headlessSoft || []).length && !(R.headlessHits || []).length) botWarn.push(`无头弱信号：${R.headlessSoft[0]}`);
     if (R.cdpHit) botWarn.push("CDP Runtime 调试协议已附着（开发者工具打开或被 Puppeteer / Playwright 控制）");
     if (R.winHeadless) botWarn.push("无头窗口尺寸特征（浏览器外框为 0 或窗口大于屏幕）");
     if (R.inputStraight != null && R.inputStraight >= 0.9) botWarn.push(`鼠标轨迹 ${Math.round(R.inputStraight * 100)}% 为机械直线`);
@@ -5234,6 +5821,7 @@
         return { single: "多出口网段分流" };
       }
       case "conn":
+        if (/代理转发头/.test(res?.summary || "")) return { single: "中间层注入代理头" };
         return (tcp && tcpHuman && tcpHuman.toLowerCase() !== uaOs.toLowerCase() && !(/^(iOS|iPadOS)$/.test(uaOs) && tcpHuman === "macOS"))
           ? { left: uaOs, op: "≠", right: `${tcpHuman} SYN` }
           : tcp?.mtu && tcp.mtu < 1480
@@ -5241,17 +5829,25 @@
           : { single: "TLS 握手异常" };
       case "synspoof":
         return { single: tcp?.synSpoofSuspect ? "TSval 时钟突变" : (isMuxTunnelSuspect(R.muxBurst) ? "Mux 粘包合并" : "DF 包头矛盾") };
-      case "reality":
-        return R.intel?.tls443?.realitySuspect
-          ? { left: R.asn || "非官方ASN", op: "≠", right: `${R.intel.tls443.realityBrand || "大厂"}证书` }
-          : { single: ":443 开放监听" };
-      case "rtt":
+      case "reality": {
+        if (R.intel?.tls443?.realitySuspect) {
+          return { left: R.asn || "非官方ASN", op: "≠", right: `${R.intel.tls443.realityBrand || "大厂"}证书` };
+        }
+        const openSvc = (R.intel?.ports?.open || []).filter(o => o.kind !== "web").map(o => `${o.port}/${o.svc}`);
+        return openSvc.length ? { single: `开放 ${openSvc.slice(0, 2).join(" ")}` } : { single: ":443 开放监听" };
+      }
+      case "rtt": {
+        const gv = analyzeRttGeo()?.violation;
+        if (gv && /光速违例/.test(res?.summary || "")) {
+          return { left: `${gv.name} ${gv.ms}ms`, op: "<", right: `光速下限 ${gv.floorMs}ms` };
+        }
         if (R.stunRttMs != null && R.httpRtt != null && (R.httpRtt - R.stunRttMs) >= 75) {
           return { left: `TCP ${R.httpRtt}ms`, op: "≫", right: `UDP ${R.stunRttMs}ms` };
         }
         return R.srvTcpRtt != null
           ? { left: `HTTP ${R.httpRtt}ms`, op: "≫", right: `握手 ${R.srvTcpRtt}ms` }
           : { single: `RTT ${R.httpRtt ?? "--"}ms 偏高` };
+      }
       case "webrtc": {
         if (R.v6mac) return { single: "IPv6 暴露 MAC" };
         const lk = getLeakedWebrtcIps();
@@ -5281,9 +5877,11 @@
         }
         return { single: "内核/平台矛盾" };
       case "ua":
-        return { left: "ClientHints", op: "≠", right: uaOs };
+        return (R.mobileHits || []).length >= 2 ? { single: "移动端仿真矛盾" } : { left: "ClientHints", op: "≠", right: uaOs };
       case "bot":
-        return { single: "暴露自动化特征" };
+        return res?.level === "warn"
+          ? { single: R.cdpHit ? "CDP 调试附着" : R.winHeadless ? "无头窗口尺寸" : "机械轨迹" }
+          : { single: (R.inputUntrusted || 0) > 0 && !(R.botHits || []).length ? "合成输入事件" : "暴露自动化特征" };
       case "fp":
         return R.etag?.seen
           ? { left: "清空存储", op: "≠", right: "ETag 命中" }
@@ -5380,7 +5978,10 @@
       if (isCore) {
         // Float bad & warn anomalies directly to top of grid!
         row.style.order = String((active ? st.orderBase : 80) + idx);
-        row.className = `ck-card rounded-xl border border-zinc-200/80 border-l-[3px] ${st.borderLeft} bg-white px-4 py-3 transition dark:bg-[#151820] dark:border-white/[0.07] ${isCore && !active ? "opacity-50" : ""}`;
+        row.dataset.level = res.level;
+        row.className = ckCardClass(res.level, active);
+        const titleEl = $(".ck-title", row);
+        if (titleEl) titleEl.className = ckTitleClass(res.level);
       }
 
       const isIssue = res.level === "bad" || res.level === "warn";
@@ -5407,16 +6008,13 @@
         val.textContent = res.summary;
         val.title = res.summary;
         val.className = isCore
-          ? "ck-val maskable mt-1 text-xs leading-relaxed " + (
-              res.level === "bad" ? "text-rose-800 dark:text-rose-200/90 line-clamp-2"
-                : res.level === "warn" ? "text-amber-900 dark:text-amber-200/90 line-clamp-2"
-                : "text-zinc-500 dark:text-zinc-400 truncate"
-            )
+          ? ckValClass(res.level, row.dataset.open === "1")
           : "ck-val maskable text-[11.5px] text-zinc-500 dark:text-zinc-400 line-clamp-2 leading-snug";
       }
 
       const btnHow = $(".ck-howto", row);
-      if (btnHow && isCore) btnHow.textContent = isIssue ? "改法 ▾" : "原理";
+      const howLbl = btnHow && $(".ck-howto-label", btnHow);
+      if (howLbl && isCore) howLbl.textContent = isIssue ? "改法" : "原理";
 
       const btnRe = $(".ck-retest", row);
       if (btnRe) btnRe.hidden = !(R.finished && RETESTABLE.has(id));
@@ -5432,6 +6030,10 @@
         `).join("");
       }
     }
+
+    const fIssues = $('#checkFilterBar [data-ckfilter="issues"]'), fOk = $('#checkFilterBar [data-ckfilter="ok"]');
+    if (fIssues) fIssues.textContent = R.finished || badCnt + warnCnt ? `仅看异常 ${badCnt + warnCnt}` : "仅看异常";
+    if (fOk) fOk.textContent = R.finished || okCnt ? `已通过 ${okCnt}` : "已通过";
 
     $("#sceneBadge").textContent = currentScene === "privacy" ? "防追踪视角" : "伪装自检";
 
@@ -5668,7 +6270,7 @@
       };
     };
 
-    const aiBlockedCC = ["CN", "HK", "MO", "RU", "BY", "IR", "KP", "CU", "SY"].includes(cc);
+    const aiBlockedCC = ["CN", "HK", "MO", "RU", "BY", "IR", "KP", "CU", "SY", "VE"].includes(cc);
     const aiSplitLeak = !isExt && (["CN", "HK", "MO"].includes(R.exits?.ex_gpt?.cc || "") || ["CN", "HK", "MO"].includes(R.exits?.ex_claude?.cc || ""));
 
     return {
@@ -5691,6 +6293,7 @@
         [ck.tz?.level === "bad" || ck.split?.level === "bad", 16, "时区/国内分流破绽影响 TikTok 推荐池定位"]
       ]),
       social: mk(97, [
+        [PLATFORM_BLOCKED.TikTok.includes(cc), 55, `${cc} 不在 TikTok 服务地区，注册即被地区拦截`],
         [isHosting, 32, "机房 IP 注册 X / Reddit / IG 极易秒冻或强制短信验证"],
         [maxAnon >= 0.4 || realityHit, 24, "共享代理或 Reality 节点易触发批量关联风控"],
         [blCnt > 0 || cidrHits > 0 || sfsHit, 22, "存在垃圾注册或黑名单不良历史"],
@@ -6080,10 +6683,10 @@
           : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
         return `
           <button type="button" data-from="${esc(t.probes)}" class="text-left rounded-xl ring-1 ring-zinc-950/[0.06] bg-zinc-50/80 hover:bg-zinc-100/80 p-3 transition flex flex-col justify-between gap-1.5 dark:bg-white/[0.025] dark:ring-white/[0.07] dark:hover:bg-white/[0.05]">
-            <div class="flex items-center justify-between gap-1.5 w-full">
+            <div class="flex flex-wrap items-center justify-between gap-x-1.5 gap-y-1 w-full">
               <span class="inline-flex items-center gap-1.5 min-w-0">
                 <span class="inline-flex size-5 shrink-0 items-center justify-center rounded-md ${iconBoxCls}">${t.icon}</span>
-                <span class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 truncate">${esc(t.label)}</span>
+                <span class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">${esc(t.label)}</span>
               </span>
               <span class="py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 ${pillCls}">${esc(t.status)}</span>
             </div>
@@ -6278,12 +6881,31 @@
   }
 
   function bindEvents() {
-    // Workspace Tab Switcher
+    // Workspace Tab Switcher (click + roving ←/→ keyboard per WAI-ARIA tabs pattern)
     $("#workspaceTabs")?.addEventListener("click", e => {
       const btn = e.target.closest("[data-wstab]");
       if (!btn || btn.dataset.wstab === activeWorkspaceTab) return;
       switchWorkspaceTab(btn.dataset.wstab);
     });
+    $("#workspaceTabs")?.addEventListener("keydown", e => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+      const tabs = $$("#workspaceTabs [data-wstab]");
+      const cur = tabs.findIndex(t => t.dataset.wstab === activeWorkspaceTab);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (cur + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      e.preventDefault();
+      switchWorkspaceTab(tabs[next].dataset.wstab);
+      tabs[next].focus();
+    });
+
+    // Sticky workspace tab bar offset = live sticky header height (header only sticks on ≥ sm)
+    const hdr = $("header.top-chrome");
+    const syncHdrH = () => {
+      const h = hdr && window.matchMedia("(min-width: 640px)").matches ? hdr.offsetHeight : 0;
+      document.documentElement.style.setProperty("--hdr-h", `${h}px`);
+    };
+    syncHdrH();
+    window.addEventListener("resize", syncHdrH, { passive: true });
+    if (hdr && typeof ResizeObserver === "function") new ResizeObserver(syncHdrH).observe(hdr);
 
     // Arbitrary Public IP Reputation Inspector (#ipQueryForm / #extIpBanner)
     $("#ipQueryForm")?.addEventListener("submit", e => {
@@ -6373,13 +6995,12 @@
     $("#priorityList")?.addEventListener("click", e => {
       const btn = e.target.closest("[data-jumpck]");
       if (!btn) return;
-      switchWorkspaceTab("checks");
+      switchWorkspaceTab("checks", { keepScroll: true });
       const row = CHECK_EL[btn.dataset.jumpck];
       if (!row) return;
       row.hidden = false;
-      const dr = $(".ck-drawer", row);
-      if (dr) dr.hidden = false;
-      row.scrollIntoView({ behavior: "smooth", block: "center" });
+      setCheckDrawer(row, true);
+      row.scrollIntoView({ behavior: mq("(prefers-reduced-motion: reduce)") ? "auto" : "smooth", block: "center" });
     });
 
     // Check drawers & Single-Check Retest ("重测")
@@ -6406,7 +7027,7 @@
       if (howBtn) {
         const row = CHECK_EL[howBtn.dataset.howto];
         const dr = row && $(".ck-drawer", row);
-        if (dr) dr.hidden = !dr.hidden;
+        if (dr) setCheckDrawer(row, dr.hidden);
         return;
       }
       const reBtn = e.target.closest("[data-retest]");
@@ -6414,8 +7035,9 @@
         const id = reBtn.dataset.retest;
         const fns = RETEST_RUNNERS[id] || [];
         if (!fns.length) return;
+        const lbl = $(".ck-retest-label", reBtn) || reBtn;
         reBtn.disabled = true;
-        reBtn.textContent = "重测中…";
+        lbl.textContent = "重测中…";
         for (const fn of fns) { try { await fn(); } catch (err) {} }
         if (id === "webrtc" || id === "split") {
           try { await reconcileCandidateIpMeta(); } catch (err) {}
@@ -6424,9 +7046,16 @@
         renderPortrait();
         renderTargetSimulator();
         reBtn.disabled = false;
-        reBtn.textContent = "重测";
+        lbl.textContent = "重测";
         showToast(`已重测「${CORE_CHECKS.find(c => c[0] === id)?.[1] || id}」`);
+        return;
       }
+      // 点击核心卡片空白处展开 / 收起改法（抽屉内部与文本选择不触发）
+      const card = e.target.closest('.ck-card[data-proto="0"]');
+      if (!card || e.target.closest(".ck-drawer, a, button")) return;
+      if (String(window.getSelection?.() || "").trim()) return;
+      const dr = $(".ck-drawer", card);
+      if (dr) setCheckDrawer(card, dr.hidden);
     };
     $("#coreChecksList")?.addEventListener("click", onCheckContainerClick);
     $("#protoChecksList")?.addEventListener("click", onCheckContainerClick);
@@ -6528,7 +7157,7 @@
       if (R.isSharedView) {
         const shareUrl = location.href;
         const lines = [
-          `【WhoProbe v7.4 · 公开脱敏体检快照 #${R.shareId || "-"}】`,
+          `【WhoProbe v7.5 · 公开脱敏体检快照 #${R.shareId || "-"}】`,
           `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
           `脱敏链接: ${shareUrl}`,
           ``,
@@ -6546,7 +7175,7 @@
       const masked = document.body.classList.contains("is-masked");
       const pur = R.intel?.purity;
       const lines = [
-        `【WhoProbe v7.4 · 162项全栈指纹与出口信誉体检报告】`,
+        `【WhoProbe v7.5 · 174项全栈指纹与出口信誉体检报告】`,
         `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
         `出口纯净度: ${pur ? `${pur.score}/100 (${pur.grade} 级)` : "--"} · 脏邻居: ${R.intel?.cidr?.neighbours?.dirtyCount ?? 0} 个`,
         `推断设备: ${R.osLabel || "-"} · ${R.browserLabel || "-"} · 屏幕 ${R.physScreen || "-"} @ ${R.hz || 60}Hz`,
@@ -6587,7 +7216,7 @@
           ? Object.fromEntries(Object.entries(R.values || {}).map(([k, v]) => [k, SNIFFER_MAP[k]?.mask ? "[MASKED]" : v]))
           : R.values
       };
-      copyText(JSON.stringify(payload, null, 2), "已复制 162 项完整 JSON 数据");
+      copyText(JSON.stringify(payload, null, 2), "已复制 174 项完整 JSON 数据");
     });
 
     $("#btnCopyUrl")?.addEventListener("click", () => copyText(location.href, "已复制页面链接"));
@@ -6617,7 +7246,7 @@
       if (val) copyText(val, "已复制 Markdown 签名徽章代码");
     });
 
-    // Rerun all 162 probes (or navigate to live self-test if viewing a shared snapshot)
+    // Rerun all 174 probes (or navigate to live self-test if viewing a shared snapshot)
     $("#btnRerun")?.addEventListener("click", () => {
       if (R.isSharedView) {
         location.href = "./";
@@ -6814,7 +7443,7 @@
 
   async function openOrCreateShareModal() {
     if (!R.finished) {
-      showToast("请等待 162 项探针确认完成后再生成分享链接");
+      showToast("请等待 174 项探针确认完成后再生成分享链接");
       return;
     }
     if (R.shareResult) {
@@ -7070,10 +7699,10 @@
           : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
         return `
           <div class="rounded-xl ring-1 ring-zinc-950/[0.06] bg-zinc-50/80 p-3 flex flex-col justify-between gap-1.5 dark:bg-white/[0.025] dark:ring-white/[0.07]">
-            <div class="flex items-center justify-between gap-1.5 w-full">
+            <div class="flex flex-wrap items-center justify-between gap-x-1.5 gap-y-1 w-full">
               <span class="inline-flex items-center gap-1.5 min-w-0">
                 <span class="inline-flex size-5 shrink-0 items-center justify-center rounded-md ${iconBoxCls}">${TILE_ICONS[t.icon] || TILE_ICONS.shield}</span>
-                <span class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 truncate">${esc(t.label)}</span>
+                <span class="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">${esc(t.label)}</span>
               </span>
               <span class="py-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 ${pillCls}">${esc(t.status)}</span>
             </div>
@@ -7166,7 +7795,9 @@
       if (!row) continue;
       if (isCore) {
         row.style.order = String((active ? st.orderBase : 80) + idx);
-        row.className = `ck-card rounded-xl border border-zinc-200/80 border-l-[3px] ${st.borderLeft} bg-white px-4 py-3 transition dark:bg-[#151820] dark:border-white/[0.07] ${!active ? "opacity-50" : ""}`;
+        row.dataset.level = item.level;
+        row.className = ckCardClass(item.level, active);
+        if ($(".ck-title", row)) $(".ck-title", row).className = ckTitleClass(item.level);
       }
       if ($(".ck-badge", row)) {
         $(".ck-badge", row).className = isCore
@@ -7181,11 +7812,12 @@
       if ($(".ck-val", row)) {
         $(".ck-val", row).textContent = item.summary || "–";
         $(".ck-val", row).className = isCore
-          ? "ck-val mt-1 text-xs leading-relaxed " + (item.level === "bad" ? "text-rose-800 dark:text-rose-200/90 line-clamp-2" : item.level === "warn" ? "text-amber-900 dark:text-amber-200/90 line-clamp-2" : "text-zinc-500 dark:text-zinc-400 truncate")
+          ? ckValClass(item.level, row.dataset.open === "1")
           : "ck-val text-[11.5px] text-zinc-500 dark:text-zinc-400 line-clamp-2 leading-snug";
       }
       const isIssue = item.level === "bad" || item.level === "warn";
-      if ($(".ck-howto", row) && isCore) $(".ck-howto", row).textContent = isIssue ? "改法 ▾" : "原理";
+      const howLbl = $(".ck-howto-label", row);
+      if (howLbl && isCore) howLbl.textContent = isIssue ? "改法" : "原理";
       if ($(".ck-retest", row)) $(".ck-retest", row).hidden = true;
       if ($(".ck-drawer", row)) {
         const steps = getFixSteps(id);
@@ -7355,11 +7987,15 @@
     resetInputLog();
     probeLocale();
     probeTzDst();
+    probeTzName();
     probeDeviceAndSpecs();
     probeNavAndPrefs();
     probeLiesAndIframe();
     probeWinChrome();
     probeMqScreen();
+    probeAutoKeys();
+    probeJsEnv();
+    probeNavProps();
     initInteractiveProbes();
 
     // Phase 2: Fonts, Graphics, Canvas & High-Entropy Hints (needed for composite IDs & portrait)
@@ -7372,6 +8008,10 @@
     await probeHighEntropyHints();
     probeMobileConsistency();
     probeWasmFeatures();
+    probeCpuArch();
+    probeSysFont();
+    probeStealth();
+    probeAudioLatency();
 
     // Render early partial portrait & checks while network probes finish
     if (seq !== runSeq) return;
@@ -7446,6 +8086,10 @@
     probeClockSrc();
     refreshRttGeoProbe();
     probeInputTrust();
+    await probeHeadless();
+    probeChGrease();
+    probeAiGeo();
+    probeFocus();
     await probeCompositeIds();
 
     R.finished = true;

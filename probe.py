@@ -1481,7 +1481,7 @@ def run_self_test() -> None:
 
 def main() -> None:
     global SNIFFER, ENABLE_ACTIVE_443
-    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.4)")
+    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.5)")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8899, help="监听端口 (默认 8899)")
     parser.add_argument("--sniff-iface", default="", help="可选 Linux 网卡名(如 ens5)，开启旁路 TCP SYN/JA4 抓包")

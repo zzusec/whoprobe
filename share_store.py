@@ -463,7 +463,7 @@ def render_share_svg(share_id: str, created_at: int, report: dict) -> bytes:
     <text x="161" y="22" fill="#6EE7B7" font-size="15" font-weight="700" text-anchor="middle" font-family="{font_mono}">{ok_cnt}</text>
     <text x="161" y="38" fill="#34D399" font-size="10" font-weight="600" text-anchor="middle">通过</text>
   </g>
-  <text x="137" y="330" fill="#64748B" font-size="10.5" text-anchor="middle" font-family="{font_sans}">162 项无感探针全量核验</text>
+  <text x="137" y="330" fill="#64748B" font-size="10.5" text-anchor="middle" font-family="{font_sans}">174 项无感探针全量核验</text>
 
   <!-- Top-Right Verdict & Telemetry Card -->
   <rect x="262" y="64" width="472" height="128" rx="16" fill="#121722" stroke="#1E2634"/>
@@ -510,7 +510,7 @@ def inject_html_for_route(
         grade = rep.get("grade", "-")
         topo = rep.get("topo") if isinstance(rep.get("topo"), dict) else {}
         region = topo.get("exitRegion") or "脱敏出口"
-        verdict = (rep.get("verdict") or {}).get("text") or rep.get("summary") or "162 项全栈风控与指纹体检"
+        verdict = (rep.get("verdict") or {}).get("text") or rep.get("summary") or "174 项全栈风控与指纹体检"
         og_title = f"WhoProbe 体检评分 {score}/100 ({grade} 级) · {region}"
         og_desc = f"{verdict}（真实 IP 已隐私抹除，点击查看完整脱敏报告或自测）"
         page_url = f"{origin_prefix}/r/{sid}" if origin_prefix else f"/r/{sid}"

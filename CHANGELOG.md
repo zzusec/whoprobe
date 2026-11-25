@@ -1,5 +1,31 @@
 # Changelog
 
+## [v7.5.0] - 2026-11-25
+
+### Added — 对标大厂风控 SDK 与开源检测项目的 12 项新探针（162 → 174 项）
+参考 TikTok webmssdk、Akamai Bot Manager sensor_data、PerimeterX/HUMAN、DataDome、Cloudflare 挑战脚本，以及 GitHub 开源 `fingerprintjs/BotD`、`fingerprintjs`（sources）、`abrahamjuliot/CreepJS`、bot.sannysoft.com、`rebrowser-bot-detector`、`kaliiiiiiiiii/brotector` 的检测清单：
+- **自动化 / 爬虫框架全局标记全量扫描 (`autokeys`)**：Selenium / ChromeDriver `$cdc_` 正则 / Watir / PhantomJS / Phantomas / Nightmare / Cypress / TestCafe / WebdriverIO / Playwright / Puppeteer `exposeFunction` 绑定 / CEF / CefSharp / Awesomium / FMiner / Geb / Spynner / Sequentum 等 59 个标记。
+- **宿主运行时 (`jsenv`)**：Node `process`/`Buffer`/`require`、Electron、NW.js、jsdom，以及 WKWebView / React Native / Flutter / 微信 JSBridge 应用内容器。
+- **无头浏览器渲染特征 (`headless`)**：HeadlessChrome 品牌、破损图片 0×0、PDF 查看器与 plugins 矛盾、`connection.rtt=0`、语音引擎为空、800×600 / 1280×720 默认视口、软件 GPU。
+- **隐身补丁残留 (`stealth`)**：`navigator.webdriver` 被删成 `undefined`、`window.chrome` 事后注入 / `loadTimes`·`csi` 伪造、srcdoc iframe 代理回主窗口、原生 getter 非法调用错误栈中的 Proxy / 扩展帧、伪造 PluginArray。
+- **页面焦点与用户激活 (`focus`)**：`document.hasFocus()`、`visibilityState`、`navigator.userActivation`。
+- **浮点 NaN 位模式 CPU 架构 (`cpuarch`)**：x86 0xFF / ARM 0x7F，对照 Client Hints / UA，识破手机 UA 跑在 x86 模拟器 / 云手机。
+- **CSS 系统字体关键字与系统色 (`sysfont`)**：`font: caption/menu/...` 解析出的宿主系统字体反证伪装系统。
+- **navigator 厂商属性一致性 (`navprops`)**：vendor / productSub / `eval.toString` 长度 / appVersion / oscpu / buildID / userAgentData / H.264（开源 Chromium 冒充 Google Chrome）/ ApplePaySession / 15 种 vendorFlavors。
+- **Date 时区名称语言 (`tzname`)**：`Date().toString()` 时区名暴露浏览器界面语言，与 `navigator.languages` 不一致时计入「系统底层语种」。
+- **Sec-CH-UA GREASE 品牌算法校验 (`chgrease`)**：按 Chromium「主版本号为种子」算法复算 `Not?A?Brand` 与版本（8/99/24），比对 HTTP 头与 JS。
+- **AI / 社媒平台地区准入 (`aigeo`)**：按 ChatGPT / Claude 实际分流出口比对 OpenAI / Anthropic / Gemini / TikTok 不服务地区；TikTok 受限地区同时计入「社媒注册」场景。
+- **AudioContext 基础延迟指纹 (`audiolat`)**。
+
+### Changed — 交互与视觉
+- 体检卡片：异常项摘要改为中性正文色（严重度只由左侧色条、图标与差异标签表达），通过项改为紧凑浅色卡片，异常一眼可见；点击卡片空白处即可展开 / 收起改法，展开后摘要不再截断；「重测」「改法 / 原理」改为轻量图标按钮并带展开箭头与 `aria-expanded`。
+- 手机端：卡片操作按钮移到摘要下方，标题与摘要获得整行宽度；场景卡片与六维速览标题不再被截断。
+- 诊断标签栏吸顶（自动避让桌面端吸顶页眉高度），手机端三等分短标签；切换标签时自动回到面板顶部；支持 ←/→/Home/End 键盘切换（WAI-ARIA Tabs）。
+- 「仅看异常 / 已通过」筛选按钮显示实时数量；差异标签同步显示光速违例、代理端口、代理转发头、CDP 附着等新结论。
+- `bot` / `ua` / `fpb` / `syslang` 核验融合上述新信号。
+
+---
+
 ## [v7.4.0] - 2026-11-25
 
 ### Added — 14 项新检测手段（148 → 162 项探针）

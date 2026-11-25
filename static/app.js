@@ -1,4 +1,4 @@
-/* WhoProbe v7.3.3 — 148-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
+/* WhoProbe v7.4.0 — 162-Probe L3–L7 Forensic, Active :443 Reality & BGP Egress Intelligence Engine */
 (function () {
   "use strict";
 
@@ -39,6 +39,32 @@
     history: "whoprobe:hist",
     traceTag: "whoprobe:tag"
   };
+
+  /* ---------- Passive input-event trust recorder (armed at script load, summarized at the end of each scan) ---------- */
+  const INPUT_LOG = { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, pts: [] };
+  function resetInputLog() {
+    Object.assign(INPUT_LOG, { moves: 0, untrusted: 0, keys: 0, clicks: 0, touches: 0, wheels: 0, zeroMove: 0, pts: [] });
+  }
+  (function armInputRecorder() {
+    const opt = { capture: true, passive: true };
+    const rec = e => {
+      if (e.isTrusted === false) INPUT_LOG.untrusted++;
+      switch (e.type) {
+        case "mousemove": {
+          INPUT_LOG.moves++;
+          const last = INPUT_LOG.pts[INPUT_LOG.pts.length - 1];
+          if (last && (last.x !== e.clientX || last.y !== e.clientY) && e.movementX === 0 && e.movementY === 0) INPUT_LOG.zeroMove++;
+          if (INPUT_LOG.pts.length < 800) INPUT_LOG.pts.push({ x: e.clientX, y: e.clientY });
+          break;
+        }
+        case "keydown": INPUT_LOG.keys++; break;
+        case "mousedown": INPUT_LOG.clicks++; break;
+        case "touchstart": INPUT_LOG.touches++; break;
+        case "wheel": INPUT_LOG.wheels++; break;
+      }
+    };
+    try { ["mousemove", "keydown", "mousedown", "touchstart", "wheel"].forEach(t => window.addEventListener(t, rec, opt)); } catch (e) {}
+  })();
 
   /* ---------- Complete IANA Timezone -> ISO Country Map ---------- */
   const TZ_CC = {"Africa/Abidjan":"CI","Africa/Accra":"GH","Africa/Addis_Ababa":"ET","Africa/Algiers":"DZ","Africa/Asmara":"ER","Africa/Asmera":"ER","Africa/Bamako":"ML","Africa/Bangui":"CF","Africa/Banjul":"GM","Africa/Bissau":"GW","Africa/Blantyre":"MW","Africa/Brazzaville":"CG","Africa/Bujumbura":"BI","Africa/Cairo":"EG","Africa/Casablanca":"MA","Africa/Ceuta":"ES","Africa/Conakry":"GN","Africa/Dakar":"SN","Africa/Dar_es_Salaam":"TZ","Africa/Djibouti":"DJ","Africa/Douala":"CM","Africa/El_Aaiun":"EH","Africa/Freetown":"SL","Africa/Gaborone":"BW","Africa/Harare":"ZW","Africa/Johannesburg":"ZA","Africa/Juba":"SS","Africa/Kampala":"UG","Africa/Khartoum":"SD","Africa/Kigali":"RW","Africa/Kinshasa":"CD","Africa/Lagos":"NG","Africa/Libreville":"GA","Africa/Lome":"TG","Africa/Luanda":"AO","Africa/Lubumbashi":"CD","Africa/Lusaka":"ZM","Africa/Malabo":"GQ","Africa/Maputo":"MZ","Africa/Maseru":"LS","Africa/Mbabane":"SZ","Africa/Mogadishu":"SO","Africa/Monrovia":"LR","Africa/Nairobi":"KE","Africa/Ndjamena":"TD","Africa/Niamey":"NE","Africa/Nouakchott":"MR","Africa/Ouagadougou":"BF","Africa/Porto-Novo":"BJ","Africa/Sao_Tome":"ST","Africa/Tripoli":"LY","Africa/Tunis":"TN","Africa/Windhoek":"NA","America/Adak":"US","America/Anchorage":"US","America/Anguilla":"AI","America/Antigua":"AG","America/Araguaina":"BR","America/Argentina/Buenos_Aires":"AR","America/Argentina/Catamarca":"AR","America/Argentina/Cordoba":"AR","America/Argentina/Jujuy":"AR","America/Argentina/La_Rioja":"AR","America/Argentina/Mendoza":"AR","America/Argentina/Rio_Gallegos":"AR","America/Argentina/Salta":"AR","America/Argentina/San_Juan":"AR","America/Argentina/San_Luis":"AR","America/Argentina/Tucuman":"AR","America/Argentina/Ushuaia":"AR","America/Aruba":"AW","America/Asuncion":"PY","America/Atikokan":"CA","America/Bahia":"BR","America/Bahia_Banderas":"MX","America/Barbados":"BB","America/Belem":"BR","America/Belize":"BZ","America/Blanc-Sablon":"CA","America/Boa_Vista":"BR","America/Bogota":"CO","America/Boise":"US","America/Buenos_Aires":"AR","America/Cambridge_Bay":"CA","America/Campo_Grande":"BR","America/Cancun":"MX","America/Caracas":"VE","America/Catamarca":"AR","America/Cayenne":"GF","America/Cayman":"KY","America/Chicago":"US","America/Chihuahua":"MX","America/Ciudad_Juarez":"MX","America/Coral_Harbour":"CA","America/Cordoba":"AR","America/Costa_Rica":"CR","America/Coyhaique":"CL","America/Creston":"CA","America/Cuiaba":"BR","America/Curacao":"CW","America/Danmarkshavn":"GL","America/Dawson":"CA","America/Dawson_Creek":"CA","America/Denver":"US","America/Detroit":"US","America/Dominica":"DM","America/Edmonton":"CA","America/Eirunepe":"BR","America/El_Salvador":"SV","America/Fort_Nelson":"CA","America/Fortaleza":"BR","America/Glace_Bay":"CA","America/Godthab":"GL","America/Goose_Bay":"CA","America/Grand_Turk":"TC","America/Grenada":"GD","America/Guadeloupe":"GP","America/Guatemala":"GT","America/Guayaquil":"EC","America/Guyana":"GY","America/Halifax":"CA","America/Havana":"CU","America/Hermosillo":"MX","America/Indiana/Indianapolis":"US","America/Indiana/Knox":"US","America/Indiana/Marengo":"US","America/Indiana/Petersburg":"US","America/Indiana/Tell_City":"US","America/Indiana/Vevay":"US","America/Indiana/Vincennes":"US","America/Indiana/Winamac":"US","America/Indianapolis":"US","America/Inuvik":"CA","America/Iqaluit":"CA","America/Jamaica":"JM","America/Jujuy":"AR","America/Juneau":"US","America/Kentucky/Louisville":"US","America/Kentucky/Monticello":"US","America/Kralendijk":"BQ","America/La_Paz":"BO","America/Lima":"PE","America/Los_Angeles":"US","America/Louisville":"US","America/Lower_Princes":"SX","America/Maceio":"BR","America/Managua":"NI","America/Manaus":"BR","America/Marigot":"MF","America/Martinique":"MQ","America/Matamoros":"MX","America/Mazatlan":"MX","America/Mendoza":"AR","America/Menominee":"US","America/Merida":"MX","America/Metlakatla":"US","America/Mexico_City":"MX","America/Miquelon":"PM","America/Moncton":"CA","America/Monterrey":"MX","America/Montevideo":"UY","America/Montreal":"CA","America/Montserrat":"MS","America/Nassau":"BS","America/New_York":"US","America/Nome":"US","America/Noronha":"BR","America/North_Dakota/Beulah":"US","America/North_Dakota/Center":"US","America/North_Dakota/New_Salem":"US","America/Nuuk":"GL","America/Ojinaga":"MX","America/Panama":"PA","America/Paramaribo":"SR","America/Phoenix":"US","America/Port_of_Spain":"TT","America/Port-au-Prince":"HT","America/Porto_Velho":"BR","America/Puerto_Rico":"PR","America/Punta_Arenas":"CL","America/Rankin_Inlet":"CA","America/Recife":"BR","America/Regina":"CA","America/Resolute":"CA","America/Rio_Branco":"BR","America/Santarem":"BR","America/Santiago":"CL","America/Santo_Domingo":"DO","America/Sao_Paulo":"BR","America/Scoresbysund":"GL","America/Sitka":"US","America/St_Barthelemy":"BL","America/St_Johns":"CA","America/St_Kitts":"KN","America/St_Lucia":"LC","America/St_Thomas":"VI","America/St_Vincent":"VC","America/Swift_Current":"CA","America/Tegucigalpa":"HN","America/Thule":"GL","America/Tijuana":"MX","America/Toronto":"CA","America/Tortola":"VG","America/Vancouver":"CA","America/Whitehorse":"CA","America/Winnipeg":"CA","America/Yakutat":"US","Antarctica/Casey":"AQ","Antarctica/Davis":"AQ","Antarctica/DumontDUrville":"AQ","Antarctica/Macquarie":"AU","Antarctica/Mawson":"AQ","Antarctica/McMurdo":"AQ","Antarctica/Palmer":"AQ","Antarctica/Rothera":"AQ","Antarctica/Syowa":"AQ","Antarctica/Troll":"AQ","Antarctica/Vostok":"AQ","Arctic/Longyearbyen":"SJ","Asia/Aden":"YE","Asia/Almaty":"KZ","Asia/Amman":"JO","Asia/Anadyr":"RU","Asia/Aqtau":"KZ","Asia/Aqtobe":"KZ","Asia/Ashgabat":"TM","Asia/Atyrau":"KZ","Asia/Baghdad":"IQ","Asia/Bahrain":"BH","Asia/Baku":"AZ","Asia/Bangkok":"TH","Asia/Barnaul":"RU","Asia/Beirut":"LB","Asia/Bishkek":"KG","Asia/Brunei":"BN","Asia/Calcutta":"IN","Asia/Chita":"RU","Asia/Chongqing":"CN","Asia/Colombo":"LK","Asia/Damascus":"SY","Asia/Dhaka":"BD","Asia/Dili":"TL","Asia/Dubai":"AE","Asia/Dushanbe":"TJ","Asia/Famagusta":"CY","Asia/Gaza":"PS","Asia/Harbin":"CN","Asia/Hebron":"PS","Asia/Ho_Chi_Minh":"VN","Asia/Hong_Kong":"HK","Asia/Hovd":"MN","Asia/Irkutsk":"RU","Asia/Istanbul":"TR","Asia/Jakarta":"ID","Asia/Jayapura":"ID","Asia/Jerusalem":"IL","Asia/Kabul":"AF","Asia/Kamchatka":"RU","Asia/Karachi":"PK","Asia/Kashgar":"CN","Asia/Kathmandu":"NP","Asia/Katmandu":"NP","Asia/Khandyga":"RU","Asia/Kolkata":"IN","Asia/Krasnoyarsk":"RU","Asia/Kuala_Lumpur":"MY","Asia/Kuching":"MY","Asia/Kuwait":"KW","Asia/Macao":"MO","Asia/Macau":"MO","Asia/Magadan":"RU","Asia/Makassar":"ID","Asia/Manila":"PH","Asia/Muscat":"OM","Asia/Nicosia":"CY","Asia/Novokuznetsk":"RU","Asia/Novosibirsk":"RU","Asia/Omsk":"RU","Asia/Oral":"KZ","Asia/Phnom_Penh":"KH","Asia/Pontianak":"ID","Asia/Pyongyang":"KP","Asia/Qatar":"QA","Asia/Qostanay":"KZ","Asia/Qyzylorda":"KZ","Asia/Rangoon":"MM","Asia/Riyadh":"SA","Asia/Saigon":"VN","Asia/Sakhalin":"RU","Asia/Samarkand":"UZ","Asia/Seoul":"KR","Asia/Shanghai":"CN","Asia/Singapore":"SG","Asia/Srednekolymsk":"RU","Asia/Taipei":"TW","Asia/Tashkent":"UZ","Asia/Tbilisi":"GE","Asia/Tehran":"IR","Asia/Tel_Aviv":"IL","Asia/Thimphu":"BT","Asia/Tokyo":"JP","Asia/Tomsk":"RU","Asia/Ulaanbaatar":"MN","Asia/Urumqi":"CN","Asia/Ust-Nera":"RU","Asia/Vientiane":"LA","Asia/Vladivostok":"RU","Asia/Yakutsk":"RU","Asia/Yangon":"MM","Asia/Yekaterinburg":"RU","Asia/Yerevan":"AM","Atlantic/Azores":"PT","Atlantic/Bermuda":"BM","Atlantic/Canary":"ES","Atlantic/Cape_Verde":"CV","Atlantic/Faeroe":"FO","Atlantic/Faroe":"FO","Atlantic/Madeira":"PT","Atlantic/Reykjavik":"IS","Atlantic/South_Georgia":"GS","Atlantic/St_Helena":"SH","Atlantic/Stanley":"FK","Australia/Adelaide":"AU","Australia/Brisbane":"AU","Australia/Broken_Hill":"AU","Australia/Darwin":"AU","Australia/Eucla":"AU","Australia/Hobart":"AU","Australia/Lindeman":"AU","Australia/Lord_Howe":"AU","Australia/Melbourne":"AU","Australia/Perth":"AU","Australia/Sydney":"AU","Europe/Amsterdam":"NL","Europe/Andorra":"AD","Europe/Astrakhan":"RU","Europe/Athens":"GR","Europe/Belgrade":"RS","Europe/Berlin":"DE","Europe/Bratislava":"SK","Europe/Brussels":"BE","Europe/Bucharest":"RO","Europe/Budapest":"HU","Europe/Busingen":"DE","Europe/Chisinau":"MD","Europe/Copenhagen":"DK","Europe/Dublin":"IE","Europe/Gibraltar":"GI","Europe/Guernsey":"GG","Europe/Helsinki":"FI","Europe/Isle_of_Man":"IM","Europe/Istanbul":"TR","Europe/Jersey":"JE","Europe/Kaliningrad":"RU","Europe/Kiev":"UA","Europe/Kirov":"RU","Europe/Kyiv":"UA","Europe/Lisbon":"PT","Europe/Ljubljana":"SI","Europe/London":"GB","Europe/Luxembourg":"LU","Europe/Madrid":"ES","Europe/Malta":"MT","Europe/Mariehamn":"AX","Europe/Minsk":"BY","Europe/Monaco":"MC","Europe/Moscow":"RU","Europe/Oslo":"NO","Europe/Paris":"FR","Europe/Podgorica":"ME","Europe/Prague":"CZ","Europe/Riga":"LV","Europe/Rome":"IT","Europe/Samara":"RU","Europe/San_Marino":"SM","Europe/Sarajevo":"BA","Europe/Saratov":"RU","Europe/Simferopol":"UA","Europe/Skopje":"MK","Europe/Sofia":"BG","Europe/Stockholm":"SE","Europe/Tallinn":"EE","Europe/Tirane":"AL","Europe/Ulyanovsk":"RU","Europe/Vaduz":"LI","Europe/Vatican":"VA","Europe/Vienna":"AT","Europe/Vilnius":"LT","Europe/Volgograd":"RU","Europe/Warsaw":"PL","Europe/Zagreb":"HR","Europe/Zurich":"CH","Hongkong":"HK","Indian/Antananarivo":"MG","Indian/Chagos":"IO","Indian/Christmas":"CX","Indian/Cocos":"CC","Indian/Comoro":"KM","Indian/Kerguelen":"TF","Indian/Mahe":"SC","Indian/Maldives":"MV","Indian/Mauritius":"MU","Indian/Mayotte":"YT","Indian/Reunion":"RE","Japan":"JP","Pacific/Apia":"WS","Pacific/Auckland":"NZ","Pacific/Bougainville":"PG","Pacific/Chatham":"NZ","Pacific/Chuuk":"FM","Pacific/Easter":"CL","Pacific/Efate":"VU","Pacific/Enderbury":"KI","Pacific/Fakaofo":"TK","Pacific/Fiji":"FJ","Pacific/Funafuti":"TV","Pacific/Galapagos":"EC","Pacific/Gambier":"PF","Pacific/Guadalcanal":"SB","Pacific/Guam":"GU","Pacific/Honolulu":"US","Pacific/Kanton":"KI","Pacific/Kiritimati":"KI","Pacific/Kosrae":"FM","Pacific/Kwajalein":"MH","Pacific/Majuro":"MH","Pacific/Marquesas":"PF","Pacific/Midway":"UM","Pacific/Nauru":"NR","Pacific/Niue":"NU","Pacific/Norfolk":"NF","Pacific/Noumea":"NC","Pacific/Pago_Pago":"AS","Pacific/Palau":"PW","Pacific/Pitcairn":"PN","Pacific/Pohnpei":"FM","Pacific/Ponape":"FM","Pacific/Port_Moresby":"PG","Pacific/Rarotonga":"CK","Pacific/Saipan":"MP","Pacific/Tahiti":"PF","Pacific/Tarawa":"KI","Pacific/Tongatapu":"TO","Pacific/Truk":"FM","Pacific/Wake":"UM","Pacific/Wallis":"WF","PRC":"CN","ROC":"TW","ROK":"KR","Singapore":"SG","US/Central":"US","US/Eastern":"US","US/Mountain":"US","US/Pacific":"US"};
@@ -132,7 +158,7 @@
   const getText = (url, ms = 5500) =>
     fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(ms) }).then(r => r.ok ? r.text() : Promise.reject(new Error(r.status)));
 
-  /* ---------- 8 Groups & 148 Genuine Probes Catalog ---------- */
+  /* ---------- 8 Groups & 162 Genuine Probes Catalog ---------- */
   const GROUPS = [
     ["net", "服务端与协议栈透视", "由服务端网卡 AF_PACKET 旁路抓包、主动 :443 反向握手与微脉冲时序直接读取，JS 插件无法伪造"],
     ["rep", "出口信誉、BGP 路由与黑名单情报", "融合 8 源欺诈库加权几率投票、RDAP 租赁/广播核验、12 项 DNSBL、15 项威胁段与同 /24 脏邻居连坐"],
@@ -144,7 +170,7 @@
     ["fp", "跨站指纹与无痕留痕追踪", "综合指纹、跨浏览器物理硬件码、无状态 ETag 缓存追踪与亚像素渲染哈希"]
   ];
 
-  // [id, group, title, maskSensitive, whyDesc] — Exactly 148 probes
+  // [id, group, title, maskSensitive, whyDesc] — Exactly 162 probes
   const SNIFFERS = [
     // Group 1: net (29)
     ["ip", "net", "当前连接出口 IP", true, "服务端 TCP Socket 与反向代理直接看到的客户端公网地址及 IP 协议版本。"],
@@ -168,6 +194,7 @@
     ["pqkex", "net", "后量子密钥交换 (PQ-KEM)", false, "检查 TLS ClientHello KeyShare 是否启用抗量子计算破解的 X25519MLKEM768 混合密钥交换。"],
     ["ech", "net", "加密 ClientHello (ECH)", false, "检查 TLS 握手是否携带 0xfe0d ECH 扩展以加密保护目标域名 SNI。"],
     ["reality443", "net", "出口 :443 反向握手与 Reality 验真", false, "主动回探出口公网 IP 的 443 端口：若非微软/苹果/雅虎等大厂 ASN 却返回其有效证书或通过严格 SNI 签名校验，即可实锤 VLESS-Reality / ShadowTLS 偷证书伪装。"],
+    ["portscan", "net", "出口 IP 实时代理 / 远控端口回扫", false, "服务端对当前出口 IP 并发 TCP connect 17 个常见代理（SOCKS / Squid / Shadowsocks / Clash / V2Ray / Tor）、VPN（OpenVPN / PPTP）、远控（SSH / RDP / VNC）与面板（X-UI）端口，仅被动读取欢迎横幅、不发送任何载荷；家宽与蜂窝 NAT 出口几乎从不开放这些端口。出于防滥用，仅对访客自身出口执行。"],
     ["h2fp", "net", "HTTP 请求头序签名", false, "不同浏览器内核发送请求头的先后顺序各自固定，改 UA 插件无法改变底层发包头顺序。"],
     ["quicfp", "net", "HTTP/3 (QUIC / UDP 443) 探测", false, "结合边缘协商与 ResourceTiming 检测当前网络及代理链路是否放行基于 UDP 443 的 QUIC 协议。"],
     ["dns", "net", "递归 DNS 解析器出口", true, "生成随机一次性子域名触发真实递归查询，定位替你解析域名的上游 DNS 服务器国家与运营商。"],
@@ -199,6 +226,7 @@
     ["ex_cf", "exit", "Cloudflare 全球边缘出口", true, "请求 www.cloudflare.com 看到的出口地址、接入数据中心与协商协议。"],
     ["warp", "exit", "Cloudflare WARP 与 Gateway", false, "检测流量是否经过 Cloudflare WARP 隧道或 Zero Trust Gateway 企业网关。"],
     ["stack", "exit", "IPv4 与 IPv6 双栈独立出口", true, "分别强制通过纯 IPv4 与纯 IPv6 链路探测出口地址，许多代理仅接管 IPv4 而导致 IPv6 直连裸奔。"],
+    ["rttgeo", "exit", "全球 18 区域 RTT 光速三角测距", false, "浏览器对 AWS 全球 18 个区域（含北京）端点做热连接往返测距，找出物理最近区域；若某区域往返低于「出口 IP 登记地 → 该区域」的光纤物理下限（≈ 距离 / 100 ms），即证明该路流量并未经过当前出口（规则分流）或出口 IP 属跨洲广播段。"],
 
     // Group 4: hdr (9)
     ["h_ua", "hdr", "HTTP User-Agent 请求头", false, "HTTP 请求头中实际携带的 User-Agent 字符串，与 JS navigator.userAgent 对比可抓出浅层改 UA 插件。"],
@@ -210,12 +238,16 @@
     ["h_sec", "hdr", "Sec-Fetch 上下文安全头", false, "现代浏览器自动附加的 Sec-Fetch-Site / Mode / Dest 元数据头。"],
     ["h_dnt", "hdr", "HTTP DNT 与 Sec-GPC 头", false, "网络请求头中携带的请勿追踪 (DNT) 与全球隐私控制 (Sec-GPC) 信号。"],
     ["h_ref", "hdr", "页面来源 Referer", false, "跳转到当前页面时的来源网页地址与导航入口类型。"],
+    ["proxyhdr", "hdr", "代理转发头与 HTTPS 中间人注入", false, "TLS 已在本站终止，浏览器原生绝不会发送 Via / Forwarded / 预置 X-Forwarded-For 跳数 / CF-Worker 等头；一旦出现，说明请求经过了 HTTPS 解密代理、企业网关、杀软 Web 防护或 Cloudflare Worker 反代。"],
+    ["h_lfmt", "hdr", "Accept-Language q 权重格式核验", false, "校验 HTTP 语言头 q 权重是否严格递减、格式合法，且不含 JS navigator.languages 之外的语种——ModHeader 类插件或中间层改写语言头时常在此露馅。"],
 
     // Group 5: loc (11)
     ["langs", "loc", "navigator.languages 语言列表", false, "JS 读取的浏览器首选与备选语言全列表，反映用户日常阅读语种。"],
     ["locale", "loc", "Intl 默认区域与历法", false, "国际化引擎默认解析出的区域代码、日历体系与数字书写系统。"],
     ["tz", "loc", "系统 IANA 时区名称", false, "Intl.DateTimeFormat 读取的操作系统时区 ID（如 Asia/Shanghai）及当前标准时间名。"],
     ["tzoff", "loc", "Date 与 Intl 双源时区校验", false, "交叉核对 Date.prototype.getTimezoneOffset() 与 Intl 时区偏移，劣质改时区插件常只改其一。"],
+    ["tzdst", "loc", "夏令时规则与历史时区偏移核验", false, "对今年冬/夏季及 2005、2015 年多个时间点分别用 Date.getTimezoneOffset 与 Intl IANA 规则计算偏移；只 Hook 固定偏移的改时区插件会在夏令时切换或历史规则上露馅。"],
+    ["clocksrc", "loc", "Date 时钟源内部一致性", false, "比对 Date.now()、new Date()、Date.parse(ISO) 与 performance 单调时钟，并与服务端校时交叉印证；libfaketime / 改时间插件只 Hook 部分接口时会出现秒级断裂。"],
     ["hour", "loc", "默认时钟制式（12/24 小时）", false, "当前语言区域默认采用的小时计数制式及本地格式化时间样本。"],
     ["week", "loc", "每周起始日习惯", false, "Intl.Locale.weekInfo 暴露的一周第一天（如中国/欧洲为周一，美国/日本多为周日）。"],
     ["fmt", "loc", "数字分组与日期格式", false, "本地化长数字千分位小数点样式与年月日排列格式。"],
@@ -238,6 +270,8 @@
     ["gamut", "dev", "屏幕色域与 HDR 动态范围", false, "CSS 媒体查询探测显示器色彩空间（Display P3 / Rec.2020 / sRGB）与高动态范围 (HDR) 能力。"],
     ["touch", "dev", "触控点数与输入指针类型", false, "最大同时触控点数与主输入设备精度（精细鼠标触控板 vs 粗粒度手指触屏）。"],
     ["uigeom", "dev", "原生表单控件亚像素包围盒几何", false, "测量未加样式的原生 button / select / checkbox / range 控件宽高，macOS Cocoa、Windows Fluent 与 Linux GTK 原生主题尺寸截然不同。"],
+    ["mqscreen", "dev", "CSS 媒体查询 vs JS 屏幕读数", false, "用 device-width / device-height / resolution / orientation 媒体查询二分反推渲染引擎眼中的真实屏幕，与 JS screen.width / devicePixelRatio 比对；只改 JS 属性的指纹插件无法同步伪造媒体查询。"],
+    ["mobilex", "dev", "移动端仿真一致性", false, "核对 UA 自称的手机/平板身份与触控点数、主指针精度、悬停能力、触摸事件、屏幕短边与 GPU 型号是否自洽，识别桌面 DevTools 设备模拟与改 UA 冒充手机。"],
     ["fontrast", "dev", "跨系统字体光栅化引擎签名", false, "分析斜线与曲线字形边缘的 RGB 彩边离差与灰阶 Gamma 分布，识破在 Linux/Windows 容器强装苹果 PingFang 字体伪装 Mac 的行为。"],
     ["gpu", "dev", "显卡真实型号与双显卡探测", false, "同时请求默认与 high-performance 上下文，挖掘核显笔记本背后隐藏的独立显卡型号及虚拟机软件渲染特征。"],
     ["glx", "dev", "WebGL 版本与纹理能力上限", false, "WebGL 1/2 支持状态、最大纹理像素尺寸及显卡驱动暴露的扩展总数。"],
@@ -257,6 +291,8 @@
     ["storage", "dev", "浏览器磁盘存储配额上限", false, "navigator.storage.estimate 暴露的站点可用磁盘上限，可用于反推磁盘总容量并识别部分无痕模式限制。"],
     ["engine", "dev", "底层 JavaScript 引擎鉴别", false, "利用空对象属性访问抛出的原生异常措辞差异，不可伪造地区分 V8、SpiderMonkey 与 JavaScriptCore。"],
     ["engver", "dev", "JS 语法特性反推真实内核版本", false, "逐一测试 Chromium 97–136+ 各版本引入的原生 JS API，直接拆穿指纹浏览器虚报高版本 UA 的行为。"],
+    ["wasmfeat", "dev", "WebAssembly 特性矩阵与内核代际", false, "逐项校验 13 项 WASM 提案字节码（SIMD、异常处理、尾调用、GC、Relaxed SIMD、线程等）与 JSPI，按各特性正式上线版本反推 V8 / SpiderMonkey 真实代际，拆穿虚报新版 UA 的旧内核。"],
+    ["fontlocal", "dev", "FontFace local() 字体旁路核验", false, "绕过 Canvas 字宽测量，直接用 CSS Font Loading API 的 local() 加载 17 款系统标志性字体，与 Canvas 字体探测交叉比对，识破只 Hook measureText 的字体伪装与跨系统虚报。"],
     ["cssv", "dev", "CSS 特性反推渲染引擎版本", false, "测试 :has()、color-mix()、anchor-name、reading-flow 等现代 CSS 特性，锁定真实 Blink 内核代际。"],
     ["apis", "dev", "硬件敏感接口暴露面", false, "统计 WebUSB、WebHID、WebSerial、MIDI、NFC、本地字体访问等 12 项硬件 API 是否存在。"],
     ["emoji", "dev", "系统字库 Emoji 版本代际", false, "利用 Canvas 测量 Emoji 12.0 至 16.0 新字符渲染宽度，反推操作系统内置字体新旧程度。"],
@@ -276,6 +312,10 @@
     ["perms", "brw", "核心权限静默状态查询", false, "通过 Permissions API 不弹窗查询定位、通知、摄像头、麦克风当前授权态。"],
     ["history", "brw", "当前标签页会话栈深度", false, "history.length 反映当前标签页已连续浏览的页面数量（自动化脚本通常恒为 1 或 2）。"],
     ["webdriver", "brw", "自动化框架与驱动痕迹", false, "综合检测 navigator.webdriver、Selenium/CDC、Playwright 与 Puppeteer 注入钩子。"],
+    ["cdp", "brw", "CDP 调试协议附着与注入帧", false, "给 Error 安装 stack getter 后调用 console.debug：只有 Chrome DevTools Protocol 的 Runtime 域被启用（开发者工具打开 / Puppeteer / Playwright 控制）时才会序列化触发；并扫描注入脚本帧、Selenium DOM 标记与无头通知权限矛盾。"],
+    ["winchrome", "brw", "窗口外框与无头渲染尺寸", false, "对比 outerWidth/outerHeight 与视口尺寸：无头 Chrome 外框为 0 或与视口完全相同，开发者工具停靠会产生异常巨大的外框差（已排除页面缩放与全屏干扰）。"],
+    ["incog", "brw", "无痕 / 隐私浏览窗口识别", false, "Chromium 依据临时存储配额与 JS 堆上限比值、Safari 依据 OPFS getDirectory 异常、Firefox 依据存储 SecurityError 判断当前是否处于无痕窗口。"],
+    ["input", "brw", "交互事件可信度与轨迹", false, "捕获检测期间全部鼠标 / 触摸 / 键盘事件：isTrusted=false 的合成事件直接实锤脚本操控，并统计鼠标轨迹机械直线占比（检测期间未操作属正常）。"],
     ["adblock", "brw", "广告拦截插件双重实测", false, "结合页面多类名广告 DOM 诱饵隐藏检测与 Google 广告脚本网络请求拦截对照（排除断网误判）。"],
     ["ext", "brw", "页面注入痕迹识别扩展", false, "检测加密钱包全局对象（MetaMask/OKX/Phantom/Rabby）、DevTools 钩子与翻译/暗色插件 DOM 标记。"],
     ["extwar", "brw", "Chrome 扩展公开资源扫描", false, "并发探测 36 款主流代理、改指纹、脚本管理器、钱包与密码管理扩展暴露的 chrome-extension:// 静态资源。"],
@@ -320,7 +360,7 @@
     ["split", "国内外与 AI 多路分流一致性", ["disguise"]],
     ["conn", "底层 TCP/TLS 协议栈与自报系统", ["disguise"]],
     ["synspoof", "IP/TCP 内核时钟连续性与防改包", ["disguise"]],
-    ["reality", "出口 :443 反向验真与 Reality 偷证书", ["disguise"]],
+    ["reality", "出口主动回探（:443 Reality 与代理端口）", ["disguise"]],
     ["rtt", "往返延迟三维测距（TCP/HTTP/UDP）", ["disguise"]],
     ["webrtc", "WebRTC STUN 真实 IP 与网卡 MAC 泄漏", ["disguise", "privacy"]],
     ["dc", "出口 IP 机房 / 原生住宅多源投票", ["disguise"]],
@@ -990,7 +1030,7 @@
     }
     $$("[data-ck]").forEach(el => { CHECK_EL[el.dataset.ck] = el; });
 
-    // 4. Category Tabs & 148 Sniffer Explorer Rows
+    // 4. Category Tabs & 162 Sniffer Explorer Rows
     const tabsBox = $("#groupTabs");
     if (tabsBox) {
       const counts = {};
@@ -1450,7 +1490,7 @@
   }
 
   // 1b. Multi-Source Egress Intelligence, BGP/RDAP Lease, 12 DNSBLs, /24 Dirty Neighbours & Active :443 Reality Back-Probe (12 items: reality443 + 11 rep_*)
-  const REP_PROBE_IDS = ["reality443", "rep_score", "rep_votes", "rep_native", "rep_asn", "rep_lease", "rep_rpki", "rep_shodan", "rep_threat", "rep_dnsbl", "rep_cidr", "rep_neigh"];
+  const REP_PROBE_IDS = ["reality443", "portscan", "rep_score", "rep_votes", "rep_native", "rep_asn", "rep_lease", "rep_rpki", "rep_shodan", "rep_threat", "rep_dnsbl", "rep_cidr", "rep_neigh"];
 
   function applyIntelToProbes(intel) {
     if (!intel || !intel.ok) {
@@ -1530,6 +1570,25 @@
       setProbe("reality443", `${prefixTag}开放 :443 TCP 端口（无标准 TLS 证书返回 · ${t4.rttMs ?? "?"}ms）`, { tone: "warn" });
     } else {
       setProbe("reality443", `${prefixTag}:443 端口关闭或静默丢包（典型家宽 NAT / 无公网服务端监听）`, { tone: "ok" });
+    }
+
+    // 1b) portscan: live proxy / VPN / remote-control port back-scan (self egress only)
+    const pt = intel.ports || {};
+    if (intel.isSelfEgress === false) {
+      setNA("portscan", `${prefixTag}出于防滥用，端口回扫仅对访客自身出口执行`);
+    } else if (!pt.probed) {
+      setNA("portscan", pt.reason === "timeout" ? "端口回扫超时" : "服务端未启用主动回扫");
+    } else if (pt.synProxyLikely) {
+      setProbe("portscan", `${(pt.open || []).length}/${pt.scanned} 个端口同时“开放”：出口前置 SYN-Proxy / 防火墙 Tarpit，结论不可信`, { tone: "warn" });
+    } else if (!(pt.open || []).length) {
+      setProbe("portscan", `${pt.scanned} 个代理 / VPN / 远控 / 面板端口全部关闭或丢包（家宽 NAT 特征）`, { tone: "ok", why: `回扫耗时 ${pt.elapsedMs} ms` });
+    } else {
+      const lst = pt.open.map(o => `${o.port}/${o.svc}`).join("、");
+      const hard = (pt.proxyOpen || []).length || (pt.vpnOpen || []).length;
+      setProbe("portscan", `开放 ${lst}`, {
+        tone: hard ? "bad" : "warn",
+        why: pt.open.map(o => `${o.port} ${o.svc}${o.banner ? " · " + o.banner : ""}`).join("\n") + `\n回扫耗时 ${pt.elapsedMs} ms`
+      });
     }
 
     // 2) rep_score: Purity Score & Ledger
@@ -3805,6 +3864,501 @@
     return 12742 * Math.asin(Math.sqrt(h));
   }
 
+  /* ---------- v7.4 Extended Probes (14 items): portscan · rttgeo · proxyhdr · h_lfmt · tzdst · clocksrc · mqscreen · mobilex · wasmfeat · fontlocal · cdp · winchrome · incog · input ---------- */
+
+  // (1) CDP / DevTools Runtime attach side effect + injected evaluation frames + Selenium DOM markers
+  async function probeCdp() {
+    let hit = false;
+    const marks = [];
+    // 现代 V8：Runtime 域启用时，inspector 会为控制台中的 Error 生成描述并调用 Error.prepareStackTrace（未附着时不会）
+    const prevPrep = Error.prepareStackTrace;
+    try {
+      Error.prepareStackTrace = (e, frames) => { hit = true; return typeof prevPrep === "function" ? prevPrep(e, frames) : `${e}`; };
+      console.debug(new Error("whoprobe-cdp"));
+    } catch (e) {} finally {
+      Error.prepareStackTrace = prevPrep;
+    }
+    // 旧版 V8：预览 Error 时读取 stack 访问器
+    try {
+      const err = new Error("whoprobe-cdp");
+      Object.defineProperty(err, "stack", { configurable: false, enumerable: false, get() { hit = true; return ""; } });
+      console.debug(err);
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 40));
+    try {
+      const st = String(new Error().stack || "");
+      if (/__puppeteer_evaluation_script__|pptr:/i.test(st)) marks.push("Puppeteer 注入帧");
+      if (/__playwright_evaluation_script__/i.test(st)) marks.push("Playwright 注入帧");
+    } catch (e) {}
+    try {
+      const de = document.documentElement;
+      if (["webdriver", "selenium", "driver"].some(a => de.getAttribute(a) != null)) marks.push("Selenium DOM 标记");
+      if (window.domAutomation || window.domAutomationController) marks.push("domAutomation 控制器");
+      if (window.__nightmare) marks.push("Nightmare");
+    } catch (e) {}
+    try {
+      if (window.Notification && navigator.permissions?.query) {
+        const st = await within(navigator.permissions.query({ name: "notifications" }), 800, null);
+        if (st && Notification.permission === "denied" && st.state === "prompt") marks.push("Notification 与 Permissions 状态矛盾（无头 Chrome）");
+      }
+    } catch (e) {}
+    R.cdpHit = hit;
+    R.cdpMarks = marks;
+    if (marks.length) R.botHits = Array.from(new Set([...(R.botHits || []), ...marks]));
+    setProbe("cdp", marks.length
+      ? `检出自动化注入：${marks.join(" · ")}${hit ? " · CDP Runtime 已附着" : ""}`
+      : hit
+      ? "检测到 CDP Runtime 序列化副作用（开发者工具已打开，或被 Puppeteer / Playwright 控制）"
+      : "未见 CDP Runtime 序列化副作用、注入帧与 Selenium 标记",
+    { tone: marks.length ? "bad" : hit ? "warn" : "ok" });
+  }
+
+  // (2) Window chrome (outer vs inner): headless zero frame & docked DevTools, excluding zoom / fullscreen / PWA
+  function probeWinChrome() {
+    const ow = window.outerWidth || 0, oh = window.outerHeight || 0, iw = window.innerWidth || 0, ih = window.innerHeight || 0;
+    const dx = ow - iw, dy = oh - ih;
+    const touchOnly = mq("(pointer: coarse)") && !mq("(any-pointer: fine)");
+    const fullscreen = !!document.fullscreenElement || mq("(display-mode: fullscreen)") || (Math.abs(iw - screen.width) <= 1 && Math.abs(ih - screen.height) <= 1);
+    const app = mq("(display-mode: standalone)") || mq("(display-mode: minimal-ui)") || mq("(display-mode: window-controls-overlay)");
+    const ratio = iw ? ow / iw : 1;
+    const zoomed = Math.abs(ratio - 1) > 0.02 && [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5].some(z => Math.abs(ratio - z) < 0.015);
+    const flags = [];
+    let headless = false;
+    if (!ow || !oh) {
+      headless = true;
+      flags.push("outerWidth / outerHeight = 0（旧版无头 Chrome）");
+    } else if (!touchOnly && !fullscreen && !app && dx === 0 && dy === 0) {
+      headless = true;
+      flags.push("浏览器外框高度 0（无工具栏 / 标签栏：Kiosk、新版无头或自动化窗口）");
+    }
+    if (ow > screen.width + 16 && oh > screen.height + 16) {
+      headless = true;
+      flags.push(`窗口 ${ow}×${oh} 在宽高两个维度上都大于屏幕 ${screen.width}×${screen.height}（虚拟屏幕 / 无头默认尺寸）`);
+    }
+    const devtools = !zoomed && !touchOnly && !headless && (dx > 260 || dy > 300);
+    R.winHeadless = headless;
+    R.winDevtools = devtools;
+    const base = `外框 ${ow}×${oh} · 视口 ${iw}×${ih} · UI 占用 宽 ${dx}px / 高 ${dy}px${zoomed ? ` · 页面缩放≈${Math.round(ratio * 100)}%` : ""}${fullscreen ? " · 全屏" : ""}`;
+    setProbe("winchrome", flags.length ? `${flags.join("；")} · ${base}` : devtools ? `疑似开发者工具停靠 · ${base}` : base, {
+      tone: headless ? "warn" : devtools ? "warn" : "neutral"
+    });
+  }
+
+  // (3) CSS media queries vs JS screen readings (binary-searched device-width/height, resolution, orientation)
+  function mqMaxPx(feature, hi = 16384) {
+    if (!mq(`(min-${feature}: 1px)`)) return null;
+    let lo = 1;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (mq(`(min-${feature}: ${mid}px)`)) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  }
+  function probeMqScreen() {
+    const W = screen.width, H = screen.height, dpr = window.devicePixelRatio || 1;
+    const diffs = [], okParts = [];
+    const cssW = mqMaxPx("device-width"), cssH = mqMaxPx("device-height");
+    if (cssW != null && cssH != null) {
+      if (Math.abs(cssW - W) > 1 || Math.abs(cssH - H) > 1) diffs.push(`JS screen ${W}×${H} ≠ CSS device ${cssW}×${cssH}`);
+      else okParts.push(`device ${cssW}×${cssH}`);
+    }
+    const lo = Math.max(0.01, dpr - 0.02).toFixed(3), hi = (dpr + 0.02).toFixed(3);
+    if (mq("(min-resolution: 0.001dppx)")) {
+      if (!mq(`(min-resolution: ${lo}dppx) and (max-resolution: ${hi}dppx)`)) diffs.push(`devicePixelRatio=${dpr} 与 CSS resolution 不符`);
+      else okParts.push(`${+dpr.toFixed(3)}dppx`);
+    } else if (mq("(-webkit-min-device-pixel-ratio: 0.001)")) {
+      if (!mq(`(-webkit-min-device-pixel-ratio: ${lo}) and (-webkit-max-device-pixel-ratio: ${hi})`)) diffs.push(`devicePixelRatio=${dpr} 与 -webkit-device-pixel-ratio 不符`);
+      else okParts.push(`${+dpr.toFixed(3)}x`);
+    }
+    if (Math.abs(window.innerWidth - window.innerHeight) > 40) {
+      const cssPortrait = mq("(orientation: portrait)");
+      const jsPortrait = window.innerHeight >= window.innerWidth;
+      if (cssPortrait !== jsPortrait) diffs.push(`视口 ${window.innerWidth}×${window.innerHeight} 与 CSS orientation 方向相反`);
+      else okParts.push(jsPortrait ? "竖屏" : "横屏");
+    }
+    R.mqDiffs = navigator.brave ? [] : diffs;
+    setProbe("mqscreen", diffs.length ? `交叉矛盾：${diffs.join("；")}` : `一致 · ${okParts.join(" · ") || "媒体查询与 JS 读数吻合"}`, {
+      tone: diffs.length ? (navigator.brave ? "warn" : "bad") : "ok"
+    });
+  }
+
+  // (4) DST & historical offsets: Date.getTimezoneOffset vs Intl IANA rules at 5 instants
+  function probeTzDst() {
+    const tz = R.tz || "";
+    if (!tz) return setNA("tzdst");
+    let fmt;
+    try {
+      fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+    } catch (e) { return setNA("tzdst", "Intl 不支持该时区 ID"); }
+    const intlOff = ts => {
+      const p = {};
+      for (const x of fmt.formatToParts(new Date(ts))) p[x.type] = x.value;
+      return Math.round((Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - ts) / 60000);
+    };
+    const y = new Date().getFullYear();
+    const pts = [[Date.UTC(y, 0, 15, 12), `${y}-01`], [Date.UTC(y, 6, 15, 12), `${y}-07`], [Date.UTC(2015, 0, 15, 12), "2015-01"], [Date.UTC(2015, 6, 15, 12), "2015-07"], [Date.UTC(2005, 6, 15, 12), "2005-07"]];
+    const bad = [];
+    let offs;
+    try {
+      offs = pts.map(([ts, lbl]) => {
+        const a = intlOff(ts), b = -new Date(ts).getTimezoneOffset();
+        if (a !== b) bad.push(`${lbl} Intl UTC${fmtUtcOffset(a)} ≠ Date UTC${fmtUtcOffset(b)}`);
+        return a;
+      });
+    } catch (e) { return setNA("tzdst"); }
+    const dst = offs[0] !== offs[1];
+    R.tzDstMismatch = bad.length ? bad : null;
+    setProbe("tzdst", bad.length
+      ? `规则断裂：${bad.slice(0, 2).join("；")}${bad.length > 2 ? ` 等 ${bad.length} 处` : ""}`
+      : `${tz} · 冬 UTC${fmtUtcOffset(offs[0])} / 夏 UTC${fmtUtcOffset(offs[1])}${dst ? " · 有夏令时" : " · 无夏令时"} · ${pts.length}/${pts.length} 时点一致`,
+    { tone: bad.length ? "bad" : "ok", why: pts.map(([, lbl], i) => `${lbl}: UTC${fmtUtcOffset(offs[i])}`).join("\n") });
+  }
+
+  // (5) Clock source consistency (Date APIs vs each other, vs monotonic clock, vs server)
+  function probeClockSrc() {
+    const s = [];
+    for (let i = 0; i < 5; i++) {
+      const a = Date.now(), b = new Date().getTime(), c = Date.parse(new Date().toISOString());
+      s.push(Math.max(Math.abs(a - b), Math.abs(a - c)));
+    }
+    const internalGap = Math.min(...s);
+    R.clockInternalGap = internalGap;
+    let monoTxt = "";
+    if (performance.timeOrigin && performance.now() < 15 * 60 * 1000) {
+      const ds = [];
+      for (let i = 0; i < 5; i++) ds.push(Date.now() - (performance.timeOrigin + performance.now()));
+      ds.sort((x, y) => x - y);
+      const drift = Math.round(ds[2]);
+      R.clockMonoDrift = drift;
+      monoTxt = ` · 单调时钟偏差 ${drift >= 0 ? "+" : ""}${drift} ms${Math.abs(drift) >= 2000 ? "（系统休眠或时钟被改）" : ""}`;
+    }
+    const srvTxt = R.clockSkewMs != null ? ` · 较服务端 ${R.clockSkewMs >= 0 ? "+" : ""}${R.clockSkewMs} ms` : "";
+    setProbe("clocksrc", internalGap > 1000
+      ? `Date 接口相互矛盾 (${internalGap} ms)：Date.now / new Date / Date.parse 被部分 Hook${monoTxt}${srvTxt}`
+      : `Date.now / new Date / Date.parse 一致${monoTxt}${srvTxt}`,
+    { tone: internalGap > 1000 ? "bad" : "ok" });
+  }
+
+  // (6) WebAssembly proposal matrix → minimum engine generation
+  const WASM_FEATS = [
+    ["simd", "SIMD", [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]],
+    ["exceptions", "异常处理", [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 8, 1, 6, 0, 6, 64, 25, 11, 11]],
+    ["tailCall", "尾调用", [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 6, 1, 4, 0, 18, 0, 11]],
+    ["gc", "GC 结构体", [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 95, 1, 120, 0]],
+    ["relaxedSimd", "Relaxed SIMD", [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 15, 1, 13, 0, 65, 1, 253, 15, 65, 2, 253, 15, 253, 128, 2, 11]],
+    ["extendedConst", "扩展常量", [0, 97, 115, 109, 1, 0, 0, 0, 5, 3, 1, 0, 1, 11, 9, 1, 0, 65, 1, 65, 2, 106, 11, 0]],
+    ["threads", "线程原子", [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 5, 4, 1, 3, 1, 1, 10, 11, 1, 9, 0, 65, 0, 254, 16, 2, 0, 26, 11]],
+    ["bulk", "批量内存", [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 5, 3, 1, 0, 1, 10, 14, 1, 12, 0, 65, 0, 65, 0, 65, 0, 252, 10, 0, 0, 11]],
+    ["refTypes", "引用类型", [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 7, 1, 5, 0, 208, 112, 26, 11]],
+    ["multiValue", "多返回值", [0, 97, 115, 109, 1, 0, 0, 0, 1, 6, 1, 96, 0, 2, 127, 127, 3, 2, 1, 0, 10, 8, 1, 6, 0, 65, 0, 65, 0, 11]],
+    ["signExt", "符号扩展", [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 8, 1, 6, 0, 65, 0, 192, 26, 11]],
+    ["satConv", "饱和转换", [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 12, 1, 10, 0, 67, 0, 0, 0, 0, 252, 0, 26, 11]],
+    ["mutableGlobals", "可变全局", [0, 97, 115, 109, 1, 0, 0, 0, 2, 8, 1, 1, 97, 1, 98, 3, 127, 1, 6, 6, 1, 127, 1, 65, 0, 11]]
+  ];
+  function probeWasmFeatures() {
+    if (typeof WebAssembly !== "object" || typeof WebAssembly.validate !== "function") {
+      R.wasmFeat = null;
+      return setNA("wasmfeat", "WebAssembly 已禁用（JIT-less / 锁定模式 / 企业策略）");
+    }
+    const res = {};
+    for (const [k, , bytes] of WASM_FEATS) {
+      try { res[k] = WebAssembly.validate(new Uint8Array(bytes)); } catch (e) { res[k] = false; }
+    }
+    res.jspi = "Suspending" in WebAssembly;
+    R.wasmFeat = res;
+    let floor = 0, fam = "";
+    if (R.engine === "V8") {
+      fam = "Chromium";
+      floor = res.jspi ? 137 : res.gc ? 119 : res.relaxedSimd ? 114 : res.tailCall ? 112 : res.exceptions ? 95 : res.simd ? 91 : 0;
+    } else if (R.engine === "SpiderMonkey") {
+      fam = "Firefox";
+      floor = res.tailCall ? 121 : res.gc ? 120 : res.exceptions ? 100 : res.simd ? 89 : 0;
+    }
+    R.wasmFloor = floor;
+    const on = WASM_FEATS.filter(([k]) => res[k]).length;
+    const missing = WASM_FEATS.filter(([k]) => !res[k]).map(([, n]) => n);
+    setProbe("wasmfeat", `${on}/${WASM_FEATS.length} 项提案${res.jspi ? " + JSPI" : ""}${floor ? ` · 推算内核 ≥ ${fam} ${floor}` : ""}${missing.length ? ` · 缺 ${missing.slice(0, 3).join(" / ")}${missing.length > 3 ? "…" : ""}` : ""}`, {
+      why: WASM_FEATS.map(([k, n]) => `${res[k] ? "✓" : "✗"} ${n}`).join("\n") + `\n${res.jspi ? "✓" : "✗"} JSPI (WebAssembly.Suspending)`
+    });
+  }
+
+  // (7) FontFace local() side-channel vs Canvas measureText font list
+  const LOCAL_FONT_PROBES = [
+    ["Segoe UI", "win", ["Segoe UI", "SegoeUI"]],
+    ["Calibri", "win", ["Calibri"]],
+    ["Consolas", "win", ["Consolas"]],
+    ["Microsoft YaHei", "win", ["Microsoft YaHei", "MicrosoftYaHei", "微软雅黑"]],
+    ["SimSun", "win", ["SimSun", "宋体"]],
+    ["Yu Gothic", "win", ["Yu Gothic Regular", "YuGothic-Regular", "Yu Gothic"]],
+    ["Malgun Gothic", "win", ["Malgun Gothic", "MalgunGothic"]],
+    ["Helvetica Neue", "apple", ["Helvetica Neue", "HelveticaNeue"]],
+    ["Menlo", "apple", ["Menlo Regular", "Menlo-Regular", "Menlo"]],
+    ["PingFang SC", "apple", ["PingFang SC Regular", "PingFangSC-Regular", "PingFang SC"]],
+    ["Hiragino Sans", "apple", ["Hiragino Sans W3", "HiraginoSans-W3"]],
+    ["Songti SC", "apple", ["Songti SC Regular", "STSongti-SC-Regular"]],
+    ["DejaVu Sans", "linux", ["DejaVu Sans", "DejaVuSans"]],
+    ["Liberation Sans", "linux", ["Liberation Sans", "LiberationSans"]],
+    ["Ubuntu", "linux", ["Ubuntu Regular", "Ubuntu-Regular", "Ubuntu"]],
+    ["Noto Sans CJK SC", "linux", ["Noto Sans CJK SC Regular", "NotoSansCJKsc-Regular", "Noto Sans CJK SC"]],
+    ["Roboto", "android", ["Roboto", "Roboto Regular", "Roboto-Regular"]]
+  ];
+  async function probeFontLocal() {
+    if (typeof FontFace !== "function") return setNA("fontlocal", "当前环境不支持 CSS Font Loading API");
+    let seq = 0;
+    const tryName = name => within(
+      new FontFace(`wp-local-${++seq}`, `local("${String(name).replace(/["\\]/g, "")}")`).load().then(() => true, () => false),
+      1500, false
+    );
+    const results = await Promise.all(LOCAL_FONT_PROBES.map(async ([fam, os, names]) => {
+      for (const n of names) {
+        if (await tryName(n)) return [fam, os, true];
+      }
+      return [fam, os, false];
+    }));
+    const found = results.filter(r => r[2]);
+    R.localFonts = found.map(r => r[0]);
+    const usable = found.length >= 2;
+    const canvasSet = new Set(R.fonts || []);
+    const hidden = usable && !navigator.brave ? found.filter(r => PROBE_FONTS.includes(r[0]) && !canvasSet.has(r[0])).map(r => r[0]) : [];
+    const phantom = usable ? results.filter(r => !r[2] && canvasSet.has(r[0])).map(r => r[0]) : [];
+    const osHas = k => found.some(r => r[1] === k);
+    const os = R.dev?.os || "";
+    let osConflict = "";
+    if (usable) {
+      if (os === "macOS" && !osHas("apple")) osConflict = "自报 macOS 却缺少 Menlo / Helvetica Neue / PingFang 等系统必备字体";
+      else if (os === "Windows" && !osHas("win")) osConflict = "自报 Windows 却缺少 Segoe UI / Calibri / Consolas 等系统必备字体";
+    }
+    R.fontLocalHidden = hidden.length >= 2 ? hidden : [];
+    R.fontLocalOsConflict = osConflict;
+    const issues = [];
+    if (osConflict) issues.push(osConflict);
+    if (hidden.length >= 2) issues.push(`local() 证明已安装 ${hidden.slice(0, 3).join(" / ")}，Canvas 探测却报告不存在（measureText 被 Hook）`);
+    else if (phantom.length >= 2) issues.push(`Canvas 报告存在 ${phantom.slice(0, 3).join(" / ")}，local() 却加载失败`);
+    setProbe("fontlocal", !usable
+      ? `local() 仅命中 ${found.length}/${LOCAL_FONT_PROBES.length} 款（浏览器限制本地字体访问，跳过交叉比对）`
+      : issues.length
+      ? `${issues.join("；")}`
+      : `local() 命中 ${found.length}/${LOCAL_FONT_PROBES.length} 款，与 Canvas 字体探测及 ${os || "当前系统"} 一致`,
+    { tone: osConflict || hidden.length >= 2 ? "bad" : issues.length ? "warn" : usable ? "ok" : "neutral", why: `local() 命中: ${R.localFonts.join(", ") || "无"}` });
+  }
+
+  // (8) Private / incognito window detection (engine-specific storage side channels)
+  async function probeIncognito() {
+    let verdict = null, how = "";
+    try {
+      if (R.engine === "V8") {
+        const heapLim = performance.memory?.jsHeapSizeLimit || 1073741824;
+        let quota = null;
+        if (navigator.webkitTemporaryStorage?.queryUsageAndQuota) {
+          quota = await within(new Promise(res => navigator.webkitTemporaryStorage.queryUsageAndQuota((u, q) => res(q), () => res(null))), 1500, null);
+        }
+        if (!quota && navigator.storage?.estimate) quota = (await within(navigator.storage.estimate(), 1500, null))?.quota || null;
+        if (quota) {
+          verdict = quota < heapLim * 2;
+          how = `站点配额 ${Math.round(quota / 1048576)} MB vs 阈值 ${Math.round(heapLim * 2 / 1048576)} MB`;
+        }
+      } else if (R.engine === "JavaScriptCore" || R.engine === "SpiderMonkey") {
+        if (navigator.storage?.getDirectory) {
+          const r = await within(navigator.storage.getDirectory().then(() => ({ ok: true }), e => ({ ok: false, e })), 1500, null);
+          if (r) {
+            const msg = `${r.e?.name || ""} ${r.e?.message || ""}`;
+            verdict = r.ok ? false : R.engine === "JavaScriptCore" ? /unknown transient reason/i.test(msg) : /security/i.test(msg);
+            how = "OPFS getDirectory";
+          }
+        } else if (R.engine === "SpiderMonkey") {
+          verdict = navigator.serviceWorker === undefined;
+          how = "serviceWorker 可用性";
+        }
+      }
+    } catch (e) {}
+    R.incognito = verdict;
+    if (verdict == null) return setNA("incog", "当前内核无可靠无痕侧信道");
+    setProbe("incog", verdict ? `检测为无痕 / 隐私浏览窗口 (${how})` : `常规持久化窗口 (${how})`, { tone: verdict ? "warn" : "neutral" });
+  }
+
+  // (9) Mobile emulation consistency (claimed phone / tablet vs touch, pointer, hover, GPU, screen)
+  function probeMobileConsistency() {
+    const ua = navigator.userAgent || "";
+    const os = R.dev?.os || "";
+    const claimPhone = /iPhone|iPod/.test(ua) || (/Android|HarmonyOS/.test(ua) && /Mobile/.test(ua));
+    const claimTablet = !claimPhone && (/iPad/.test(ua) || /Android/.test(ua));
+    const tp = navigator.maxTouchPoints || 0;
+    const coarse = mq("(pointer: coarse)"), anyFine = mq("(any-pointer: fine)"), hover = mq("(hover: hover)");
+    const touchEvt = "ontouchstart" in window;
+    const gpu = String(R.gpuClean || R.gpuRaw || "");
+    const desktopGpu = /NVIDIA|GeForce|Quadro|Radeon|Intel\(R\)|Intel Iris|Iris\(TM\)|UHD Graphics|Apple M\d|SwiftShader|llvmpipe|Direct3D/i.test(gpu);
+    const mobileGpu = /Adreno|Mali|PowerVR|Xclipse|Immortalis|Apple GPU|Maleoon/i.test(gpu);
+    if (!claimPhone && !claimTablet) {
+      R.mobileHits = [];
+      const label = os === "macOS" && tp > 1
+        ? `UA 为 macOS 且具备 ${tp} 点触控：iPadOS 桌面版网站模式（正常）`
+        : tp > 0 && coarse && !anyFine
+        ? `桌面 UA + 纯触屏 (${tp} 点)：二合一平板模式`
+        : `桌面环境 · 触控点 ${tp} · ${coarse ? "粗指针" : "精细指针"}${hover ? " · 可悬停" : ""}`;
+      return setProbe("mobilex", label, { tone: "neutral" });
+    }
+    const hits = [];
+    if (tp === 0) hits.push("maxTouchPoints=0");
+    if (!touchEvt) hits.push("无 ontouchstart 触摸事件");
+    if (claimPhone && !coarse && anyFine) hits.push("主指针为精细鼠标");
+    if (claimPhone && hover && !coarse) hits.push("支持悬停 (hover)");
+    if (/Android|HarmonyOS/.test(ua) && desktopGpu && !mobileGpu) hits.push(`桌面显卡 ${gpu.slice(0, 36)}`);
+    if (/iPhone|iPad|iPod/.test(ua) && gpu && !/Apple/i.test(gpu)) hits.push(`非 Apple 显卡 ${gpu.slice(0, 36)}`);
+    if (claimPhone && Math.min(screen.width, screen.height) > 700) hits.push(`屏幕短边 ${Math.min(screen.width, screen.height)}px 远超手机`);
+    R.mobileHits = hits;
+    const who = claimPhone ? "手机" : "平板";
+    setProbe("mobilex", hits.length
+      ? `自称${who}，但 ${hits.join(" · ")}`
+      : `自称${who}：触控 ${tp} 点 / ${coarse ? "粗指针" : "精细指针"} / 触摸事件 / ${mobileGpu ? "移动 GPU" : "GPU 未暴露"} 全部自洽`,
+    { tone: hits.length >= 2 ? "bad" : hits.length ? "warn" : "ok" });
+  }
+
+  // (10) Input-event trust & mechanical straight-line ratio (passively recorded during the scan)
+  function inputStraightRatio(pts) {
+    let wins = 0, straight = 0;
+    for (let i = 0; i + 8 < pts.length; i += 4) {
+      const a = pts[i], b = pts[i + 8];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 40) continue;
+      wins++;
+      let maxDev = 0;
+      for (let j = i + 1; j < i + 8; j++) {
+        const p = pts[j];
+        maxDev = Math.max(maxDev, Math.abs((b.x - a.x) * (a.y - p.y) - (a.x - p.x) * (b.y - a.y)) / len);
+      }
+      if (maxDev < 1.0) straight++;
+    }
+    return wins >= 10 ? straight / wins : null;
+  }
+  function probeInputTrust() {
+    const L = INPUT_LOG;
+    const total = L.moves + L.keys + L.clicks + L.touches + L.wheels;
+    R.inputUntrusted = L.untrusted;
+    const ratio = inputStraightRatio(L.pts);
+    R.inputStraight = ratio;
+    if (!total && !L.untrusted) return setProbe("input", "检测期间未发生鼠标 / 键盘 / 触摸交互（正常，可移动鼠标后点「重新检测」）", { na: true });
+    const parts = [`鼠标移动 ${L.moves}`, `点击 ${L.clicks}`, `按键 ${L.keys}`, `触摸 ${L.touches}`, `滚轮 ${L.wheels}`].filter(s => !/ 0$/.test(s));
+    const flags = [];
+    if (L.untrusted) flags.push(`${L.untrusted} 个 isTrusted=false 合成事件`);
+    if (ratio != null && ratio >= 0.9) flags.push(`轨迹 ${Math.round(ratio * 100)}% 为机械直线`);
+    if (L.moves >= 30 && L.zeroMove / L.moves > 0.9) flags.push("movementX/Y 恒为 0");
+    setProbe("input", flags.length ? `${flags.join(" · ")} · ${parts.join(" / ")}` : `${parts.join(" / ")} · 全部为可信原生事件${ratio != null ? ` · 直线段 ${Math.round(ratio * 100)}%` : ""}`, {
+      tone: L.untrusted ? "bad" : flags.length ? "warn" : "ok"
+    });
+  }
+
+  // (11) Global multi-region RTT triangulation with speed-of-light floor (AWS DynamoDB /ping endpoints)
+  const RTT_REGIONS = [
+    ["us-east-1", "美东弗吉尼亚", "US", 38.9, -77.4], ["us-west-1", "美西加州", "US", 37.4, -121.9], ["us-west-2", "美西俄勒冈", "US", 45.8, -119.7],
+    ["ca-central-1", "加拿大蒙特利尔", "CA", 45.5, -73.6], ["sa-east-1", "巴西圣保罗", "BR", -23.5, -46.6], ["eu-west-1", "爱尔兰都柏林", "IE", 53.3, -6.3],
+    ["eu-west-2", "英国伦敦", "GB", 51.5, -0.1], ["eu-central-1", "德国法兰克福", "DE", 50.1, 8.7], ["eu-north-1", "瑞典斯德哥尔摩", "SE", 59.3, 18.1],
+    ["me-central-1", "阿联酋", "AE", 25.2, 55.3], ["ap-south-1", "印度孟买", "IN", 19.1, 72.9], ["ap-southeast-1", "新加坡", "SG", 1.35, 103.8],
+    ["ap-southeast-2", "澳洲悉尼", "AU", -33.9, 151.2], ["ap-northeast-1", "日本东京", "JP", 35.7, 139.7], ["ap-northeast-2", "韩国首尔", "KR", 37.6, 127.0],
+    ["ap-east-1", "中国香港", "HK", 22.3, 114.2], ["af-south-1", "南非开普敦", "ZA", -33.9, 18.4], ["cn-north-1", "中国北京", "CN", 39.9, 116.4]
+  ];
+  async function probeRttGeo() {
+    const urlOf = id => id.startsWith("cn-") ? `https://dynamodb.${id}.amazonaws.com.cn/ping` : `https://dynamodb.${id}.amazonaws.com/ping`;
+    const once = async u => {
+      const t = performance.now();
+      try {
+        await fetch(u, { mode: "no-cors", cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(3000) });
+        return performance.now() - t;
+      } catch (e) { return null; }
+    };
+    const measure = async u => {
+      if (await once(u) == null) return null; // cold: DNS + TCP + TLS
+      const warm = [await once(u), await once(u)].filter(x => x != null);
+      return warm.length ? Math.round(Math.min(...warm)) : null;
+    };
+    const queue = RTT_REGIONS.slice();
+    const results = [];
+    const worker = async () => {
+      while (queue.length) {
+        const [id, name, cc, lat, lon] = queue.shift();
+        const ms = await measure(urlOf(id));
+        if (ms != null) results.push({ id, name, cc, lat, lon, ms });
+      }
+    };
+    await within(Promise.all(Array.from({ length: 6 }, worker)), 12000, null);
+    results.sort((a, b) => a.ms - b.ms);
+    R.rttGeo = results;
+    refreshRttGeoProbe();
+  }
+  function analyzeRttGeo() {
+    const list = R.rttGeo || [];
+    if (!list.length) return null;
+    let violation = null;
+    if (R.ipLat != null && R.ipLon != null && Number.isFinite(R.ipLat) && Number.isFinite(R.ipLon)) {
+      for (const r of list) {
+        const km = haversineKm(R.ipLat, R.ipLon, r.lat, r.lon);
+        // 光纤往返物理下限 ≈ 距离 / 100 ms（单程 200 km/ms），预先扣除 800 km 的 IP 库定位误差
+        const floorMs = Math.max(0, (km - 800) / 100);
+        if (km >= 2000 && r.ms + 8 < floorMs && (!violation || floorMs - r.ms > violation.floorMs - violation.ms)) {
+          violation = { ...r, km: Math.round(km), floorMs: Math.round(floorMs) };
+        }
+      }
+    }
+    return { best: list[0], violation, count: list.length };
+  }
+  function refreshRttGeoProbe() {
+    if (!R.rttGeo) return;
+    const a = analyzeRttGeo();
+    if (!a) return setNA("rttgeo", "全球测距端点均不可达（网络策略拦截）");
+    const top = R.rttGeo.slice(0, 3).map(r => `${r.name} ${r.ms}ms`).join(" · ");
+    const why = R.rttGeo.map(r => `${r.name} (${r.id}): ${r.ms} ms`).join("\n");
+    if (a.violation) {
+      const v = a.violation;
+      setProbe("rttgeo", `光速违例：${v.name} 往返仅 ${v.ms}ms，但出口登记地距其 ${v.km.toLocaleString()} km（物理下限≈${v.floorMs}ms） · 最近 ${top}`, { tone: "bad", why });
+    } else {
+      setProbe("rttgeo", `最近 ${top}（${a.count} 区域可达）`, { why });
+    }
+  }
+
+  // (12) Server-observed proxy forwarding headers + Accept-Language q-value grammar
+  function probeHeaderForensics() {
+    const srv = R.srv;
+    if (!srv || !srv.headers) {
+      setNA("proxyhdr", "服务端观测接口未返回");
+      setNA("h_lfmt", "服务端观测接口未返回");
+      return;
+    }
+    const ph = srv.proxyHeaders;
+    if (!ph) {
+      setNA("proxyhdr", "服务端版本未提供代理头分析");
+    } else {
+      const parts = [];
+      if ((ph.names || []).length) parts.push(`携带 ${ph.names.join(", ")}`);
+      if (ph.xffHops > 0) parts.push(`X-Forwarded-For 预置 ${ph.xffHops} 跳上游`);
+      if (ph.via) parts.push(`Via: ${ph.via}`);
+      R.proxyHdrHits = parts;
+      setProbe("proxyhdr", parts.length ? `检出中间层转发头：${parts.join(" · ")}` : "未携带 Via / Forwarded / X-Forwarded-For 等代理转发头", { tone: parts.length ? "bad" : "ok" });
+    }
+    const al = String(srv.headers["accept-language"] || "");
+    if (!al) {
+      R.alIssues = [];
+      return setNA("h_lfmt", "未发送 Accept-Language");
+    }
+    const toks = al.split(",").map(s => s.trim()).filter(Boolean).map(s => {
+      const [tag, ...ps] = s.split(";").map(x => x.trim());
+      const qp = ps.find(p => /^q=/i.test(p));
+      return { tag: (tag || "").toLowerCase(), q: qp ? Number(qp.slice(2)) : 1, qRaw: qp ? qp.slice(2) : null };
+    });
+    const issues = [];
+    for (let i = 1; i < toks.length; i++) {
+      if (toks[i].q > toks[i - 1].q + 1e-9) { issues.push("q 权重未递减"); break; }
+    }
+    if (toks.some(t => !(t.q > 0 && t.q <= 1) || (t.qRaw != null && !/^(0(\.\d{1,3})?|1(\.0{1,3})?)$/.test(t.qRaw)))) issues.push("q 值格式非法");
+    const navPrim = new Set((R.langs || []).map(l => String(l).toLowerCase().split("-")[0]));
+    const alien = toks.filter(t => t.tag && t.tag !== "*" && !navPrim.has(t.tag.split("-")[0])).map(t => t.tag);
+    if (alien.length && navPrim.size) issues.push(`含 JS 语言列表之外的语种 (${alien.slice(0, 3).join(", ")})`);
+    const reduced = toks.length === 1 && (R.langs || []).length > 1;
+    R.alIssues = issues;
+    setProbe("h_lfmt", issues.length
+      ? `格式异常：${issues.join("；")}`
+      : `${toks.length} 项 · q 权重递减合规 · 语种与 navigator.languages 吻合${reduced ? " · 仅发送首选语言（精简策略）" : ""}`,
+    { tone: issues.length ? "bad" : "ok" });
+  }
+
   function initInteractiveProbes() {
     // 1. 7-Tracker Blocking Live Test
     const TRACKER_URLS = [
@@ -3951,7 +4505,8 @@
       conn: [
         "原理：服务端网卡直接抓到了建立连接的首个 TCP SYN 包。如果浏览器自报 macOS/Windows，而发包内核却是 Linux（TTL=64 配合 Linux 窗口/选项），说明代理节点服务器在替你发起 TCP 连接——哪怕开全局/TUN 也会被抓，因为远端落地机仍是 Linux！",
         "低成本规避：在远端代理机器上用 eBPF / NFQUEUE 工具按目标系统重写对外发包的 TTL、Window 与 TCP Options，但须保持整条连接状态一致（否则会被下一项「内核时钟防改包」识破）。",
-        "终极根治：在代理链路最末端挂载真实同构系统住宅节点（如真 Mac mini / Windows 软路由出口，或原生住宅 SOCKS5 落地），或强制走 HTTP/3 (QUIC over UDP) 隐藏内核 TCP SYN 选项。"
+        "终极根治：在代理链路最末端挂载真实同构系统住宅节点（如真 Mac mini / Windows 软路由出口，或原生住宅 SOCKS5 落地），或强制走 HTTP/3 (QUIC over UDP) 隐藏内核 TCP SYN 选项。",
+        "若提示「中间层注入代理转发头」：TLS 已在本站终止，Via / Forwarded / X-Forwarded-For 只能由解密 HTTPS 的中间人（企业网关、杀软 HTTPS 扫描、抓包工具或 Cloudflare Worker 反代）添加——请关闭杀软的 HTTPS 扫描 / 抓包代理，或改用不改写请求头的透明隧道。"
       ],
       synspoof: [
         "服务端 AF_PACKET 同时比对了首包 SYN 与后续 TLS ClientHello 数据包的 IPv4 DF 分片位、IPID 递增规律及 TCP Timestamp (TSval) 内核节拍频率 (Hz)。",
@@ -3961,11 +4516,13 @@
       reality: [
         "服务端主动反向连接你当前出口 IP 的 :443 端口进行 TLS 证书归属验真：真实家庭宽带光猫在公网侧通常关闭 :443，绝不会挂载大厂官网证书。",
         "若检出「非官方 ASN 却返回 Microsoft / Apple / Yahoo / Amazon 等大厂证书」，这是 VLESS-Reality 借用他人域名证书的铁证——严苛风控一旦反向回探，100% 实锤代理节点！",
-        "修复建议：将自建 Reality / TLS 节点监听端口迁离标准 :443，或在代理服务端配置 Outbound 链式转发至不开任何公网端口的纯净家宽落地 IP。"
+        "修复建议：将自建 Reality / TLS 节点监听端口迁离标准 :443，或在代理服务端配置 Outbound 链式转发至不开任何公网端口的纯净家宽落地 IP。",
+        "端口回扫：服务端同时对出口 IP 并发 connect 17 个常见代理 / VPN / 远控 / 面板端口（1080、3128、8388、7890、10808、1194、22、3389、54321 等）。出口若开放 SOCKS / HTTP 代理或 Shadowsocks、OpenVPN 端口，等于直接告诉风控「这台机器就是代理服务器」——请用防火墙 / 安全组仅对自己的来源 IP 放行，并关闭 X-UI 等面板的公网监听。"
       ],
       rtt: [
         "原理（三维物理测距）：① 服务端测量 TCP 握手耗时（代理节点→本站物理距离）；② 浏览器测量 HTTP 往返耗时（你的电脑→代理节点→本站）；③ WebRTC 测量 STUN UDP 候选耗时。三者差值直接框定「你到代理节点」多绕的物理路程，无法靠改浏览器插件伪造。",
-        "有效解法：① 缩短第一跳物理距离——亚洲用户优先选用日本/新加坡/香港 IEPL/IPLC 专线（电脑→节点仅 +8~20ms，落入正常 Wi-Fi 抖动阈值内）；② 若必须用欧美住宅 IP，直接在同城云桌面（如美西 Mac/Win 远程主机）内打开浏览器，使浏览器与出口物理同地，实现 0ms 中转差！"
+        "有效解法：① 缩短第一跳物理距离——亚洲用户优先选用日本/新加坡/香港 IEPL/IPLC 专线（电脑→节点仅 +8~20ms，落入正常 Wi-Fi 抖动阈值内）；② 若必须用欧美住宅 IP，直接在同城云桌面（如美西 Mac/Win 远程主机）内打开浏览器，使浏览器与出口物理同地，实现 0ms 中转差！",
+        "光速违例：浏览器还会对 AWS 全球 18 个区域测量热连接往返。任何信号都不可能快于光纤中的光速（往返约 距离/100 ms），若到某区域的往返低于「出口 IP 登记地 → 该区域」的物理下限，说明这条流量根本没走当前出口（规则分流直连），或出口 IP 是登记在 A 洲却在 B 洲广播的「广播 IP」。修复：改用全局 / TUN 模式，并选择 RIR 注册国与实际机房一致的原生 IP。"
       ],
       webrtc: [
         `在代理客户端中开启「TUN 虚拟网卡模式（接管全局 UDP）」，使 STUN UDP 探测包与 TCP 走完全相同的代理出口。`,
@@ -3995,17 +4552,22 @@
       ],
       tamper: [
         "检测到当前页面原生 JS 原型、Canvas/Audio 像素回读或 HTTP 请求头与 JS 读数不一致（通常由防关联插件、改 UA 扩展或注入式脚本引起）。",
-        "建议打开无扩展的干净浏览器 Profile 测试；切勿在普通浏览器安装「Canvas Defender / User-Agent Switcher」等浅层插件（越装越容易被直接判定为黑产环境）。"
+        "建议打开无扩展的干净浏览器 Profile 测试；切勿在普通浏览器安装「Canvas Defender / User-Agent Switcher」等浅层插件（越装越容易被直接判定为黑产环境）。",
+        "v7.4 新增的跨层核验更难绕过：① CSS 媒体查询（device-width / resolution）由渲染引擎计算，只改 JS screen 属性必然矛盾；② 夏令时与 2005/2015 历史时区规则由 ICU 计算，只 Hook getTimezoneOffset 固定值会在冬夏切换露馅；③ FontFace local() 直接走系统字体服务，只 Hook Canvas measureText 的字体伪装会被反证；④ Accept-Language 改写须保持 q 权重递减且语种与 navigator.languages 同源。"
       ],
       fpb: [
         "指纹浏览器三大常见死穴：① 只改主线程忘了改 Web Worker；② 虚报新版 Chrome 但底层 Chromium 内核缺失新版 JS/CSS 特性；③ Windows 机器伪装成 Mac 但显卡渲染器仍暴露 Direct3D。",
-        "修复建议：升级指纹浏览器到最新内核版本，并保持「真实宿主机系统 = Profile 伪装系统」。"
+        "修复建议：升级指纹浏览器到最新内核版本，并保持「真实宿主机系统 = Profile 伪装系统」。",
+        "WebAssembly 特性矩阵（GC / 尾调用 / Relaxed SIMD / JSPI 等）是内核编译期决定的，无法通过 JS 注入伪造；本地字体 local() 旁路则直接反映宿主系统字库——两者都与 UA 自报版本 / 系统对不上时，说明内核或宿主机与伪装不符。"
       ],
       ua: [
-        "请关闭任何改 User-Agent 的插件或开发者工具设备模拟模式，保持 HTTP 请求头、Sec-CH-UA-Platform 与显卡驱动平台三者自然一致。"
+        "请关闭任何改 User-Agent 的插件或开发者工具设备模拟模式，保持 HTTP 请求头、Sec-CH-UA-Platform 与显卡驱动平台三者自然一致。",
+        "冒充手机时，触控点数、主指针精度 (pointer: coarse)、悬停能力、ontouchstart、屏幕短边与 GPU 型号（Adreno / Mali / Apple GPU）必须同时成立；DevTools 设备模拟无法改变桌面显卡型号，需真机或云手机。"
       ],
       bot: [
-        "当前浏览器暴露了 navigator.webdriver 或自动化调试协议标记（Selenium / Playwright / Puppeteer）。",
+        "当前浏览器暴露了 navigator.webdriver、CDP 调试协议附着或自动化框架注入标记（Selenium / Playwright / Puppeteer）。",
+        "CDP 附着检测：只要 DevTools Protocol 的 Runtime 域被启用（开发者工具打开、Puppeteer / Playwright 默认行为），控制台序列化就会触发探针；手动排查时请关闭开发者工具后重测。",
+        "无头窗口：outerWidth/outerHeight 为 0 或与视口完全相同属于无头 / Kiosk 特征；合成事件 (isTrusted=false) 则直接证明页面交互由脚本 dispatchEvent 伪造。",
         "正常使用请直接双击打开原生浏览器；自动化测试需配合底层 C++ 级补丁或真实无注入隔离环境。"
       ],
       fp: [
@@ -4156,6 +4718,11 @@
       }
     }
 
+    // 6b. conn overlay: HTTPS middlebox-injected forwarding headers (TLS already terminated at this site)
+    if ((R.proxyHdrHits || []).length && out.conn?.level !== "bad") {
+      out.conn = { level: "warn", summary: `TLS 握手后的 HTTP 请求被中间层注入代理转发头（${R.proxyHdrHits.join(" · ")}），疑似 HTTPS 解密代理 / 企业网关 / 杀软 Web 防护 / CF Worker 反代` };
+    }
+
     // 7. synspoof: IP DF/IPID Continuity, TCP Timestamp Hz & Mux Coalescing
     const mux = R.muxBurst;
     // Only flag DF=0 as an OS header contradiction when the wire TCP SYN itself is NOT already a
@@ -4202,6 +4769,21 @@
       };
     }
 
+    // 8b. reality overlay: live proxy / VPN / remote-control port back-scan of the visitor's own egress
+    const pts = R.intel?.ports;
+    if (pts?.probed && !pts.synProxyLikely && R.intel?.isSelfEgress !== false) {
+      const hardPorts = [...(pts.proxyOpen || []), ...(pts.vpnOpen || [])];
+      const softPorts = [...(pts.remoteOpen || []), ...(pts.panelOpen || [])];
+      const desc = (pts.open || []).filter(o => o.kind !== "web").map(o => `${o.port}/${o.svc}`).slice(0, 5).join("、");
+      if (hardPorts.length && out.reality.level !== "bad") {
+        out.reality = { level: "bad", summary: `出口实时回扫命中代理 / VPN 服务端口 (${desc})：当前出口本身就是一台代理或 VPN 服务器` };
+      } else if (softPorts.length && out.reality.level === "ok" && R.netKind !== "dc") {
+        out.reality = { level: "warn", summary: `出口自称非机房宽带，但公网开放远控 / 面板端口 (${desc})` };
+      } else if (out.reality.level === "ok") {
+        out.reality = { ...out.reality, summary: `${out.reality.summary} · ${desc ? `端口回扫：${desc}` : `${pts.scanned} 个代理/远控端口全部关闭`}` };
+      }
+    }
+
     // 9. rtt: 3D Physical Distance Triangulation (Browser HTTP vs Server TCP vs WebRTC STUN UDP + Geo Fiber Floor)
     if (!R.latDone || R.httpRtt == null) {
       out.rtt = { level: "info", summary: R.coarseTimer ? "浏览器开启了时钟降精度保护，无法精确测量毫秒级往返差" : "等待浏览器热连接、服务端握手与 UDP 候选三维测距…" };
@@ -4239,6 +4821,15 @@
           };
         }
       }
+    }
+
+    // 9b. rtt overlay: multi-region speed-of-light violation (traffic to that region bypassed the egress, or broadcast IP)
+    const geoRtt = analyzeRttGeo();
+    if (geoRtt?.violation && out.rtt?.level !== "bad") {
+      const v = geoRtt.violation;
+      out.rtt = { level: "bad", summary: `光速违例：到 ${v.name} 往返仅 ${v.ms} ms，但出口 IP 登记地距其 ${v.km.toLocaleString()} km（光纤物理下限≈${v.floorMs} ms），该路流量未经出口或出口为跨洲广播 IP` };
+    } else if (geoRtt?.best && out.rtt?.level === "ok") {
+      out.rtt = { ...out.rtt, summary: `${out.rtt.summary} · 全球测距最近 ${geoRtt.best.name} ${geoRtt.best.ms} ms` };
     }
 
     // 10. webrtc: WebRTC STUN Leak & IPv6 MAC Leak
@@ -4413,11 +5004,17 @@
     if (wantEngine && R.engine && R.engine !== "Unknown" && R.engine !== wantEngine) {
       tamperReasons.push(`自报 ${R.br?.name} 但真实 JS 引擎却是 ${R.engine}`);
     }
+    if ((R.mqDiffs || []).length) tamperReasons.push(`CSS 媒体查询与 JS 屏幕读数矛盾 (${R.mqDiffs.join("；")})`);
+    if (R.tzDstMismatch) tamperReasons.push(`夏令时 / 历史时区规则断裂 (${R.tzDstMismatch[0]})`);
+    if ((R.clockInternalGap || 0) > 1000) tamperReasons.push(`Date 接口相互矛盾 ${R.clockInternalGap} ms（时间被部分 Hook）`);
+    if ((R.fontLocalHidden || []).length) tamperReasons.push(`Canvas 字体探测被 Hook（local() 证明已安装 ${R.fontLocalHidden.slice(0, 2).join(" / ")}）`);
+    if ((R.alIssues || []).length) tamperReasons.push(`Accept-Language 头被改写 (${R.alIssues[0]})`);
+    const strongNewTamper = (R.mqDiffs || []).length > 0 || !!R.tzDstMismatch || (R.clockInternalGap || 0) > 1000 || (R.fontLocalHidden || []).length > 0;
 
     if (!tamperReasons.length) {
       out.tamper = { level: "ok", summary: "52 项原生原型、HTTP 请求头、洁净 iframe 与像素回读均纯净无篡改痕迹" };
     } else {
-      const severe = tamperReasons.length >= 2 || (R.lies || []).length >= 2 || (R.iframeDiffs || []).length > 0 || R.tzOff !== R.dateOff || (hdrUa && hdrUa !== navigator.userAgent);
+      const severe = strongNewTamper || tamperReasons.length >= 2 || (R.lies || []).length >= 2 || (R.iframeDiffs || []).length > 0 || R.tzOff !== R.dateOff || (hdrUa && hdrUa !== navigator.userAgent);
       out.tamper = { level: severe ? "bad" : "warn", summary: `抓获环境篡改痕迹：${tamperReasons.join("；")}` };
     }
 
@@ -4455,6 +5052,14 @@
         fpbHits.push(`高熵 Client Hints 异常：自称 Chrome ${claimedChrome} + ${R.gpuClean}，但 platformVersion 为空导致系统回退暴露为冻结的 macOS 10.15`);
       }
     }
+    const wf = R.wasmFeat;
+    if (wf && wf.simd) {
+      const claimedFf = +((/Firefox\/(\d+)/.exec(navigator.userAgent) || [])[1] || 0);
+      if (R.engine === "V8" && claimedChrome >= 121 && !wf.gc) fpbHits.push(`虚报 Chrome ${claimedChrome}，但 WebAssembly GC（Chromium 119+ 默认启用）不可用`);
+      else if (R.engine === "V8" && claimedChrome >= 114 && !wf.tailCall) fpbHits.push(`虚报 Chrome ${claimedChrome}，但 WebAssembly 尾调用（Chromium 112+）不可用`);
+      else if (R.engine === "SpiderMonkey" && claimedFf >= 122 && !wf.gc) fpbHits.push(`虚报 Firefox ${claimedFf}，但 WebAssembly GC（Firefox 120+）不可用`);
+    }
+    if (R.fontLocalOsConflict) fpbHits.push(`本地字体旁路：${R.fontLocalOsConflict}`);
     if (R.gpuSoft) fpbHits.push("使用 SwiftShader / Basic Render 软件虚拟显卡");
 
     out.fpb = fpbHits.length
@@ -4471,14 +5076,25 @@
     if (hdrPlat && R.dev?.os && ((hdrPlat === "Windows" && R.dev.os !== "Windows") || (hdrPlat === "macOS" && R.dev.os !== "macOS"))) {
       uaMismatch.push(`HTTP Sec-CH-UA-Platform 头 (${hdrPlat}) 与 UA 不符`);
     }
+    if ((R.mobileHits || []).length >= 2) {
+      uaMismatch.push(`自称移动设备但硬件与输入特征自相矛盾 (${R.mobileHits.slice(0, 3).join(" · ")})，典型 DevTools 设备模拟或改 UA 冒充`);
+    }
     out.ua = uaMismatch.length
       ? { level: "bad", summary: uaMismatch.join("；") }
       : { level: "ok", summary: `User-Agent、Client Hints 与硬件平台 (${R.osLabel || "未知"}) 三方一致` };
 
-    // 19. bot: Automation & Headless Browser
-    out.bot = (R.botHits || []).length
-      ? { level: "bad", summary: `检出自动化控制框架特征：${R.botHits.join(" · ")}` }
-      : { level: "ok", summary: "未发现 WebDriver、CDP 注入钩子或无头浏览器特征" };
+    // 19. bot: Automation & Headless Browser (WebDriver hooks, CDP attach, headless window frame, synthetic input events)
+    const botBad = [...(R.botHits || [])];
+    if ((R.inputUntrusted || 0) > 0) botBad.push(`${R.inputUntrusted} 个 isTrusted=false 合成输入事件`);
+    const botWarn = [];
+    if (R.cdpHit) botWarn.push("CDP Runtime 调试协议已附着（开发者工具打开或被 Puppeteer / Playwright 控制）");
+    if (R.winHeadless) botWarn.push("无头窗口尺寸特征（浏览器外框为 0 或窗口大于屏幕）");
+    if (R.inputStraight != null && R.inputStraight >= 0.9) botWarn.push(`鼠标轨迹 ${Math.round(R.inputStraight * 100)}% 为机械直线`);
+    out.bot = botBad.length
+      ? { level: "bad", summary: `检出自动化控制框架特征：${[...botBad, ...botWarn].join(" · ")}` }
+      : botWarn.length
+      ? { level: "warn", summary: `存在调试 / 无头环境迹象：${botWarn.join(" · ")}` }
+      : { level: "ok", summary: "未发现 WebDriver、CDP 附着、无头窗口外框或合成输入事件" };
 
     // 20. fp: Cross-Site Tracking Resistance & Partial Storage Wipe / ETag Resurrection
     const protectedFp = ["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind);
@@ -4549,7 +5165,7 @@
     split: "国内外分流",
     conn: "TCP 协议栈",
     synspoof: "TSval 与粘包",
-    reality: ":443 证书验真",
+    reality: ":443 与端口回扫",
     rtt: "物理测距",
     webrtc: "WebRTC 泄漏",
     dc: "机房/家宽属性",
@@ -5912,7 +6528,7 @@
       if (R.isSharedView) {
         const shareUrl = location.href;
         const lines = [
-          `【WhoProbe v7.2 · 公开脱敏体检快照 #${R.shareId || "-"}】`,
+          `【WhoProbe v7.4 · 公开脱敏体检快照 #${R.shareId || "-"}】`,
           `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
           `脱敏链接: ${shareUrl}`,
           ``,
@@ -5930,7 +6546,7 @@
       const masked = document.body.classList.contains("is-masked");
       const pur = R.intel?.purity;
       const lines = [
-        `【WhoProbe v7.2 · 148项全栈指纹与出口信誉体检报告】`,
+        `【WhoProbe v7.4 · 162项全栈指纹与出口信誉体检报告】`,
         `伪装健康度: ${R.score ?? "--"}/100 (等级 ${R.grade || "-"}) · 暴露破绽: ${R.totalIssues ?? 0} 处`,
         `出口纯净度: ${pur ? `${pur.score}/100 (${pur.grade} 级)` : "--"} · 脏邻居: ${R.intel?.cidr?.neighbours?.dirtyCount ?? 0} 个`,
         `推断设备: ${R.osLabel || "-"} · ${R.browserLabel || "-"} · 屏幕 ${R.physScreen || "-"} @ ${R.hz || 60}Hz`,
@@ -5971,7 +6587,7 @@
           ? Object.fromEntries(Object.entries(R.values || {}).map(([k, v]) => [k, SNIFFER_MAP[k]?.mask ? "[MASKED]" : v]))
           : R.values
       };
-      copyText(JSON.stringify(payload, null, 2), "已复制 148 项完整 JSON 数据");
+      copyText(JSON.stringify(payload, null, 2), "已复制 162 项完整 JSON 数据");
     });
 
     $("#btnCopyUrl")?.addEventListener("click", () => copyText(location.href, "已复制页面链接"));
@@ -6001,7 +6617,7 @@
       if (val) copyText(val, "已复制 Markdown 签名徽章代码");
     });
 
-    // Rerun all 148 probes (or navigate to live self-test if viewing a shared snapshot)
+    // Rerun all 162 probes (or navigate to live self-test if viewing a shared snapshot)
     $("#btnRerun")?.addEventListener("click", () => {
       if (R.isSharedView) {
         location.href = "./";
@@ -6198,7 +6814,7 @@
 
   async function openOrCreateShareModal() {
     if (!R.finished) {
-      showToast("请等待 148 项探针确认完成后再生成分享链接");
+      showToast("请等待 162 项探针确认完成后再生成分享链接");
       return;
     }
     if (R.shareResult) {
@@ -6736,10 +7352,14 @@
     updateProgress();
 
     // Phase 1: Synchronous & Instant Local Probes (< 30ms)
+    resetInputLog();
     probeLocale();
+    probeTzDst();
     probeDeviceAndSpecs();
     probeNavAndPrefs();
     probeLiesAndIframe();
+    probeWinChrome();
+    probeMqScreen();
     initInteractiveProbes();
 
     // Phase 2: Fonts, Graphics, Canvas & High-Entropy Hints (needed for composite IDs & portrait)
@@ -6750,6 +7370,8 @@
       probeSubpixelAndEngine()
     ]);
     await probeHighEntropyHints();
+    probeMobileConsistency();
+    probeWasmFeatures();
 
     // Render early partial portrait & checks while network probes finish
     if (seq !== runSeq) return;
@@ -6785,11 +7407,14 @@
     });
     // 等待 pSrv 完成或最多 1.2s 后启动延迟与微脉冲探测，既保证 R.srvTcpRtt 就绪，又绝不被慢连接卡死
     const pLat = Promise.race([pSrv, new Promise(r => setTimeout(r, 1200))]).then(() => probeLatency());
+    // 多区域光速测距在微脉冲测速完成后再启动，避免并发请求干扰粘包/抖动时序
+    const pGeo = pLat.then(() => probeRttGeo()).catch(() => setNA("rttgeo", "全球测距异常中止"));
 
     await Promise.all([
       pSrv,
       pIntel,
       pLat,
+      pGeo,
       pExits,
       probeDns(),
       probeWebrtc(),
@@ -6804,7 +7429,10 @@
       probeWorkerRealm(),
       probeEtag(),
       probeTraces(),
-      probeDomExtensions()
+      probeDomExtensions(),
+      probeFontLocal(),
+      probeCdp(),
+      probeIncognito()
     ]);
 
     if (seq !== runSeq) return;
@@ -6814,6 +7442,10 @@
     refreshMuxJitterProbe();
     probeV6Mac();
     probeShield();
+    probeHeaderForensics();
+    probeClockSrc();
+    refreshRttGeoProbe();
+    probeInputTrust();
     await probeCompositeIds();
 
     R.finished = true;
@@ -6830,7 +7462,7 @@
     if (stTxt) stTxt.textContent = `已完成 ${completedSet.size}/${SNIFFERS.length} 项 · ${elapsedSec}s`;
     if (dot) dot.className = "size-1.5 shrink-0 rounded-full bg-emerald-500";
     const elap = $("#portraitElapsed");
-    if (elap) elap.textContent = `${elapsedSec}s · 148 项探针`;
+    if (elap) elap.textContent = `${elapsedSec}s · ${SNIFFERS.length} 项探针`;
     if (rerunBtn) rerunBtn.disabled = false;
     if (rerunTxt) rerunTxt.textContent = "重新检测";
     if ($("#btnShare")) $("#btnShare").hidden = false;

@@ -1,5 +1,29 @@
 # Changelog
 
+## [v7.4.0] - 2026-11-25
+
+### Added — 14 项新检测手段（148 → 162 项探针）
+- **出口 IP 实时代理 / 远控端口回扫 (`portscan` · `egress_intel.py`)**：服务端以单线程 `selectors` 并发 `connect` 出口 IP 的 17 个常见代理（SOCKS 1080 / Squid 3128 / HTTP 8080·8888 / Privoxy 8118 / Shadowsocks 8388 / Clash 7890 / V2Ray 10808 / Tor 9050）、VPN（OpenVPN 1194 / PPTP 1723）、远控（SSH 22 / RDP 3389 / VNC 5900）与面板（X-UI 54321 / 8443）端口，只被动读取欢迎横幅（IP 自动脱敏）、不发送任何载荷；≥70% 端口同时“开放”时判定为 SYN-Proxy/Tarpit 并放弃结论。命中代理/VPN 端口会写入多源投票。**防滥用：仅对访客自身出口执行，`?ip=` 查询任意 IP 时不扫描；`--no-active-probe` 一并关闭。**
+- **全球 18 区域 RTT 光速三角测距 (`rttgeo`)**：浏览器对 AWS DynamoDB 全球 18 个区域（含北京）`/ping` 端点做冷启动 + 2 次热连接测距；任一区域往返低于「出口 IP 登记地 → 该区域」光纤物理下限（≈ 距离/100 ms，已扣 800 km 定位误差）即判定「光速违例」：该路流量未经当前出口（规则分流直连）或出口属跨洲广播 IP。
+- **代理转发头与 HTTPS 中间人注入 (`proxyhdr` · `probe.py`)**：`/api/who/me` 新增 `proxyHeaders`，识别 TLS 终止后仍出现的 `Via` / `Forwarded` / 预置 `X-Forwarded-For` 跳数 / `CF-Worker` / 非可信来源 `CF-*` 等 30 余种中间层头（仅返回头名称与脱敏 Via）。
+- **Accept-Language q 权重格式核验 (`h_lfmt`)**：q 值递减、格式合法性及语种是否超出 `navigator.languages`。
+- **夏令时规则与历史时区偏移核验 (`tzdst`)**：今年冬/夏与 2005/2015 共 5 个时点比对 `Date.getTimezoneOffset` 与 Intl IANA 规则。
+- **Date 时钟源内部一致性 (`clocksrc`)**：`Date.now` / `new Date` / `Date.parse(ISO)` 互校，并展示单调时钟漂移与服务端校时。
+- **CSS 媒体查询 vs JS 屏幕读数 (`mqscreen`)**：二分反推 `device-width/height`、`resolution` 与 `orientation`，拆穿只改 JS `screen` / `devicePixelRatio` 的插件。
+- **移动端仿真一致性 (`mobilex`)**：自称手机/平板时核对触控点、主指针、悬停、`ontouchstart`、屏幕短边与 GPU 型号，识别 DevTools 设备模拟。
+- **WebAssembly 特性矩阵与内核代际 (`wasmfeat`)**：13 项 WASM 提案字节码 + JSPI，反推 V8 / SpiderMonkey 最低代际，虚报新版 Chrome/Firefox 却缺 GC / 尾调用时计入指纹浏览器矛盾。
+- **FontFace `local()` 字体旁路核验 (`fontlocal`)**：17 款系统标志性字体多名称变体加载，与 Canvas 字体探测交叉比对并核验自报系统必备字体。
+- **CDP 调试协议附着与注入帧 (`cdp`)**：`Error.stack` getter + `console.debug` 序列化副作用、Puppeteer/Playwright 注入帧、Selenium DOM 标记与无头通知权限矛盾。
+- **窗口外框与无头渲染尺寸 (`winchrome`)**：外框为 0 / 与视口相同（无头、Kiosk）与开发者工具停靠识别，已排除缩放、全屏与 PWA。
+- **无痕 / 隐私窗口识别 (`incog`)**：Chromium 配额 vs 堆上限、Safari/Firefox OPFS 异常侧信道。
+- **交互事件可信度与轨迹 (`input`)**：被动记录检测期间输入事件，`isTrusted=false` 合成事件直接计入自动化痕迹，并统计机械直线轨迹占比。
+
+### Changed
+- 核心核验融合新信号：`reality` 更名为「出口主动回探（:443 Reality 与代理端口）」；`rtt` 叠加光速违例；`conn` 叠加中间层代理头；`tamper` 叠加媒体查询 / 夏令时 / Date Hook / 字体 Hook / 语言头改写；`fpb` 叠加 WASM 代际与本地字体系统矛盾；`ua` 叠加移动端仿真矛盾；`bot` 新增 CDP 附着、无头外框（警告）与合成事件（高危）分级。
+- 自检 (`--self-test`) 新增代理头识别、端口回扫汇总/SYN-Proxy 防误报、横幅脱敏与 `/api/who/me` `proxyHeaders` 用例。
+
+---
+
 ## [v7.3.3] - 2026-11-21
 
 ### Fixed

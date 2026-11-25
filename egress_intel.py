@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import bisect
 import concurrent.futures
+import errno
 import ipaddress
 import json
 import math
 import os
 import re
+import selectors
 import socket
 import ssl
 import tempfile
@@ -65,6 +67,7 @@ ASN_CACHE = SimpleTTLCache(maxsize=1024, ttl_sec=3600.0)
 TLS443_CACHE = SimpleTTLCache(maxsize=2048, ttl_sec=900.0)
 CIDR_CACHE = SimpleTTLCache(maxsize=32, ttl_sec=21600.0)  # 6 hours
 RAW_TLS443_CACHE = SimpleTTLCache(maxsize=2048, ttl_sec=900.0)
+PORTSCAN_CACHE = SimpleTTLCache(maxsize=2048, ttl_sec=900.0)
 _CIDR_LOCKS: dict[str, threading.Lock] = {}
 _CIDR_GLOBAL_LOCK = threading.Lock()
 _INTEL_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=48, thread_name_prefix="intel")
@@ -911,6 +914,164 @@ def inspect_exit_tls_443(ip: str, asn: int | None = None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# 出口 IP 实时代理 / 远控端口回扫（仅 TCP connect + 被动读取欢迎横幅，不发送任何载荷）
+# ---------------------------------------------------------------------------
+
+PROXY_SCAN_PORTS: tuple[tuple[int, str, str], ...] = (
+    (22, "SSH", "remote"),
+    (80, "HTTP", "web"),
+    (1080, "SOCKS", "proxy"),
+    (1194, "OpenVPN", "vpn"),
+    (1723, "PPTP", "vpn"),
+    (3128, "Squid", "proxy"),
+    (3389, "RDP", "remote"),
+    (5900, "VNC", "remote"),
+    (7890, "Clash", "proxy"),
+    (8080, "HTTP-Proxy", "proxy"),
+    (8118, "Privoxy", "proxy"),
+    (8388, "Shadowsocks", "proxy"),
+    (8443, "HTTPS-Alt", "panel"),
+    (8888, "HTTP-Proxy", "proxy"),
+    (9050, "Tor-SOCKS", "proxy"),
+    (10808, "V2Ray-SOCKS", "proxy"),
+    (54321, "X-UI", "panel"),
+)
+
+_BANNER_IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b|\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}\b")
+_CONNECT_PENDING = {0, errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EAGAIN, 10035}
+
+
+def _clean_banner(data: bytes) -> str:
+    txt = "".join(ch if 32 <= ord(ch) < 127 else " " for ch in data.decode("latin-1", errors="ignore"))
+    txt = _BANNER_IP_RE.sub("x.x.x.x", " ".join(txt.split()))
+    return txt[:60]
+
+
+def _summarize_ports(open_items: list[dict[str, Any]], scanned: int, elapsed_ms: float) -> dict[str, Any]:
+    syn_proxy = len(open_items) >= max(10, int(scanned * 0.7))
+    by_kind = lambda kind: [it["port"] for it in open_items if it["kind"] == kind]  # noqa: E731
+    return {
+        "probed": True,
+        "scanned": scanned,
+        "open": open_items,
+        "proxyOpen": [] if syn_proxy else by_kind("proxy"),
+        "vpnOpen": [] if syn_proxy else by_kind("vpn"),
+        "remoteOpen": [] if syn_proxy else by_kind("remote"),
+        "panelOpen": [] if syn_proxy else by_kind("panel"),
+        "webOpen": [] if syn_proxy else by_kind("web"),
+        "synProxyLikely": syn_proxy,
+        "elapsedMs": round(elapsed_ms, 1),
+    }
+
+
+def probe_exit_ports(ip: str, timeout: float = 1.0, banner_wait: float = 0.45) -> dict[str, Any]:
+    """单线程 selectors 并发 connect 出口 IP 的 17 个常见代理 / VPN / 远控 / 面板端口（缓存 15 分钟）。
+
+    家庭宽带与蜂窝 CGNAT 出口几乎从不对公网开放这些端口；若开放 SOCKS/HTTP 代理、Shadowsocks、
+    OpenVPN、SSH/RDP 或 X-UI 面板，说明当前出口就是一台服务器 / 代理节点。若绝大多数端口同时“开放”，
+    则判定为 SYN-Proxy / 防火墙 Tarpit，结论标记为不可信，避免误报。
+    """
+    cached = PORTSCAN_CACHE.get(ip)
+    if isinstance(cached, dict):
+        return cached
+    fam = socket.AF_INET6 if ":" in ip else socket.AF_INET
+    t0 = time.monotonic()
+    sel = selectors.DefaultSelector()
+    pending: dict[socket.socket, tuple[int, str, str]] = {}
+    try:
+        for port, svc, kind in PROXY_SCAN_PORTS:
+            try:
+                s = socket.socket(fam, socket.SOCK_STREAM)
+            except OSError:
+                continue
+            try:
+                s.setblocking(False)
+                if s.connect_ex((ip, port)) not in _CONNECT_PENDING:
+                    s.close()
+                    continue
+                sel.register(s, selectors.EVENT_WRITE)
+                pending[s] = (port, svc, kind)
+            except OSError:
+                s.close()
+
+        open_socks: list[tuple[socket.socket, tuple[int, str, str]]] = []
+        deadline = t0 + timeout
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            for key, _ in sel.select(remaining):
+                s = key.fileobj  # type: ignore[assignment]
+                meta = pending.pop(s, None)  # type: ignore[arg-type]
+                try:
+                    sel.unregister(s)
+                except (KeyError, ValueError):
+                    pass
+                if meta is None:
+                    continue
+                try:
+                    ok = s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0  # type: ignore[union-attr]
+                except OSError:
+                    ok = False
+                if ok:
+                    open_socks.append((s, meta))  # type: ignore[arg-type]
+                else:
+                    s.close()  # type: ignore[union-attr]
+        for s in list(pending):
+            try:
+                sel.unregister(s)
+            except (KeyError, ValueError):
+                pass
+            s.close()
+        pending.clear()
+
+        banners: dict[int, str] = {}
+        if open_socks:
+            for s, meta in open_socks:
+                try:
+                    sel.register(s, selectors.EVENT_READ, meta)
+                except (KeyError, ValueError, OSError):
+                    pass
+            waiting = len(open_socks)
+            b_deadline = time.monotonic() + banner_wait
+            while waiting > 0:
+                remaining = b_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                events = sel.select(remaining)
+                if not events:
+                    break
+                for key, _ in events:
+                    waiting -= 1
+                    try:
+                        sel.unregister(key.fileobj)
+                    except (KeyError, ValueError):
+                        pass
+                    try:
+                        data = key.fileobj.recv(96)  # type: ignore[union-attr]
+                    except OSError:
+                        data = b""
+                    if data:
+                        banners[key.data[0]] = _clean_banner(data)
+            for s, _ in open_socks:
+                try:
+                    sel.unregister(s)
+                except (KeyError, ValueError):
+                    pass
+                s.close()
+    finally:
+        sel.close()
+
+    open_items = [
+        {"port": port, "svc": svc, "kind": kind, "banner": banners.get(port, "")}
+        for s, (port, svc, kind) in sorted(open_socks, key=lambda x: x[1][0])
+    ]
+    result = _summarize_ports(open_items, len(PROXY_SCAN_PORTS), (time.monotonic() - t0) * 1000.0)
+    PORTSCAN_CACHE.set(ip, result)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # DNSBL (DoH) 与 CIDR 列表 + /24 脏邻居 + 全 ASN 滥用密度
 # ---------------------------------------------------------------------------
 
@@ -1413,12 +1574,12 @@ def _tally_votes(votes: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> dict[str, Any]:
+def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enable_port_scan: bool = False) -> dict[str, Any]:
     norm_ip, ip_ver = normalize_public_ip(target_ip)
     if not norm_ip or not ip_ver:
         return {"ok": False, "error": "invalid-or-private-ip", "targetIp": target_ip}
 
-    cache_key = f"{norm_ip}:{1 if enable_active_443 else 0}"
+    cache_key = f"{norm_ip}:{1 if enable_active_443 else 0}:{1 if enable_port_scan else 0}"
     cached = INTEL_CACHE.get(cache_key)
     if isinstance(cached, dict):
         out = dict(cached)
@@ -1443,10 +1604,13 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
     f_dnsbls = [_INTEL_POOL.submit(_check_single_dnsbl, entry, norm_ip, ip_ver) for entry in DNSBLS]
     f_cidrs = [_INTEL_POOL.submit(load_cidr_list, entry, 2.4) for entry in CIDR_LISTS] if ip_ver == 4 else []
     f_raw443 = _INTEL_POOL.submit(_probe_raw_tls_443, norm_ip) if enable_active_443 else None
+    f_ports = _INTEL_POOL.submit(probe_exit_ports, norm_ip) if enable_port_scan else None
 
     all_s1 = [*f_srcs, f_rdap, f_shodan, f_sfs, f_otx, f_tor, *f_dnsbls, *f_cidrs]
     if f_raw443 is not None:
         all_s1.append(f_raw443)
+    if f_ports is not None:
+        all_s1.append(f_ports)
 
     # 硬挂钟预算 2.6 秒：慢源后台自然收尾，绝不调用 shutdown(wait=True) 卡死请求
     concurrent.futures.wait(all_s1, timeout=2.6)
@@ -1475,6 +1639,7 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
     ]
     loaded_cidrs = [_safe_res(f) for f in f_cidrs]
     raw_tls443 = _safe_res(f_raw443, {"port443Open": False, "tlsActive": False, "certInfo": {}, "rttMs": None})
+    exit_ports = _safe_res(f_ports, {"probed": False, "reason": "timeout"}) if f_ports is not None else {"probed": False, "reason": "disabled"}
 
     # 提取去重定位共识（按底层数据源家族去重）
     family_best: dict[str, dict[str, Any]] = {}
@@ -1658,6 +1823,14 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
         vpn_votes.append({"by": "Shodan VPN 标签", "value": True, "w": 0.55, "obs": True})
     if tls443.get("realitySuspect"):
         proxy_votes.append({"by": f":443 伪装证书 ({tls443.get('realityBrand')})", "value": True, "w": 0.92, "obs": True})
+    if exit_ports.get("probed") and not exit_ports.get("synProxyLikely"):
+        if exit_ports.get("proxyOpen"):
+            ports_txt = ",".join(str(p) for p in exit_ports["proxyOpen"][:4])
+            proxy_votes.append({"by": f"出口开放代理端口 ({ports_txt})", "value": True, "w": 0.85, "obs": True})
+        if exit_ports.get("vpnOpen"):
+            vpn_votes.append({"by": "出口开放 VPN 服务端口", "value": True, "w": 0.75, "obs": True})
+        if exit_ports.get("remoteOpen") or exit_ports.get("panelOpen"):
+            hosting_votes.append({"by": "出口开放 SSH/RDP/面板端口", "value": True, "w": 0.4, "obs": True})
     if cidr_tor_hit or any(d["id"] == "dantor" and d.get("listed") for d in dnsbl_results) or (onionoo and onionoo.get("torExit")):
         tor_votes.append({"by": "Tor 官方共识/出口表", "value": True, "w": 0.95, "hard": True, "obs": True})
     if sfs and sfs.get("appears", 0) > 0:
@@ -1855,6 +2028,7 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True) -> d
         },
         "rdap": rdap_ip,
         "tls443": tls443,
+        "ports": exit_ports,
         "shodan": shodan,
         "threat": {
             "sfs": sfs,

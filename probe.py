@@ -20,6 +20,7 @@ import ipaddress
 import json
 import mimetypes
 import os
+import re
 import secrets
 import socket
 import struct
@@ -892,6 +893,36 @@ class LinuxPacketSniffer:
 SNIFFER: LinuxPacketSniffer | None = None
 
 
+# 浏览器原生从不发送、只会由中间层（HTTPS 解密代理 / 企业网关 / 杀软 Web 防护 / CDN Worker 反代）注入的转发头
+PROXY_LEAK_HEADERS = (
+    "via", "forwarded", "x-forwarded-host", "x-forwarded-server", "x-forwarded-port", "x-forwarded",
+    "forwarded-for", "x-proxy-id", "proxy-connection", "x-bluecoat-via", "client-ip", "true-client-ip",
+    "x-client-ip", "x-originating-ip", "x-cluster-client-ip", "x-remote-ip", "x-remote-addr",
+    "x-proxyuser-ip", "wl-proxy-client-ip", "proxy-client-ip", "x-coming-from", "x-imforwards",
+    "x-iwproxy-nesting", "x-proxymesh-ip", "fastly-client-ip", "akamai-origin-hop", "x-amz-cf-id",
+    "cf-worker",
+)
+CDN_ORIGIN_HEADERS = ("cf-connecting-ip", "cf-ray", "cdn-loop", "cf-ipcountry", "cf-visitor")
+_HDR_IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b|\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}\b")
+
+
+def detect_proxy_headers(headers, real_ip: str = "", trusted_cf: bool = False) -> dict:
+    """识别 TLS 终止后仍出现在 HTTP 请求中的代理转发头（仅返回头名称、跳数与脱敏 Via，不回显任何 IP）。"""
+    present = {k.lower() for k in headers.keys()}
+    names = [h for h in PROXY_LEAK_HEADERS if h in present]
+    if not trusted_cf:
+        names += [h for h in CDN_ORIGIN_HEADERS if h in present]
+    xff_parts = [p.strip() for p in (headers.get("X-Forwarded-For") or "").split(",") if p.strip()]
+    if real_ip:
+        # 本机 Nginx 以 $proxy_add_x_forwarded_for 追加了真实对端；可信 CF 边缘再额外贡献 1 跳
+        hops = max(0, len(xff_parts) - 1 - (1 if trusted_cf else 0))
+    else:
+        hops = len(xff_parts)
+    via_raw = headers.get("Via") or ""
+    via = _HDR_IP_RE.sub("x.x.x.x", " ".join(via_raw.split()))[:80]
+    return {"names": names, "xffHops": hops, "via": via, "suspect": bool(names or hops)}
+
+
 class WhoProbeHandler(BaseHTTPRequestHandler):
     server_version = "WhoProbe/2.0"
     _head_only = False
@@ -1049,9 +1080,11 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             req_ip = (qs.get("ip") or [""])[0].strip()
             target_ip = req_ip or self._extract_client_ip()
             is_self_query = not bool(req_ip) or (target_ip == self._extract_client_ip())
+            # 端口回扫仅针对访客自身出口执行，杜绝把本站当作任意 IP 的端口扫描器
             intel_payload = egress_intel.inspect_ip_intelligence(
                 target_ip,
                 enable_active_443=ENABLE_ACTIVE_443,
+                enable_port_scan=ENABLE_ACTIVE_443 and is_self_query,
             )
             intel_payload["isSelfEgress"] = is_self_query
             self._send_json(intel_payload)
@@ -1138,6 +1171,11 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
 
             pkt_data = PACKET_CACHE.get(client_ip)
             low_level = pkt_data if isinstance(pkt_data, dict) else {}
+            proxy_hdrs = detect_proxy_headers(
+                self.headers,
+                real_ip=xri_peer,
+                trusted_cf=bool(xri_peer and is_cloudflare_edge_ip(xri_peer)),
+            )
 
             geo = lookup_ip_geo(client_ip)
             self._send_json({
@@ -1155,6 +1193,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 },
                 "headerOrder": header_order,
                 "headers": visible_headers,
+                "proxyHeaders": proxy_hdrs,
                 # 兼容旧版调用字段
                 "ipGeo": geo,
             })
@@ -1287,6 +1326,29 @@ def run_self_test() -> None:
     assert egress_intel.normalize_public_ip("192.0.0.2") == (None, None)
     assert egress_intel.normalize_public_ip("127.0.0.1") == (None, None)
 
+    # 1b) 代理转发头识别：Nginx 追加的真实对端不计入上游跳数，Via 中的 IP 必须脱敏
+    ph_clean = detect_proxy_headers({"X-Forwarded-For": "8.8.8.8", "User-Agent": "x"}, real_ip="8.8.8.8")
+    assert ph_clean["suspect"] is False and ph_clean["xffHops"] == 0
+    ph_dirty = detect_proxy_headers(
+        {"X-Forwarded-For": "10.1.2.3, 8.8.8.8", "Via": "1.1 squid (203.0.113.9)", "CF-Ray": "abc"},
+        real_ip="8.8.8.8",
+    )
+    assert ph_dirty["suspect"] is True and ph_dirty["xffHops"] == 1
+    assert "via" in ph_dirty["names"] and "cf-ray" in ph_dirty["names"] and "203.0.113.9" not in ph_dirty["via"]
+    ph_cf = detect_proxy_headers({"X-Forwarded-For": "1.1.1.1, 104.16.2.3", "CF-Ray": "abc"}, real_ip="104.16.2.3", trusted_cf=True)
+    assert ph_cf["suspect"] is False
+
+    # 1c) 端口回扫汇总：SYN-Proxy 全端口“开放”时不得输出代理端口结论；横幅中的 IP 必须脱敏
+    fake_open = [{"port": p, "svc": s, "kind": k, "banner": ""} for p, s, k in egress_intel.PROXY_SCAN_PORTS]
+    assert egress_intel._summarize_ports(fake_open, len(fake_open), 5.0)["synProxyLikely"] is True
+    assert egress_intel._summarize_ports(fake_open, len(fake_open), 5.0)["proxyOpen"] == []
+    two_open = [{"port": 22, "svc": "SSH", "kind": "remote", "banner": ""}, {"port": 1080, "svc": "SOCKS", "kind": "proxy", "banner": ""}]
+    summ = egress_intel._summarize_ports(two_open, 17, 5.0)
+    assert summ["proxyOpen"] == [1080] and summ["remoteOpen"] == [22] and summ["synProxyLikely"] is False
+    assert "198.51.100.7" not in egress_intel._clean_banner(b"SSH-2.0-OpenSSH_9.6 198.51.100.7\r\n")
+    lo_scan = egress_intel.probe_exit_ports("127.0.0.1", timeout=0.3, banner_wait=0.05)
+    assert lo_scan["probed"] is True and lo_scan["scanned"] == len(egress_intel.PROXY_SCAN_PORTS)
+
     # 2) 启动临时 HTTP 服务验证所有路由（含隐私脱敏分享系统）
     with tempfile.TemporaryDirectory(prefix="whoprobe_test_") as tmp_dir:
         global SHARE_STORE
@@ -1336,6 +1398,15 @@ def run_self_test() -> None:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/me", timeout=6) as r5:
                 me = json.loads(r5.read().decode("utf-8"))
                 assert r5.status == 200 and me.get("ok") is True and "headerOrder" in me
+                assert isinstance(me.get("proxyHeaders"), dict) and me["proxyHeaders"]["suspect"] is False
+
+            req_via = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/who/me",
+                headers={"Via": "1.1 corp-gateway", "X-Real-IP": "8.8.8.8", "X-Forwarded-For": "10.0.0.5, 8.8.8.8"},
+            )
+            with urllib.request.urlopen(req_via, timeout=6) as r_via:
+                via_me = json.loads(r_via.read().decode("utf-8"))
+                assert via_me["proxyHeaders"]["suspect"] is True and via_me["proxyHeaders"]["xffHops"] == 1
 
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/intel?ip=127.0.0.1", timeout=3) as r6:
                 intel_priv = json.loads(r6.read().decode("utf-8"))
@@ -1410,13 +1481,13 @@ def run_self_test() -> None:
 
 def main() -> None:
     global SNIFFER, ENABLE_ACTIVE_443
-    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.2)")
+    parser = argparse.ArgumentParser(description="全维度浏览器与网络环境指纹探测服务 (WhoProbe v7.4)")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8899, help="监听端口 (默认 8899)")
     parser.add_argument("--sniff-iface", default="", help="可选 Linux 网卡名(如 ens5)，开启旁路 TCP SYN/JA4 抓包")
     parser.add_argument("--sniff-port", type=int, default=443, help="旁路抓包目标端口 (默认 443)")
     parser.add_argument("--data-dir", default="", help="可选分享快照 SQLite 目录 (默认使用 STATE_DIRECTORY 或 ./data)")
-    parser.add_argument("--no-active-probe", action="store_true", help="禁用针对来访公网 IP:443 的反向 TLS/Reality 证书验真")
+    parser.add_argument("--no-active-probe", action="store_true", help="禁用针对来访公网 IP 的反向 :443 TLS/Reality 验真与代理端口回扫")
     parser.add_argument("--self-test", action="store_true", help="运行自动化自检后退出")
     args = parser.parse_args()
 

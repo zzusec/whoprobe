@@ -2082,21 +2082,38 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             return xff
         return self.client_address[0]
 
-    def _require_admin(self) -> bool:
+    def _check_admin_access(self, qs: dict[str, list[str]] | None = None) -> tuple[bool, str | None]:
+        """
+        校验 ?k=<token>、X-Admin-Key 或已签发 HttpOnly 会话 Cookie。
+        未携带有效凭据时一律伪装返回 404，对扫描器完全隐身管理后台路径。
+        返回 (authorized, new_cookie_header_or_None)。
+        """
         if ADMIN_AUTH is None or ADMIN_STORE is None:
-            self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
-            return False
+            return False, None
+        client_ip = self._extract_client_ip()
+        k_val = ((qs or {}).get("k") or [""])[0].strip() or (self.headers.get("X-Admin-Key") or "").strip()
+        if k_val:
+            if not ADMIN_AUTH.check_rate_limit(client_ip):
+                return False, None
+            if not ADMIN_AUTH.verify_password(k_val):
+                ADMIN_AUTH.record_failure(client_ip)
+                return False, None
+            ADMIN_AUTH.clear_failures(client_ip)
+            is_https = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower() == "https"
+            flags = f"Path=/; HttpOnly; SameSite=Strict{'; Secure' if is_https else ''}"
+            tok = ADMIN_AUTH.issue_session_cookie()
+            return True, f"{ADMIN_AUTH.COOKIE_NAME}={tok}; Max-Age={ADMIN_AUTH.SESSION_TTL_SEC}; {flags}"
+
         ok = ADMIN_AUTH.verify_request_headers(
             self.headers.get("Cookie") or "",
             self.headers.get("Authorization") or "",
         )
+        return ok, None
+
+    def _require_admin(self, qs: dict[str, list[str]] | None = None) -> bool:
+        ok, _ = self._check_admin_access(qs)
         if not ok:
-            self._send_json(
-                {"ok": False, "error": "unauthorized"},
-                cache_control="no-store",
-                status=HTTPStatus.UNAUTHORIZED,
-                extra_headers={"X-Robots-Tag": "noindex, nofollow"},
-            )
+            self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
             return False
         return True
 
@@ -2117,31 +2134,36 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
 
         origin_prefix, base_href = self._origin_and_base(mounted_under_who)
 
-        # 0a) 可选管理后台页面与统计审计接口 (未配置密钥时统一返回 404)
+        # 0a) 隐身令牌式管理后台 (/admin?k=<token>)：无有效令牌或 Cookie 时一律返回 404，绝不暴露后台入口
         if path in ("/admin", "/admin/"):
-            if ADMIN_AUTH is None or ADMIN_STORE is None:
+            qs_adm = urllib.parse.parse_qs(parsed.query)
+            ok_adm, new_ck = self._check_admin_access(qs_adm)
+            if not ok_adm:
                 self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
                 return
             adm_file = STATIC_DIR / "admin.html"
             if not adm_file.is_file():
-                self._send_json({"ok": False, "error": "admin_ui_missing"}, status=HTTPStatus.NOT_FOUND)
+                self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
                 return
             raw_adm = adm_file.read_text(encoding="utf-8")
             base_tag = f'  <base href="{share_store.html.escape(base_href, quote=True)}">\n'
             out_adm = raw_adm.replace("<head>", "<head>\n" + base_tag, 1) if "<head>" in raw_adm else (base_tag + raw_adm)
+            adm_page_hdrs = {"X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer"}
+            if new_ck:
+                adm_page_hdrs["Set-Cookie"] = new_ck
             self._send_bytes(
                 out_adm.encode("utf-8"),
                 "text/html; charset=utf-8",
                 cache_control="no-store, no-cache, must-revalidate",
-                extra_headers={"X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer"},
+                extra_headers=adm_page_hdrs,
             )
             return
 
         if path.startswith("/api/who/admin/"):
-            if not self._require_admin():
+            qs = urllib.parse.parse_qs(parsed.query)
+            if not self._require_admin(qs):
                 return
             assert ADMIN_STORE is not None
-            qs = urllib.parse.parse_qs(parsed.query)
             adm_hdrs = {"X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer"}
 
             if path == "/api/who/admin/overview":
@@ -2649,47 +2671,13 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             path = path[4:]
 
         if path.startswith("/api/who/admin/"):
-            if ADMIN_AUTH is None or ADMIN_STORE is None:
-                self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
-                return
-            is_https = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower() == "https"
-            cookie_flags = f"Path=/; HttpOnly; SameSite=Strict{'; Secure' if is_https else ''}"
-
-            if path == "/api/who/admin/login":
-                client_ip = self._extract_client_ip()
-                if not ADMIN_AUTH.check_rate_limit(client_ip):
-                    self._send_json(
-                        {"ok": False, "error": "too_many_attempts"},
-                        status=HTTPStatus.TOO_MANY_REQUESTS,
-                    )
-                    return
-                try:
-                    ln = int(self.headers.get("Content-Length") or "0")
-                except ValueError:
-                    ln = 0
-                if ln <= 0 or ln > 4096:
-                    self._send_json({"ok": False, "error": "bad_request"}, status=HTTPStatus.BAD_REQUEST)
-                    return
-                try:
-                    body_obj = json.loads(self.rfile.read(ln).decode("utf-8", errors="strict"))
-                except Exception:
-                    body_obj = {}
-                pwd = str(body_obj.get("password") or "")
-                if not ADMIN_AUTH.verify_password(pwd):
-                    ADMIN_AUTH.record_failure(client_ip)
-                    self._send_json({"ok": False, "error": "invalid_password"}, status=HTTPStatus.UNAUTHORIZED)
-                    return
-                ADMIN_AUTH.clear_failures(client_ip)
-                tok = ADMIN_AUTH.issue_session_cookie()
-                self._send_json(
-                    {"ok": True},
-                    extra_headers={
-                        "Set-Cookie": f"{ADMIN_AUTH.COOKIE_NAME}={tok}; Max-Age={ADMIN_AUTH.SESSION_TTL_SEC}; {cookie_flags}"
-                    },
-                )
-                return
-
+            qs_post = urllib.parse.parse_qs(parsed.query)
             if path == "/api/who/admin/logout":
+                if ADMIN_AUTH is None:
+                    self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                is_https = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower() == "https"
+                cookie_flags = f"Path=/; HttpOnly; SameSite=Strict{'; Secure' if is_https else ''}"
                 self._send_json(
                     {"ok": True},
                     extra_headers={"Set-Cookie": f"{ADMIN_AUTH.COOKIE_NAME}=; Max-Age=0; {cookie_flags}"},
@@ -2697,8 +2685,9 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 return
 
             if path.startswith("/api/who/admin/share/") and path.endswith("/delete"):
-                if not self._require_admin():
+                if not self._require_admin(qs_post):
                     return
+                assert ADMIN_STORE is not None
                 sid = path.removeprefix("/api/who/admin/share/").removesuffix("/delete").strip("/")
                 deleted = get_share_store().delete(sid)
                 ADMIN_STORE.delete_share_meta(sid)
@@ -2990,7 +2979,7 @@ def run_self_test() -> None:
                 syn_ttl=52, hello_ttl=52, syn_had_ts=True, syn_tsval=0, hello_tsval=2_850_000_000, dt_sec=0.050
             )[1] is True
 
-            # 5) 验证管理后台默认关闭(404)与启用后的鉴权会话、每日访客统计及分享页预览溯源
+            # 5) 验证 ?k=<token> 隐身令牌访问模式：无令牌/错令牌访问 /admin 与接口一律返回 404，正确 ?k= 签发 Cookie 直达后台
             global ADMIN_AUTH, ADMIN_STORE
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{port}/admin", timeout=3)
@@ -2998,36 +2987,24 @@ def run_self_test() -> None:
             except urllib.error.HTTPError as he:
                 assert he.code == 404
 
-            test_secret = "test-admin-secret-998877"
+            test_secret = secrets.token_urlsafe(24)
             adm_tmp_obj = tempfile.TemporaryDirectory()
             ADMIN_AUTH = admin_store.AdminAuth(test_secret)
             ADMIN_STORE = admin_store.AdminStore(adm_tmp_obj.name)
             try:
-                try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{port}/api/who/admin/overview", timeout=3)
-                    raise AssertionError("unauthenticated admin overview must return 401")
-                except urllib.error.HTTPError as he:
-                    assert he.code == 401
+                for unauth_url in (
+                    f"http://127.0.0.1:{port}/admin",
+                    f"http://127.0.0.1:{port}/admin?k=wrongtoken000000",
+                    f"http://127.0.0.1:{port}/api/who/admin/overview",
+                ):
+                    try:
+                        urllib.request.urlopen(unauth_url, timeout=3)
+                        raise AssertionError(f"{unauth_url} must return 404")
+                    except urllib.error.HTTPError as he:
+                        assert he.code == 404
 
-                bad_login = urllib.request.Request(
-                    f"http://127.0.0.1:{port}/api/who/admin/login",
-                    data=json.dumps({"password": "wrong"}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                try:
-                    urllib.request.urlopen(bad_login, timeout=3)
-                    raise AssertionError("wrong password must return 401")
-                except urllib.error.HTTPError as he:
-                    assert he.code == 401
-
-                ok_login = urllib.request.Request(
-                    f"http://127.0.0.1:{port}/api/who/admin/login",
-                    data=json.dumps({"password": test_secret}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(ok_login, timeout=3) as r_lg:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/admin?k={test_secret}", timeout=3) as r_lg:
+                    assert r_lg.status == 200
                     set_ck = r_lg.headers.get("Set-Cookie") or ""
                     assert "wp_adm=" in set_ck and "HttpOnly" in set_ck
                     adm_cookie = set_ck.split(";", 1)[0]

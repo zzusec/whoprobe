@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
   <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
   <title>WhoProbe · 管理后台 — 每日访客、真实 IP 与分享页审计</title>
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.8.0">
-  <link rel="stylesheet" href="./assets/style.css?v=7.8.0">
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=7.8.1">
+  <link rel="stylesheet" href="./assets/style.css?v=7.8.1">
   <script>
     (function () {
       try {
@@ -35,8 +36,8 @@
         </div>
 
         <div class="flex items-center gap-2">
-          <a href="./" target="_blank" rel="noopener" class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-zinc-700 bg-white ring-1 ring-zinc-950/[0.08] hover:bg-zinc-50 transition dark:bg-[#14171C] dark:text-zinc-300 dark:ring-white/[0.08] dark:hover:bg-white/[0.05]">打开检测站 ↗</a>
-          <button id="btnRefreshAdm" type="button" hidden class="py-1.5 px-3 inline-flex items-center gap-1.5 text-xs font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">
+          <a href="./" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-zinc-700 bg-white ring-1 ring-zinc-950/[0.08] hover:bg-zinc-50 transition dark:bg-[#14171C] dark:text-zinc-300 dark:ring-white/[0.08] dark:hover:bg-white/[0.05]">打开检测站 ↗</a>
+          <button id="btnRefreshAdm" type="button" class="py-1.5 px-3 inline-flex items-center gap-1.5 text-xs font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">
             <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
             <span>刷新数据</span>
           </button>
@@ -44,32 +45,14 @@
             <svg class="size-4 dark:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
             <svg class="size-4 hidden dark:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
           </button>
-          <button id="btnAdmLogout" type="button" hidden class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 transition dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25">退出</button>
+          <button id="btnAdmLogout" type="button" class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 transition dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25" title="清除本机管理会话 Cookie">锁定退出</button>
         </div>
       </div>
     </div>
   </header>
 
-  <!-- Password Login View -->
-  <section id="loginView" hidden class="max-w-md mx-auto px-4 pt-16 sm:pt-24">
-    <div class="surface-sheet rounded-2xl p-6 sm:p-7 space-y-5">
-      <div class="space-y-1.5">
-        <h1 class="text-lg font-semibold text-zinc-950 dark:text-white">管理员身份验证</h1>
-        <p class="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">输入管理口令以查看每日访客人数、来访公网 IP 明细以及全量分享报告原样预览。</p>
-      </div>
-      <form id="loginForm" class="space-y-3.5">
-        <div>
-          <label for="admPwdInput" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">后台访问口令</label>
-          <input id="admPwdInput" type="password" autocomplete="current-password" required placeholder="请输入管理口令…" class="w-full py-2.5 px-3.5 rounded-xl text-sm font-mono bg-zinc-100/80 ring-1 ring-zinc-950/[0.1] text-zinc-950 focus:bg-white focus:outline-none dark:bg-zinc-900 dark:ring-white/[0.12] dark:text-white">
-        </div>
-        <p id="loginErrMsg" hidden class="text-xs font-medium text-rose-600 dark:text-rose-400"></p>
-        <button id="btnLoginSubmit" type="submit" class="w-full py-2.5 px-4 rounded-xl text-xs font-semibold bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">进入管理后台</button>
-      </form>
-    </div>
-  </section>
-
   <!-- Authenticated Dashboard Workbench -->
-  <main id="dashView" hidden class="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-4">
+  <main id="dashView" class="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-4">
 
     <!-- Row 1: 5 Core Traffic & Share KPI Cards -->
     <section class="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -227,6 +210,6 @@
 
   <div id="admToast" hidden class="fixed bottom-5 right-5 z-50 rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-white shadow-xl dark:bg-zinc-100 dark:text-zinc-950 dark:border-white"></div>
 
-  <script src="./assets/admin.js?v=7.8.0"></script>
+  <script src="./assets/admin.js?v=7.8.1"></script>
 </body>
 </html>

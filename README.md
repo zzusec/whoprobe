@@ -174,7 +174,7 @@ SNIFF_IFACE=ens5 docker compose --profile sniffer up -d whoprobe-sniffer
 | `GET /api/who/quic` | 查询 UDP `:443` `QUICInitialCollector` 实时解密的 `JA4Q` 与 `quic_transport_parameters` |
 | `GET /api/who/tls2` | 查询同一客户端连续多次独立 TLS 握手的扩展洗牌 (`tlsPermutation`) 与 PSK 状态 |
 | `GET /sw-probe.js` | 同源零缓存 `SharedWorker` / `ServiceWorker` 第 4、5 界沙箱探针脚本 |
-| `GET /admin` | 可选管理后台（默认未配口令时返回 `404`；配置 `WHOPROBE_ADMIN_TOKEN` 或 `LoadCredential=admin_token` 后启用每日 UV/PV 趋势、来访 IP 明细与分享页全真预览） |
+| `GET /admin?k=<token>` | 隐身令牌式管理后台（未带正确 `?k=<token>` 时直接伪装返回 `404`，零登录框暴露；验证通过后直达后台并签发会话 Cookie） |
 
 ```text
 usage: probe.py [-h] [--host HOST] [--port PORT] [--sniff-iface SNIFF_IFACE]

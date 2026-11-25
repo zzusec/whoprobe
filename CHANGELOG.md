@@ -1,5 +1,13 @@
 # Changelog
 
+## [v7.8.1] - 2026-11-25
+
+### Changed — 管理后台改为 `/admin?k=<token>` 隐身直达令牌模式（无令牌访问直接 404）
+- 移除公开可见的密码登录框：未携带有效 `?k=<16位密钥>`（且无已签发会话 Cookie）访问 `/admin` 或任何 `/api/who/admin/*` 接口时，服务端一律返回标准 `404 Not Found`，对目录扫描器完全隐身。
+- 携带正确 `?k=<token>` 打开链接即可零点击直达后台看板（自动签发 14 天 `HttpOnly; SameSite=Strict; Secure` Cookie，同时支持无痕窗口 `X-Admin-Key` 透传），全页强制 `Referrer-Policy: no-referrer` 确保外跳链接绝不泄露 URL 中的密钥参数。
+
+---
+
 ## [v7.8.0] - 2026-11-25
 
 ### Added — 自托管管理后台：每日访客统计、真实来访 IP 明细与分享页画面预览 (`/admin`)

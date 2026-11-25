@@ -193,7 +193,9 @@ class AdminAuth:
         expected = hmac.new(self._sign_key, f"{exp_s}.{nonce}".encode("ascii"), hashlib.sha256).hexdigest()
         return hmac.compare_digest(sig, expected)
 
-    def verify_request_headers(self, cookie_header: str, auth_header: str) -> bool:
+    def verify_request_headers(self, cookie_header: str, auth_header: str, header_key: str = "") -> bool:
+        if header_key and self.verify_password(header_key):
+            return True
         auth = (auth_header or "").strip()
         if auth.lower().startswith("bearer "):
             if self.verify_password(auth[7:].strip()):

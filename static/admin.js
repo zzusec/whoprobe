@@ -1,10 +1,13 @@
-/* WhoProbe v7.8.0 — Self-Hosted Admin Analytics & Share Snapshot Inspector */
+/* WhoProbe v7.8.1 — Self-Hosted URL-Token Admin Analytics & Share Snapshot Inspector */
 (function () {
   "use strict";
 
   const $ = (s, root = document) => root.querySelector(s);
   const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const URL_KEY = (() => {
+    try { return (new URLSearchParams(location.search).get("k") || "").trim(); } catch (e) { return ""; }
+  })();
 
   let REG_ZH = null;
   try { REG_ZH = new Intl.DisplayNames(["zh-CN"], { type: "region" }); } catch (e) {}
@@ -65,34 +68,19 @@
     currentModalShareId: ""
   };
 
+  function authHeaders(extra = {}) {
+    return URL_KEY ? { ...extra, "X-Admin-Key": URL_KEY } : extra;
+  }
+
   async function apiGet(path) {
-    const r = await fetch(path, { cache: "no-store", credentials: "same-origin" });
-    if (r.status === 401) {
-      showLogin();
-      return null;
-    }
+    const r = await fetch(path, {
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: authHeaders()
+    });
+    if (!r.ok) return null;
     const j = await r.json().catch(() => null);
-    return r.ok && j?.ok ? j : null;
-  }
-
-  function showLogin(errMsg = "") {
-    $("#dashView").hidden = true;
-    $("#btnRefreshAdm").hidden = true;
-    $("#btnAdmLogout").hidden = true;
-    $("#loginView").hidden = false;
-    const errEl = $("#loginErrMsg");
-    if (errEl) {
-      errEl.textContent = errMsg;
-      errEl.hidden = !errMsg;
-    }
-    setTimeout(() => $("#admPwdInput")?.focus(), 50);
-  }
-
-  function showDash() {
-    $("#loginView").hidden = true;
-    $("#dashView").hidden = false;
-    $("#btnRefreshAdm").hidden = false;
-    $("#btnAdmLogout").hidden = false;
+    return j?.ok ? j : null;
   }
 
   function renderOverview(ov) {
@@ -486,7 +474,6 @@
   async function refreshAll() {
     const ov = await apiGet("./api/who/admin/overview?days=30");
     if (!ov) return;
-    showDash();
     renderOverview(ov);
     await Promise.all([
       loadVisits(),
@@ -503,38 +490,10 @@
       try { localStorage.setItem("whoprobe:theme", dark ? "dark" : "light"); } catch (e) {}
     });
 
-    // Login form
-    $("#loginForm")?.addEventListener("submit", async e => {
-      e.preventDefault();
-      const pwd = $("#admPwdInput")?.value || "";
-      const btn = $("#btnLoginSubmit");
-      if (btn) { btn.disabled = true; btn.textContent = "验证中…"; }
-      try {
-        const r = await fetch("./api/who/admin/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({ password: pwd })
-        });
-        if (r.status === 429) {
-          showLogin("尝试次数过多，请 10 分钟后再试");
-        } else if (!r.ok) {
-          showLogin("管理口令错误，请重试");
-        } else {
-          $("#admPwdInput").value = "";
-          await refreshAll();
-        }
-      } catch (err) {
-        showLogin("网络异常，请稍后重试");
-      } finally {
-        if (btn) { btn.disabled = false; btn.textContent = "进入管理后台"; }
-      }
-    });
-
-    // Logout
+    // Lock & exit session
     $("#btnAdmLogout")?.addEventListener("click", async () => {
       await fetch("./api/who/admin/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
-      showLogin("已安全退出管理会话");
+      location.href = "./";
     });
 
     $("#btnRefreshAdm")?.addEventListener("click", () => {
@@ -641,7 +600,8 @@
       if (!sid || !confirm(`确定要永久删除分享报告 #${sid} 吗？删除后公开链接将失效。`)) return;
       const r = await fetch(`./api/who/admin/share/${encodeURIComponent(sid)}/delete`, {
         method: "POST",
-        credentials: "same-origin"
+        credentials: "same-origin",
+        headers: authHeaders()
       });
       if (r.ok) {
         toast(`已删除分享报告 #${sid}`);

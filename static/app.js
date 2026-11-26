@@ -22,7 +22,16 @@
       siblingNav.hidden = false;
       if (plainBrand) plainBrand.hidden = true;
     }
+    const footerIpLink = $("#footerIpLink"), footerIpSep = $("#footerIpSep");
+    if (footerIpLink) {
+      footerIpLink.href = derivedIpHref;
+      footerIpLink.hidden = false;
+      if (footerIpSep) footerIpSep.hidden = false;
+    }
   }
+  $("#btnBackTop")?.addEventListener("click", () => {
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) { window.scrollTo(0, 0); }
+  });
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },

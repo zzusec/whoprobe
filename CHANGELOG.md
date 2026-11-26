@@ -1,5 +1,12 @@
 # Changelog
 
+## [v7.9.6] - 2026-11-26
+
+- 消除多源情报与首包单源 GeoIP 在「机房 vs 宽带」上的页面内自相矛盾：当 8 源加权投票与 PeeringDB 入向流量确认自治系统为宽带运营商（`hostE < 0.50` 且 `cls = isp/mobile`）时，双向修正首包单源误标的 `R.netKind = "dc"`，不再把挂靠宽带 ASN 的网段误判为高危云服务器机房。
+- 扩充商业 IP 租赁与托管经纪商识别库（覆盖 `PF IPv4 Borrower`、`PacketFabric`、`IPv4.Global`、`Unitas Global` 等），精准识别挂靠宽带运营商 ASN 宣告的「双 ISP 商业租赁/专线地址段」并在 `lease` 项与拓扑胶囊中明确提示。
+
+---
+
 ## [v7.9.5] - 2026-11-26
 
 - 彻底取消弹窗与系统服务提示：完全停用 `popupblk` 的 `window.open` 探测，移动端免弹窗跳过 `PublicKeyCredential`（消除华为/国产无 GMS 机型弹出「启用 Google Play 服务」提示）与蓝牙状态查询，HTML 响应头新增 `encrypted-media=(), bluetooth=(), publickey-credentials-get=(), publickey-credentials-create=()` 并加入 `notranslate` 元标签。

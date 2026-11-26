@@ -156,7 +156,7 @@ PDB_TYPE_MAP: dict[str, tuple[str, float]] = {
 }
 
 BROKER_RE = re.compile(
-    r"(ipxo|interlir|heficed|ipbroker|internet utilities|logicweb|ip-?volume|ipv4 ?(mall|market|depot)|abuseradar|cloud innovation|larus|netutils|cogent.*sub|lease)",
+    r"(ipxo|interlir|heficed|ipbroker|internet utilities|logicweb|ip-?volume|ipv4\s*\.\s*global|ipv4 ?(mall|market|depot|borrower)|\bborrower,?\s+llc\b|abuseradar|cloud innovation|larus|netutils|packetfabric|unitas global|hilco|cogent.*sub|lease)",
     re.I,
 )
 
@@ -1743,7 +1743,9 @@ def detect_ip_lease(
     m_brk = BROKER_RE.search(broker_haystack)
     if m_brk:
         weights.append(0.6)
-        reasons.append(f"管理/滥用联系人命中 IP 租赁平台 ({m_brk.group(0)})")
+        reasons.append(f"管理/滥用联系人命中 IP 租赁/托管平台 ({m_brk.group(0)})")
+        if org_name and holder and not overlap and not sub_alloc:
+            reasons.append(f"地址段登记给 {org_name}，挂靠在运营商 {holder} 宣告")
 
     ip_rir = rdap_ip.get("rir")
     if ip_rir and as_rir and ip_rir.upper() != as_rir.upper():

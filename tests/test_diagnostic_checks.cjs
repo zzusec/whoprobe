@@ -18,6 +18,7 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
     readMqScreen: probeMqScreen,
     readFontLocal: probeFontLocal,
     readHeaders: probeHeaderForensics,
+    applyIntel: applyIntelToProbes,
     updateUdp: updateUdpRttProbe,
     setIceTiming: value => { R.stunRttMs = value; },
     check: evaluateAllChecks,
@@ -463,4 +464,41 @@ test("genuine Android phone with nav-bar height inset, PostScript font aliases, 
   assert.equal(widevineCalled, false, "Widevine must not be called on Android");
   const checks = sandbox.tests.check();
   assert.equal(checks.tamper.level, "ok", checks.tamper.summary);
+});
+
+test("single-source dc tag on ISP-announced leased block reconciles to ISP + lease warning instead of contradicting scenarios", () => {
+  const h = harness({
+    state: {
+      finished: true,
+      values: {},
+      ip: "9.9.9.42",
+      ipCC: "US",
+      netKind: "dc", // initial single-source GeoIP false positive
+      asn: "AS5650",
+      org: "Verizon Business",
+    },
+  });
+  const intel = {
+    ok: true,
+    isSelfEgress: true,
+    targetIp: "9.9.9.42",
+    ipVersion: 4,
+    consensus: { country: "US", isNative: true, asn: 5650, org: "Verizon Business" },
+    votes: { hosting: { of: 4, yes: 1, E: 0.35 }, proxy: { of: 4, E: 0 }, vpn: { of: 4, E: 0 }, tor: { of: 3, E: 0 } },
+    asnProfile: {
+      inferred: { cls: "isp", conflict: null },
+      lease: { leased: true, possible: false, confidence: 0.6, reasons: ["管理/滥用联系人命中 IP 租赁/托管平台 (PF IPV4 Borrower)"] },
+    },
+    purity: { score: 92, grade: "A", uncertain: false, coverage: { known: 46, unknown: 0, notApplicable: 2, applicable: 46, ratio: 1 } },
+    dnsbl: { total: 12, listedCount: 0, abuseCount: 0, mailCount: 0, listed: [] },
+    cidr: { hits: [], x4bDatacenter: false, x4bVpn: false, neighbours: { dirtyCount: 0, wholeBlockListed: [] } },
+    tls443: { probed: false },
+  };
+  h.setState({ ...h.getState(), intel });
+  h.applyIntel(intel);
+  assert.equal(h.getState().netKind, "isp");
+  const ck = h.check();
+  assert.equal(ck.dc.level, "ok");
+  assert.equal(ck.lease.level, "warn");
+  assert.match(ck.lease.summary, /商业租赁/);
 });

@@ -169,6 +169,18 @@ class PurityTests(OfflineTests):
         self.assertFalse(first_ok["cacheHit"])
         self.assertTrue(second_ok["cacheHit"])
 
+    def test_leased_borrower_block_on_isp_asn_is_flagged_as_leased_not_datacenter_asn(self):
+        lease = intel.detect_ip_lease(
+            {"orgName": "PF IPV4 Borrower, LLC", "abuseEmail": "abuse@packetfabric.com", "status": "DIRECT ALLOCATION", "rir": "ARIN"},
+            "FRONTIER-FRTR - Frontier Communications of America, Inc.",
+            ["Verizon Business"],
+            "ARIN",
+            "US",
+            "US",
+        )
+        self.assertTrue(lease["leased"])
+        self.assertTrue(any("挂靠" in r or "租赁" in r for r in lease["reasons"]))
+
 
 class SourceSchemaTests(OfflineTests):
     def test_missing_threat_fields_and_empty_cidr_body_are_not_denials(self):

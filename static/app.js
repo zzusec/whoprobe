@@ -640,6 +640,13 @@
     }
     return { total, abuse, mail };
   }
+  function isIntelConfirmedIsp(intel) {
+    if (!intel?.ok) return false;
+    const v = intel.votes || {}, inf = intel.asnProfile?.inferred || {}, ci = intel.cidr || {};
+    return (v.hosting?.of || 0) >= 3 && (v.hosting?.E || 0) < 0.50
+      && (inf.cls === "isp" || inf.cls === "mobile")
+      && !inf.conflict && !ci.x4bDatacenter;
+  }
   function cleanIp(raw) {
     let s = String(raw || "").trim();
     if (!s) return "";
@@ -1669,6 +1676,9 @@
           : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
       );
     }
+    if (R.intel?.ok && R.intel.isSelfEgress !== false) {
+      reconcileNetKindWithIntel(R.intel);
+    }
     const selfLbl = [countryName(cc), g.city, org].filter(Boolean).join(" · ");
     if (!R.exits) R.exits = {};
     if (ip) {
@@ -1699,6 +1709,42 @@
 
   // 1b. Multi-Source Egress Intelligence, BGP/RDAP Lease, 12 DNSBLs, /24 Dirty Neighbours & Active :443 Reality Back-Probe (12 items: reality443 + 11 rep_*)
   const REP_PROBE_IDS = ["reality443", "portscan", "rep_score", "rep_votes", "rep_native", "rep_asn", "rep_lease", "rep_rpki", "rep_shodan", "rep_threat", "rep_dnsbl", "rep_cidr", "rep_neigh"];
+
+  function reconcileNetKindWithIntel(intel) {
+    if (!intel?.ok || intel.isSelfEgress === false || R.netKind === "relay") return;
+    const v = intel.votes || {}, inf = intel.asnProfile?.inferred || {}, ls = intel.asnProfile?.lease || {}, ci = intel.cidr || {};
+    const ispBadge = $("#ispTypeBadge");
+    if ((v.hosting?.E || 0) >= 0.55 || inf.cls === "hosting" || ci.x4bDatacenter) {
+      R.netKind = "dc";
+      setProbe("nettype", `多源投票识破机房/托管线路 (${Math.round((v.hosting?.E || 0.7) * 100)}% 置信)`, { tone: "bad" });
+      if (ispBadge) {
+        ispBadge.textContent = inf.conflict ? "伪家宽" : "机房 IDC";
+        ispBadge.className = "inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300";
+      }
+    } else if (isIntelConfirmedIsp(intel)) {
+      if (R.netKind === "dc") {
+        R.netKind = inf.cls === "mobile" ? "mobile" : "isp";
+      }
+      const isLeased = !!(ls.leased || ls.possible);
+      setProbe("nettype", isLeased
+        ? "商业租赁段挂靠宽带运营商宣告（双 ISP / 专线驻留特征）"
+        : R.netKind === "mobile"
+        ? "蜂窝移动数据网络 (4G/5G · 多源核验)"
+        : "家庭宽带 / 原生 ISP 线路（多源共识核验）",
+      { tone: isLeased ? "warn" : "ok" });
+      if (ispBadge) {
+        ispBadge.textContent = isLeased ? "商业租赁段" : R.netKind === "mobile" ? "蜂窝移动" : "原生家宽";
+        ispBadge.className = "inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 " + (
+          isLeased
+            ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+        );
+      }
+    } else if (R.netKind === "isp" && (ls.leased || ls.possible) && ispBadge) {
+      ispBadge.textContent = "商业租赁段";
+      ispBadge.className = "inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300";
+    }
+  }
 
   function applyIntelToProbes(intel) {
     if (!intel || !intel.ok) {
@@ -1751,16 +1797,8 @@
             : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
         );
       }
-      // Refine KPI 3 ISP badge if 8-source voting caught a fake-ISP or hosting node
-      if ((v.hosting?.E >= 0.55 || inf.cls === "hosting" || ci.x4bDatacenter) && R.netKind === "isp") {
-        R.netKind = "dc";
-        setProbe("nettype", `多源投票识破机房/托管线路 (${Math.round((v.hosting?.E || 0.7) * 100)}% 置信)`, { tone: "bad" });
-        const ispBadge = $("#ispTypeBadge");
-        if (ispBadge) {
-          ispBadge.textContent = inf.conflict ? "伪家宽" : "机房 IDC";
-          ispBadge.className = "inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300";
-        }
-      }
+      // Reconcile KPI 3 ISP badge & R.netKind bidirectionally with 8-source consensus
+      reconcileNetKindWithIntel(intel);
     }
 
     // 1) reality443: Active :443 TLS & VLESS-Reality Camouflage Back-Probe
@@ -6307,9 +6345,10 @@
     const hostE = R.intel?.votes?.hosting?.E || 0;
     const anonE = Math.max(R.intel?.votes?.vpn?.E || 0, R.intel?.votes?.proxy?.E || 0, R.intel?.votes?.tor?.E || 0);
     const infCls = R.intel?.asnProfile?.inferred?.cls || "";
+    const confirmedIsp = isIntelConfirmedIsp(R.intel);
     if (!R.srv && !R.intel && !R.netKind) {
       out.dc = { level: "info", summary: "正在融合 8 大情报源核查出口 ASN 与运营商类型…" };
-    } else if (R.netKind === "dc" || hostE >= 0.55 || infCls === "hosting" || R.intel?.cidr?.x4bDatacenter) {
+    } else if ((!confirmedIsp && R.netKind === "dc") || hostE >= 0.55 || infCls === "hosting" || R.intel?.cidr?.x4bDatacenter) {
       const conf = hostE > 0 ? ` · 多源机房置信度 ${Math.round(hostE * 100)}%` : "";
       out.dc = { level: "bad", summary: `机房 IP 告警：当前出口 (${R.asn} · ${R.org}) 属于云服务器/数据中心网段${conf}，易触发风控拦截` };
     } else if (anonE >= 0.45 || R.intel?.cidr?.x4bVpn) {
@@ -6317,7 +6356,8 @@
     } else if (R.netKind === "relay") {
       out.dc = { level: "info", summary: "当前使用 Apple iCloud 专用代理出口，网站已知为苹果官方隐私中继" };
     } else {
-      out.dc = { level: "ok", summary: `多源交叉核验通过：原生住宅/商业宽带或移动网络出口 (${R.asn} · ${R.org})` };
+      const splitNote = hostE >= 0.25 ? " · 个别库因租赁主体标托管" : "";
+      out.dc = { level: "ok", summary: `多源交叉核验通过：原生住宅/商业宽带或移动网络出口 (${R.asn} · ${R.org})${splitNote}` };
     }
 
     // 12. lease: Fake-ISP Conflict, IP Leasing Broker & Native vs Broadcast IP
@@ -8208,7 +8248,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.9.5",
+        version: "7.9.6",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,

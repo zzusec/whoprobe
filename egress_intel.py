@@ -2359,7 +2359,11 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
         "dnsbl": {
             "total": sum(state in {"hit", "clear"} for state in dnsbl_states),
             "listedCount": len(listed_dnsbls),
+            "abuseCount": sum(d.get("kind") in {"abuse", "tor"} or bool(d.get("proxy")) for d in listed_dnsbls),
+            "mailCount": sum(d.get("kind") == "mail" and not d.get("proxy") for d in listed_dnsbls),
             "listed": [d["name"] for d in listed_dnsbls],
+            "abuseListed": [d["name"] for d in listed_dnsbls if d.get("kind") in {"abuse", "tor"} or d.get("proxy")],
+            "mailListed": [d["name"] for d in listed_dnsbls if d.get("kind") == "mail" and not d.get("proxy")],
             "droneProxy": any(d.get("proxy") for d in listed_dnsbls),
         },
         "cidr": {

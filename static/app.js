@@ -623,6 +623,23 @@
     if (intel.ipVersion === 4 && intel.dnsbl && (intel.dnsbl.total || 0) < 6) return false;
     return true;
   }
+  const MAIL_DNSBL_NAMES = new Set(["SpamCop", "Barracuda", "PSBL", "Mailspike", "UCEPROTECT L1", "SPFBL", "0spam"]);
+  function splitDnsblCounts(dnsbl) {
+    if (!dnsbl) return { total: 0, abuse: 0, mail: 0 };
+    const total = dnsbl.listedCount || 0;
+    if (typeof dnsbl.abuseCount === "number" || typeof dnsbl.mailCount === "number") {
+      return { total, abuse: dnsbl.abuseCount || 0, mail: dnsbl.mailCount || 0 };
+    }
+    if (!total) return { total: 0, abuse: 0, mail: 0 };
+    const listed = Array.isArray(dnsbl.listed) ? dnsbl.listed : [];
+    if (!listed.length) return { total, abuse: total, mail: 0 };
+    let abuse = 0, mail = 0;
+    for (const name of listed) {
+      if (!dnsbl.droneProxy && MAIL_DNSBL_NAMES.has(name)) mail++;
+      else abuse++;
+    }
+    return { total, abuse, mail };
+  }
   function cleanIp(raw) {
     let s = String(raw || "").trim();
     if (!s) return "";
@@ -1873,8 +1890,10 @@
 
     // 10) rep_dnsbl: 12 DoH Real-time DNSBLs
     if ((bl.listedCount || 0) > 0) {
-      setProbe("rep_dnsbl", `${prefixTag}上榜 ${bl.listedCount}/${bl.total || 12} 家：${(bl.listed || []).join(", ")}${bl.droneProxy ? " [DroneBL 开放代理]" : ""}`, {
-        tone: "bad"
+      const blSplit = splitDnsblCounts(bl);
+      const onlyMail = blSplit.abuse === 0 && blSplit.mail > 0;
+      setProbe("rep_dnsbl", `${prefixTag}上榜 ${bl.listedCount}/${bl.total || 12} 家${onlyMail ? "（纯邮件反垃圾库，仅限 25 端口发信）" : ""}：${(bl.listed || []).join(", ")}${bl.droneProxy ? " [DroneBL 开放代理]" : ""}`, {
+        tone: blSplit.abuse > 0 || blSplit.mail >= 3 ? "bad" : "warn"
       });
     } else {
       setProbe("rep_dnsbl", `${prefixTag}通过全部 ${bl.total || 12} 家实时 DoH 黑名单核验（0 命中）`, { tone: "ok" });
@@ -6306,7 +6325,10 @@
     if (!R.intel) {
       out.reputation = { level: "info", summary: "正在并发核验 12 家实时黑名单、15 份攻击网段库与同 /24 脏邻居…" };
     } else {
-      const blCnt = R.intel.dnsbl?.listedCount || 0;
+      const blSplit = splitDnsblCounts(R.intel.dnsbl);
+      const blCnt = blSplit.total;
+      const abuseBlCnt = blSplit.abuse;
+      const mailBlCnt = blSplit.mail;
       const cidrHits = (R.intel.cidr?.hits || []).filter(isThreatCidrHit).length;
       const dirty = R.intel.cidr?.neighbours?.dirtyCount || 0;
       const whole = (R.intel.cidr?.neighbours?.wholeBlockListed || []).length > 0;
@@ -6320,22 +6342,24 @@
       const torHit = R.intel.threat?.onionoo?.isTorExit || R.intel.threat?.onionoo?.isTorRelay;
       const asnAbuse = R.intel.asnProfile?.abuseDensity?.ratio || 0;
 
-      if (blCnt > 0 || cidrHits > 0 || whole || torHit || (pScore != null && pScore < 52)) {
+      if (abuseBlCnt > 0 || mailBlCnt >= 3 || cidrHits > 0 || whole || torHit || (pScore != null && pScore < 52)) {
         out.reputation = {
           level: "bad",
-          summary: `有风险来源命中：${scoreLabel} · DNSBL 上榜 ${blCnt} 家 · 威胁段命中 ${cidrHits} 项${dirty ? ` · 同 /24 脏邻居 ${dirty} 个` : ""}`
+          summary: `有风险来源命中：${scoreLabel} · DNSBL 上榜 ${blCnt} 家${abuseBlCnt > 0 ? `（含攻击/代理类 ${abuseBlCnt} 家）` : ""} · 威胁段命中 ${cidrHits} 项${dirty ? ` · 同 /24 脏邻居 ${dirty} 个` : ""}`
         };
-      } else if (dirty > 0 || vulns > 0 || asnAbuse >= 3.5 || (pScore != null && pScore < 78)) {
+      } else if (mailBlCnt >= 2 || dirty > 0 || vulns > 0 || asnAbuse >= 3.5 || (pScore != null && pScore < 78)) {
         out.reputation = {
           level: "warn",
-          summary: `存在网段或历史风险线索：${scoreLabel}${dirty ? ` · 同 /24 检出 ${dirty} 个黑名单脏邻居` : ""}${vulns ? ` · Shodan 记录 ${vulns} 个 CVE` : ""}${asnAbuse >= 3.5 ? ` · 全 ASN 滥用密度 ${asnAbuse}x` : ""}`
+          summary: `存在网段或历史风险线索：${scoreLabel}${mailBlCnt >= 2 ? ` · 邮件反垃圾库命中 ${mailBlCnt} 家` : ""}${dirty ? ` · 同 /24 检出 ${dirty} 个黑名单脏邻居` : ""}${vulns ? ` · Shodan 记录 ${vulns} 个 CVE` : ""}${asnAbuse >= 3.5 ? ` · 全 ASN 滥用密度 ${asnAbuse}x` : ""}`
         };
       } else if (pScore == null) {
         out.reputation = { level: "info", coverageSparse: true, summary: "出口信誉情报覆盖不足；未命中不能按无风险计" };
       } else {
+        const mailName = (R.intel.dnsbl?.mailListed || R.intel.dnsbl?.listed || [])[0];
+        const mailNote = mailBlCnt === 1 ? ` · 仅命中 1 家 25 端口邮件库 (${mailName || "RBL"})，不影响常规网页访问` : "";
         out.reputation = {
           level: "ok",
-          summary: `已获取的情报未见显著风险：${scoreLabel}；不是对第三方网站的准入判断`
+          summary: `已获取的情报未见显著风险：${scoreLabel}${mailNote}；不是对第三方网站的准入判断`
         };
       }
     }
@@ -6711,8 +6735,17 @@
         return { single: `${R.netKind === "dc" ? "IDC 机房段" : "共享代理"} ${R.asn || ""}`.trim() };
       case "lease":
         return { single: R.intel?.asnProfile?.inferred?.conflict ? "PeeringDB 伪家宽" : (R.intel?.consensus?.isNative === false ? "跨国广播 IP" : "商业转租段") };
-      case "reputation":
-        return { single: `纯净 ${R.intel?.purity?.score ?? "--"} · 脏邻 ${R.intel?.cidr?.neighbours?.dirtyCount ?? 0}` };
+      case "reputation": {
+        const blSp = splitDnsblCounts(R.intel?.dnsbl);
+        const cHits = (R.intel?.cidr?.hits || []).filter(isThreatCidrHit).length;
+        const dCnt = R.intel?.cidr?.neighbours?.dirtyCount ?? 0;
+        if (blSp.abuse > 0 || blSp.mail >= 3) return { single: `黑名单 ${blSp.total} 家` };
+        if (cHits > 0) return { single: `威胁段 ${cHits} 项` };
+        if (R.intel?.cidr?.neighbours?.wholeBlockListed?.length) return { single: "/24 整段封禁" };
+        if (blSp.mail >= 2) return { single: `邮件RBL ${blSp.mail} 家` };
+        if (dCnt > 0) return { single: `脏邻居 ${dCnt} 个` };
+        return { single: `纯净 ${R.intel?.purity?.score ?? "--"} · 脏邻 ${dCnt}` };
+      }
       case "subpixel":
         return { left: uaOs, op: "≠", right: "图形/滚动条栈" };
       case "hwvirt":
@@ -7135,7 +7168,10 @@
     const isHosting = hostE >= 0.55 || infCls === "hosting" || !!intel?.cidr?.x4bDatacenter || (!intel && R.netKind === "dc");
     const isLeased = !!(intel?.asnProfile?.lease?.leased || intel?.asnProfile?.lease?.possible);
     const realityHit = !!intel?.tls443?.realitySuspect;
-    const blCnt = intel?.dnsbl?.listedCount || 0;
+    const blSplit = splitDnsblCounts(intel?.dnsbl);
+    const blCnt = blSplit.total;
+    const abuseBlCnt = blSplit.abuse;
+    const mailBlCnt = blSplit.mail;
     const cidrHits = (intel?.cidr?.hits || []).filter(isThreatCidrHit).length;
     const dirty = intel?.cidr?.neighbours?.dirtyCount || 0;
     const wholeBlock = (intel?.cidr?.neighbours?.wholeBlockListed || []).length > 0;
@@ -7168,7 +7204,7 @@
         [realityHit, 22, "出口 :443 暴露 Reality 偷证书节点特征"],
         [isHosting, 22, "机房 IDC 段易触发 ChatGPT 降智或 Claude 封号"],
         [maxAnon >= 0.45, 16, "共享 VPN/代理出口易弹 PoW 算力验证"],
-        [blCnt > 0 || cidrHits > 0, 14, "命中公开威胁/黑名单库"],
+        [abuseBlCnt > 0 || cidrHits > 0, 14, "命中公开攻击/代理威胁黑名单库"],
         [ck.tz?.level === "bad", 12, "系统时区与出口国家严重不符"]
       ]),
       streaming: mk(98, [
@@ -7183,13 +7219,14 @@
         [PLATFORM_BLOCKED.TikTok.includes(cc), 55, `${cc} 不在 TikTok 服务地区，注册即被地区拦截`],
         [isHosting, 32, "机房 IP 注册 X / Reddit / IG 极易秒冻或强制短信验证"],
         [maxAnon >= 0.4 || realityHit, 24, "共享代理或 Reality 节点易触发批量关联风控"],
-        [blCnt > 0 || cidrHits > 0 || sfsHit, 22, "存在垃圾注册或黑名单不良历史"],
+        [abuseBlCnt > 0 || mailBlCnt >= 3 || cidrHits > 0 || sfsHit, 22, "存在垃圾注册或攻击黑名单不良历史"],
         [dirty >= 3 || asnAbuse >= 4, 15, `同 /24 存在 ${dirty} 个脏邻居连坐污染`],
         [ck.fpb?.level === "bad" || ck.tamper?.level === "bad", 22, "浏览器存在防关联插件/跨线程篡改痕迹"],
         [ck.conn?.level === "bad", 14, "底层 TCP 协议栈暴露代理服务器代发连接"]
       ]),
       captcha: mk(98, [
-        [blCnt > 0 || cidrHits > 0 || wholeBlock, 36, "命中实时黑名单或整段封禁，必弹交互式验证盾"],
+        [abuseBlCnt > 0 || cidrHits > 0 || wholeBlock, 36, "命中实时攻击/代理黑名单或整段封禁，易弹交互式验证盾"],
+        [mailBlCnt >= 2, 12, `命中 ${mailBlCnt} 家邮件反垃圾库，部分严格站点可能加验`],
         [ck.bot?.level === "bad", 35, "暴露 WebDriver / 自动化控制特征"],
         [ck.tamper?.level === "bad", 22, "JS 原型篡改直接拉低 Turnstile 信任分"],
         [isHosting, 18, "机房 ASN 默认初始人机信任分较低"],
@@ -7201,7 +7238,7 @@
         [isHosting || asnConflict, 38, "支付反欺诈引擎（如 Stripe Radar）对机房/伪家宽严厉拒付"],
         [maxAnon >= 0.35 || realityHit, 28, "检出代理/VPN 或 :443 伪装特征，高危拒付风险"],
         [isLeased || isNative === false, 20, "租赁或跨国广播 IP 极易触发账单地址人工审核"],
-        [blCnt > 0 || cidrHits > 0 || dirty >= 5, 22, "网段存在欺诈或黑名单不良记录"],
+        [abuseBlCnt > 0 || mailBlCnt >= 3 || cidrHits > 0 || dirty >= 5, 22, "网段存在欺诈或攻击黑名单不良记录"],
         [ck.webrtc?.level === "bad" || ck.dns?.level === "bad" || ck.split?.level === "bad", 25, "真实 IP / DNS 分流泄漏直接触发异地盗刷拦截"],
         [ck.tz?.level === "bad" || ck.rtt?.level === "bad", 16, "物理往返延迟或系统时区与账单国矛盾"]
       ]),
@@ -7523,7 +7560,9 @@
     const tilesBox = $("#identityTiles");
     const pur = R.intel?.purity;
     const usablePurity = hasUsablePurity(R.intel);
-    const blCnt = R.intel?.dnsbl?.listedCount ?? 0;
+    const blTileSplit = splitDnsblCounts(R.intel?.dnsbl);
+    const blCnt = blTileSplit.total;
+    const blTileLabel = blCnt === 0 ? "0 黑名单" : (blTileSplit.abuse === 0 ? `${blCnt} 邮件RBL` : `${blCnt} 黑名单`);
     const dirty = R.intel?.cidr?.neighbours?.dirtyCount ?? 0;
     const isNative = R.intel?.consensus?.isNative;
     const cleanGpuShort = (R.gpuDiscrete || R.gpuClean || "未知显卡")
@@ -7566,7 +7605,7 @@
           status: repTone === "pending" ? "查询中" : repTone === "bad" ? (R.netKind === "dc" ? "机房段" : "污染") : repTone === "warn" ? (R.intel && !usablePurity && checks.reputation?.level === "info" && checks.lease?.level !== "warn" ? "待复核" : "瑕疵") : "洁净",
           tone: repTone,
           val: !repReady ? "拉取 8 源情报…" : (usablePurity ? `纯净度 ${pur.score} / 100` : (R.netKind === "dc" ? "IDC 机房线路" : R.netKind === "mobile" ? "蜂窝移动网络" : "信誉覆盖不足")),
-          sub: !repReady ? "核对 DNSBL 与同段脏邻居…" : `${blCnt} 黑名单 · ${dirty} 脏邻居 · ${isNative === false ? "广播IP" : "原生段"}`,
+          sub: !repReady ? "核对 DNSBL 与同段脏邻居…" : `${blTileLabel} · ${dirty} 脏邻居 · ${isNative === false ? "广播IP" : "原生段"}`,
           probes: "rep_score,rep_votes,rep_dnsbl,rep_neigh"
         },
         {
@@ -8144,7 +8183,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.9.2",
+        version: "7.9.3",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,

@@ -20,6 +20,7 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
     read: id => R.values[id],
     setState: state => { R = state; },
     getState: () => R,
+    scenarios: computeScenarios,
     compare: (id, result) => getVisualConflict(id, result),
   };
 })();`);
@@ -259,4 +260,78 @@ test("partial-coverage 5G IPv4 and IPv6 intel with sufficient sources pass reput
   assert.equal(timedOut.check().reputation.level, "info");
   timedOut.score();
   assert.match(timedOut.node("scoreSub").textContent, /网络探针超时/);
+});
+
+test("a single mail-only DNSBL hit on home broadband affects SMTP only, while abuse DNSBL hits remain bad", () => {
+  const ispBase = {
+    finished: true,
+    values: {},
+    ip: "9.9.9.42",
+    ipCC: "TH",
+    tz: "Asia/Bangkok",
+    langs: ["th-TH"],
+    dnsCC: "TH",
+    exitsDone: true,
+    exits: { ex_self: { ip: "9.9.9.42", cc: "TH" }, ex_intl: { ip: "9.9.9.42", cc: "TH" } },
+    latDone: true,
+    httpRtt: 28,
+    srvTcpRtt: 26,
+    rtcDone: true,
+    rtc: ["9.9.9.42"],
+    netKind: "isp",
+    asn: "AS17552",
+    org: "Example Broadband",
+    fontRast: { engine: "FreeType", rgbRatio: 0.1 },
+    scrollbarW: 15,
+    cpuBench: { stealRatio: 1.1, simdOk: true },
+    hwCodecs: 4,
+    dev: { os: "Linux" },
+    osLabel: "Linux",
+  };
+
+  const mailOnly = harness({
+    state: {
+      ...ispBase,
+      intel: {
+        ok: true,
+        ipVersion: 4,
+        consensus: { country: "TH", isNative: true },
+        asnProfile: { inferred: { cls: "isp" } },
+        purity: { score: 94, grade: "A", uncertain: true, coverage: { known: 37, unknown: 9, notApplicable: 2, applicable: 46, ratio: 0.804 } },
+        votes: { proxy: { of: 4, E: 0 }, hosting: { of: 5, E: 0 }, vpn: { of: 4, E: 0 }, tor: { of: 4, E: 0 } },
+        dnsbl: { total: 11, listedCount: 1, abuseCount: 0, mailCount: 1, listed: ["Barracuda"], abuseListed: [], mailListed: ["Barracuda"], droneProxy: false },
+        cidr: { hits: [], neighbours: { dirtyCount: 0, wholeBlockListed: [] } },
+        tls443: { probed: false },
+      },
+    },
+  });
+  const repMail = mailOnly.check().reputation;
+  assert.equal(repMail.level, "ok");
+  assert.match(repMail.summary, /Barracuda.*不影响常规网页访问/);
+  assert.equal(mailOnly.score(), 100);
+  const scMail = mailOnly.scenarios();
+  assert.ok(scMail.ai.score >= 95 && scMail.streaming.score >= 95 && scMail.social.score >= 95 && scMail.captcha.score >= 95 && scMail.fintech.score >= 95);
+  assert.ok(scMail.email.score < 50);
+
+  const abuseHit = harness({
+    state: {
+      ...ispBase,
+      intel: {
+        ok: true,
+        ipVersion: 4,
+        consensus: { country: "TH", isNative: true },
+        asnProfile: { inferred: { cls: "isp" } },
+        purity: { score: 86, grade: "A", uncertain: false, coverage: { known: 46, unknown: 0, notApplicable: 2, applicable: 46, ratio: 1 } },
+        votes: { proxy: { of: 4, E: 0.2 }, hosting: { of: 5, E: 0 }, vpn: { of: 4, E: 0 }, tor: { of: 4, E: 0 } },
+        dnsbl: { total: 12, listedCount: 1, abuseCount: 1, mailCount: 0, listed: ["DroneBL"], abuseListed: ["DroneBL"], mailListed: [], droneProxy: false },
+        cidr: { hits: [], neighbours: { dirtyCount: 0, wholeBlockListed: [] } },
+        tls443: { probed: false },
+      },
+    },
+  });
+  const repAbuse = abuseHit.check().reputation;
+  assert.equal(repAbuse.level, "bad");
+  assert.equal(abuseHit.compare("reputation", repAbuse).single, "黑名单 1 家");
+  const scAbuse = abuseHit.scenarios();
+  assert.ok(scAbuse.captcha.score < 70 && scAbuse.social.score < 80);
 });

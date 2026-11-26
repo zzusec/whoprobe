@@ -832,27 +832,75 @@
   function analyzeExitSplit() {
     const ex = R.exits || {};
     const allValidExits = Object.entries(ex).filter(([, v]) => v && v.ip);
-    const cnIp = ex.ex_cn;
-    const cnLeak = !!(cnIp && cnIp.cc === "CN" && R.ipCC && R.ipCC !== "CN");
-    if (cnLeak) {
-      const allCountries = new Set(allValidExits.map(([, v]) => v.cc).filter(Boolean));
-      return { state: "cn-leak", countries: allCountries, distinctCount: Math.max(2, allCountries.size), validExits: allValidExits };
+    const seenIps = new Set(allValidExits.map(([, v]) => cleanIp(v.ip)).filter(Boolean));
+    if (R.stack?.v4 && !seenIps.has(cleanIp(R.stack.v4))) {
+      const v4 = cleanIp(R.stack.v4);
+      allValidExits.push(["stack_v4", { ip: v4, cc: candidateCC(v4), label: "IPv4 独立栈" }]);
+      seenIps.add(v4);
     }
-    const relayedSubprobes = allValidExits.filter(([k, v]) => isSafariSubprobeRelay(k, v));
-    const filteredExits = relayedSubprobes.length ? allValidExits.filter(([k, v]) => !isSafariSubprobeRelay(k, v)) : allValidExits;
-    const validExits = filteredExits.length ? filteredExits : allValidExits;
+    if (R.stack?.v6 && !seenIps.has(cleanIp(R.stack.v6))) {
+      const v6 = cleanIp(R.stack.v6);
+      allValidExits.push(["stack_v6", { ip: v6, cc: candidateCC(v6), label: "IPv6 独立栈" }]);
+      seenIps.add(v6);
+    }
+    const enrichedExits = allValidExits.map(([k, v]) => [k, { ...v, cc: v.cc || candidateCC(v.ip) || "" }]);
+    const leakedCnPair = (R.ipCC && R.ipCC !== "CN")
+      ? enrichedExits.find(([, v]) => v.cc === "CN")
+      : null;
+
+    const bucketCount = list => {
+      const buckets = new Set();
+      const hasV4ByCC = new Set(list.filter(([, v]) => v.cc && !cleanIp(v.ip).includes(":")).map(([, v]) => v.cc));
+      for (const [k, v] of list) {
+        const cip = cleanIp(v.ip);
+        if (!cip) continue;
+        if (k === "ex_self" || (R.ip && (cip === cleanIp(R.ip) || netPrefix(cip) === netPrefix(R.ip) || isSameCarrierCandidate(cip)))) {
+          buckets.add("self");
+          continue;
+        }
+        const meta = R.ipMeta?.[cip];
+        const cKey = normalizeCarrierKey({ ip: cip, asn: meta?.asn, org: meta?.org, isp: meta?.isp, label: v.label });
+        if (meta?.asn) {
+          buckets.add(`as:${String(meta.asn).replace(/^AS/i, "")}`);
+        } else if (cKey && v.cc) {
+          buckets.add(`carrier:${v.cc}:${cKey}`);
+        } else if (cip.includes(":") && v.cc && hasV4ByCC.has(v.cc)) {
+          // Dual-stack IPv6 alongside an already-counted IPv4 exit in the same country (e.g. CN direct v4+v6)
+          continue;
+        } else {
+          buckets.add(netPrefix(cip) || cip);
+        }
+      }
+      return Math.max(1, buckets.size);
+    };
+
+    if (leakedCnPair) {
+      const allCountries = new Set(enrichedExits.map(([, v]) => v.cc).filter(Boolean));
+      return {
+        state: "cn-leak",
+        leakedKey: leakedCnPair[0],
+        leakedExit: leakedCnPair[1],
+        countries: allCountries,
+        distinctCount: Math.max(2, bucketCount(enrichedExits), allCountries.size),
+        validExits: enrichedExits
+      };
+    }
+    const relayedSubprobes = enrichedExits.filter(([k, v]) => isSafariSubprobeRelay(k, v));
+    const filteredExits = relayedSubprobes.length ? enrichedExits.filter(([k, v]) => !isSafariSubprobeRelay(k, v)) : enrichedExits;
+    const validExits = filteredExits.length ? filteredExits : enrichedExits;
     const countries = new Set(validExits.map(([, v]) => v.cc).filter(Boolean));
+    const distinctBuckets = bucketCount(validExits);
     if (countries.size > 1) {
-      return { state: "multi-country", countries, distinctCount: countries.size, validExits };
+      return { state: "multi-country", countries, distinctCount: Math.max(countries.size, distinctBuckets), validExits };
     }
     const v4Prefixes = new Set(validExits.filter(([, v]) => !cleanIp(v.ip).includes(":")).map(([, v]) => netPrefix(v.ip)).filter(Boolean));
     const v6Prefixes = new Set(validExits.filter(([, v]) => cleanIp(v.ip).includes(":")).map(([, v]) => netPrefix(v.ip)).filter(Boolean));
     const hasUnalignedExit = validExits.some(([k, v]) => k !== "ex_self" && netPrefix(v.ip) !== netPrefix(R.ip) && !isSameCarrierCandidate(v.ip));
     if ((v4Prefixes.size > 1 || v6Prefixes.size > 1) && hasUnalignedExit) {
-      return { state: "multi-prefix", countries, distinctCount: v4Prefixes.size + v6Prefixes.size, validExits };
+      return { state: "multi-prefix", countries, distinctCount: Math.max(2, distinctBuckets), validExits };
     }
     if (v4Prefixes.size >= 1 && v6Prefixes.size >= 1 && hasUnalignedExit) {
-      return { state: "dual-stack-mismatch", countries, distinctCount: 2, validExits };
+      return { state: "dual-stack-mismatch", countries, distinctCount: Math.max(2, distinctBuckets), validExits };
     }
     return {
       state: "ok",
@@ -1293,8 +1341,24 @@
     return { km: Math.round(km), expectedMs: Math.round(km * 0.0145 + 22) };
   }
 
+  const CF_COLO_CC = {
+    BKK: "TH", CNX: "TH", SIN: "SG", HKG: "HK", TPE: "TW", KHH: "TW", MFM: "MO",
+    NRT: "JP", HND: "JP", KIX: "JP", FUK: "JP", OKA: "JP", NGO: "JP",
+    ICN: "KR", KUL: "MY", JHB: "MY", SGN: "VN", HAN: "VN", MNL: "PH", CRK: "PH", CGK: "ID", DPS: "ID",
+    BOM: "IN", DEL: "IN", MAA: "IN", BLR: "IN", HYD: "IN", CCU: "IN",
+    SJC: "US", LAX: "US", SEA: "US", PDX: "US", SFO: "US", SMF: "US", SAN: "US", PHX: "US", SLC: "US",
+    DEN: "US", DFW: "US", IAH: "US", AUS: "US", ORD: "US", MSP: "US", STL: "US", MCI: "US", DTW: "US",
+    IAD: "US", EWR: "US", JFK: "US", BOS: "US", PHL: "US", PIT: "US", CLT: "US", ATL: "US", MIA: "US", TPA: "US", MCO: "US",
+    YYZ: "CA", YVR: "CA", YUL: "CA", YYC: "CA",
+    LHR: "GB", MAN: "GB", EDI: "GB", FRA: "DE", DUS: "DE", MUC: "DE", HAM: "DE", TXL: "DE", BER: "DE",
+    AMS: "NL", CDG: "FR", MRS: "FR", LYS: "FR", MAD: "ES", BCN: "ES", MXP: "IT", FCO: "IT",
+    ZRH: "CH", VIE: "AT", BRU: "BE", DUB: "IE", WAW: "PL", PRG: "CZ", ARN: "SE", CPH: "DK", OSL: "NO", HEL: "FI",
+    IST: "TR", DXB: "AE", SYD: "AU", MEL: "AU", BNE: "AU", PER: "AU", AKL: "NZ", GRU: "BR", GIG: "BR", EZE: "AR", SCL: "CL", JNB: "ZA", CPT: "ZA"
+  };
+
   function classifyHandshakeGap(clientMs, srvMs) {
     const extra = Math.round(clientMs - srvMs);
+    const reverseExtra = Math.round(srvMs - clientMs);
     const tcp = R.srv?.packet?.tcp;
     const uaOs = R.dev?.os || "";
     const fam = tcp?.osFamily || tcp?.osGuess || "";
@@ -1304,6 +1368,13 @@
       (fam === "linux" && /^(macOS|iOS|iPadOS|Windows)$/.test(uaOs));
     const isNativeCellular = isCellularNativeLink(uaOs, osMis) && !getLeakedWebrtcIps().length;
     const geoBase = expectedDirectRttMs();
+    // 反向握手膨胀：SYN→ClientHello（已排除重传）显著高于暖连接 HTTP RTT（常见于 SOCKS5/HTTP CONNECT 双阶段代理握手或端侧计时干扰）
+    if (!isNativeCellular && reverseExtra >= 110 && srvMs >= Math.max(180, clientMs * 2.0)) {
+      return { level: "bad", extra: -reverseExtra, reverseInflation: true, cellularJitter: false };
+    }
+    if (!isNativeCellular && reverseExtra >= 65 && srvMs >= Math.max(135, clientMs * 1.7)) {
+      return { level: "warn", extra: -reverseExtra, reverseInflation: true, cellularJitter: false };
+    }
     // 4G/5G 原生蜂窝链路（协议栈自洽且无分流泄漏）：运营商省级 UPF/PEP 网关分段握手与空口 DRX/HARQ 排队常产生 50~175ms 正常波动
     if (isNativeCellular && srvMs >= 18) {
       const geoOk = !geoBase || clientMs <= geoBase.expectedMs + 175;
@@ -1314,9 +1385,9 @@
         return { level: "warn", extra, cellularJitter: true };
       }
     }
-    // 非机房原生宽带且服务端握手已覆盖地理光缆距离（排除 1~18ms 就近 VPS 代发连接）：容忍跨境拥塞抖动
-    if (R.netKind === "isp" && !osMis && srvMs >= 28 && geoBase && srvMs >= geoBase.expectedMs * 0.65 && clientMs <= geoBase.expectedMs + 135 && extra < 145) {
-      return { level: extra >= 95 ? "warn" : "ok", extra, cellularJitter: false };
+    // 非机房原生宽带且服务端握手已覆盖地理光缆距离：仅适度容忍轻微网络抖动，不放过百毫秒级住宅代理中转段
+    if (R.netKind === "isp" && !osMis && srvMs >= 28 && geoBase && srvMs >= geoBase.expectedMs * 0.65 && clientMs <= geoBase.expectedMs + 75 && extra < 55) {
+      return { level: "ok", extra, cellularJitter: false };
     }
     if (extra >= 95) return { level: "bad", extra, cellularJitter: false };
     if (extra >= 42) return { level: "warn", extra, cellularJitter: false };
@@ -1697,6 +1768,8 @@
         const gap = classifyHandshakeGap(R.httpRtt, R.srvTcpRtt);
         const extraText = gap.level === "ok"
           ? (gap.cellularJitter ? ` · 蜂窝链路常见差值 +${gap.extra} ms` : " · 耗时接近")
+          : gap.reverseInflation
+          ? ` · 握手反超 +${Math.abs(gap.extra)} ms`
           : ` · 耗时差 +${gap.extra} ms`;
         setProbe("tcprtt", `HTTP 响应 ${R.httpRtt} ms vs SYN→ClientHello ${R.srvTcpRtt} ms${extraText}`, {
           tone: gap.level
@@ -2062,13 +2135,6 @@
 
   async function measureCleanPrePing() {
     const pre = [];
-    try {
-      const nav = performance.getEntriesByType?.("navigation")?.[0];
-      if (nav && nav.responseStart > nav.requestStart && nav.requestStart > 0) {
-        const navRtt = nav.responseStart - nav.requestStart;
-        if (navRtt >= 2 && navRtt <= 1500) pre.push(navRtt);
-      }
-    } catch (e) {}
     for (let i = 0; i < 2; i++) {
       const u = new URL(`./api/who/ping?seq=pre${i}&t=${Date.now()}`, location.href).href;
       const t0 = performance.now();
@@ -2079,7 +2145,8 @@
       const entries = performance.getEntriesByName(u);
       const e = entries[entries.length - 1];
       if (e && e.responseStart > e.requestStart && e.requestStart > 0) {
-        pre.push(e.responseStart - e.requestStart);
+        const rt = e.responseStart - e.requestStart;
+        pre.push((i > 0 && wall > rt * 2.4 && wall - rt > 75) ? wall : rt);
       } else if (wall > 1) {
         pre.push(wall);
       }
@@ -2107,7 +2174,8 @@
       const entries = performance.getEntriesByName(u);
       const e = entries[entries.length - 1];
       if (e && e.responseStart > e.requestStart && e.requestStart > 0) {
-        samples.push(e.responseStart - e.requestStart);
+        const rt = e.responseStart - e.requestStart;
+        samples.push((i > 0 && wall > rt * 2.4 && wall - rt > 75) ? wall : rt);
       } else if (i > 0 && wall > 1) {
         samples.push(wall);
       }
@@ -2176,6 +2244,8 @@
       const gap = classifyHandshakeGap(R.httpRtt, R.srvTcpRtt);
       const extraText = gap.level === "ok"
         ? (gap.cellularJitter ? ` · 蜂窝链路常见差值 +${gap.extra} ms` : " · 耗时接近")
+        : gap.reverseInflation
+        ? ` · 握手反超 +${Math.abs(gap.extra)} ms`
         : ` · 耗时差 +${gap.extra} ms`;
       setProbe("tcprtt", `HTTP 响应 ${R.httpRtt} ms vs SYN→ClientHello ${R.srvTcpRtt} ms${extraText}`, {
         tone: gap.level,
@@ -2212,31 +2282,66 @@
       setNA("ex_self", "等待主连接返回");
     }
 
-    // Mainland China exit probe (parallel race/fallback: ipip.net + speedtest.cn so blocked proxies don't wait 14s serially)
-    const pCn = (async () => {
-      let ip = "", loc = "";
-      const [j1, j2] = await Promise.all([
-        getJSON("https://myip.ipip.net/json", 3800).catch(() => null),
-        getJSON("https://forge.speedtest.cn/api/location/info", 3800).catch(() => null)
-      ]);
-      if (j1?.data?.ip) {
-        ip = cleanIp(j1.data.ip);
-        loc = (j1.data.location || []).filter(Boolean).join(" · ");
-      } else if (j2?.ip) {
-        ip = cleanIp(j2.ip);
-        loc = [j2.country, j2.province, j2.city, j2.isp].filter(Boolean).join(" · ");
+    const ZH_CC_MAP = [
+      [/香港/, "HK"], [/台湾/, "TW"], [/澳门/, "MO"],
+      [/中国|北京|上海|广东|浙江|江苏|四川|湖北|福建|山东|河南|湖南|安徽|河北|陕西|辽宁|重庆|天津|广西|云南|江西|山西|贵州|吉林|黑龙江|内蒙古|新疆|甘肃|海南|宁夏|青海|西藏/, "CN"],
+      [/日本/, "JP"], [/新加坡/, "SG"], [/美国/, "US"], [/韩国/, "KR"], [/泰国/, "TH"], [/马来西亚/, "MY"],
+      [/越南/, "VN"], [/菲律宾/, "PH"], [/印度尼西亚|印尼/, "ID"], [/印度/, "IN"], [/英国/, "GB"], [/德国/, "DE"],
+      [/法国/, "FR"], [/荷兰/, "NL"], [/俄罗斯/, "RU"], [/加拿大/, "CA"], [/澳大利亚|澳洲/, "AU"], [/巴西/, "BR"], [/土耳其/, "TR"]
+    ];
+    const inferZhLocCC = loc => {
+      const s = String(loc || "");
+      for (const [re, code] of ZH_CC_MAP) if (re.test(s)) return code;
+      return "";
+    };
+    const parseIqiyiExit = j => {
+      const raw = String(j?.t || "").trim();
+      const dash = raw.lastIndexOf("-");
+      if (dash <= 0) return null;
+      const ip = cleanIp(raw.slice(dash + 1));
+      if (!ip) return null;
+      const [net = "", locCode = ""] = raw.slice(0, dash).split("|");
+      if (/^OVERSEA$/i.test(net)) {
+        const cc = /^[A-Z]{2}$/i.test(locCode) ? locCode.toUpperCase() : "";
+        return { ip, cc, label: [cc ? countryName(cc) : "海外", "国内流媒体边缘"].filter(Boolean).join(" · ") };
       }
-      if (!ip) {
+      return { ip, cc: "CN", label: ["中国", locCode, net].filter(Boolean).join(" · ") };
+    };
+
+    // Mainland China exit probe: pair GEOSITE:cn streaming CDN (iqiyi.com, routed DIRECT by Clash/Surge rules)
+    // with ipip.net (often hijacked to PROXY by ipcheck rules), capturing both if they split!
+    const pCn = (async () => {
+      const [jIqy, jIpip] = await Promise.all([
+        getJSON("https://data.video.iqiyi.com/v.f4v", 3800).catch(() => null),
+        getJSON("https://myip.ipip.net/json", 3800).catch(() => null)
+      ]);
+      const cands = [];
+      const iqyObs = parseIqiyiExit(jIqy);
+      if (iqyObs) cands.push(iqyObs);
+      if (jIpip?.data?.ip) {
+        const ip2 = cleanIp(jIpip.data.ip);
+        const loc2 = (jIpip.data.location || []).filter(Boolean).join(" · ");
+        if (ip2) cands.push({ ip: ip2, cc: inferZhLocCC(loc2), label: loc2 });
+      }
+      if (!cands.length) {
         setNA("ex_cn", "连接超时或被当前代理阻断");
-        setRouteRow("ex_cn", "未连通", "大陆测速接口超时");
+        setRouteRow("ex_cn", "未连通", "大陆探针接口超时");
         return;
       }
-      const isCn = /中国|北京|上海|广东|浙江|江苏|四川|湖北|福建|山东|河南|湖南|安徽|河北|陕西|辽宁|重庆|天津|广西|云南|江西|山西|贵州|吉林|黑龙江|内蒙古|新疆|甘肃|海南|宁夏|青海|西藏|电信|联通|移动/.test(loc) && !/香港|台湾|澳门/.test(loc);
-      const cc = isCn ? "CN" : /香港/.test(loc) ? "HK" : /台湾/.test(loc) ? "TW" : "";
-      R.exits.ex_cn = { ip, cc, label: loc };
-      const leak = isCn && R.ipCC && R.ipCC !== "CN";
-      setProbe("ex_cn", `${cc ? flagEmoji(cc) + " " : ""}${ip} · ${loc}`, { tone: leak ? "bad" : "neutral" });
-      setRouteRow("ex_cn", `${cc ? flagEmoji(cc) + " " : ""}${ip}`, loc, leak ? "bad" : "ok");
+      // Prioritize a Mainland CN leak or an exit that diverges from R.ip soipcheck-rule hijacking never hides a real DIRECT split
+      cands.sort((a, b) => {
+        const aLeak = a.cc === "CN" && R.ipCC && R.ipCC !== "CN" ? 2 : (R.ip && a.ip !== cleanIp(R.ip) ? 1 : 0);
+        const bLeak = b.cc === "CN" && R.ipCC && R.ipCC !== "CN" ? 2 : (R.ip && b.ip !== cleanIp(R.ip) ? 1 : 0);
+        return bLeak - aLeak;
+      });
+      const chosen = cands[0];
+      R.exits.ex_cn = chosen;
+      if (cands[1] && cands[1].ip !== chosen.ip) {
+        R.exits.ex_cn_alt = cands[1];
+      }
+      const leak = chosen.cc === "CN" && R.ipCC && R.ipCC !== "CN";
+      setProbe("ex_cn", `${chosen.cc ? flagEmoji(chosen.cc) + " " : ""}${chosen.ip} · ${chosen.label}`, { tone: leak ? "bad" : "neutral" });
+      setRouteRow("ex_cn", `${chosen.cc ? flagEmoji(chosen.cc) + " " : ""}${chosen.ip}`, chosen.label, leak ? "bad" : "ok");
       if (!R.isSharedView) {
         renderChecksAndScore(false);
         renderPortrait();
@@ -2307,6 +2412,27 @@
       setRouteRow(key, `${flagEmoji(cc)} ${traceIp}`, sub, "ok");
       if (key === "ex_cf") {
         backfillExitMeta({ ip: traceIp, cc, source: "Cloudflare Trace 备援" });
+        // Measure warm RTT on the already-established Cloudflare Anycast connection to detect proxy hop latency to a local in-country PoP
+        const cfWarm = [];
+        for (let s = 0; s < 2; s++) {
+          const wu = `https://www.cloudflare.com/cdn-cgi/trace?rtt=${s}&t=${Date.now()}_${s}`;
+          const wt0 = performance.now();
+          const wok = await getText(wu, 1800).then(() => true, () => false);
+          const wwall = performance.now() - wt0;
+          if (!wok) break;
+          const wentries = performance.getEntriesByName?.(wu) || [];
+          const we = wentries[wentries.length - 1];
+          if (we && we.responseStart > we.requestStart && we.requestStart > 0) {
+            const wrt = we.responseStart - we.requestStart;
+            cfWarm.push((wwall > wrt * 2.4 && wwall - wrt > 75) ? wwall : wrt);
+          } else if (wwall > 1) {
+            cfWarm.push(wwall);
+          }
+        }
+        if (cfWarm.length) {
+          R.cfLocalRtt = Math.round(Math.min(...cfWarm));
+          R.cfLocalColo = String(kv.colo || "").toUpperCase();
+        }
       }
       return kv;
     };
@@ -4615,10 +4741,14 @@
   }
   function analyzeRttGeo() {
     const list = R.rttGeo || [];
-    if (!list.length) return null;
+    const probePoints = list.slice();
+    if (R.srvCoords && R.srvCoords.length === 2 && R.httpRtt != null && R.srvTcpRtt != null) {
+      probePoints.push({ id: "self-origin", name: "本站节点", lat: R.srvCoords[0], lon: R.srvCoords[1], ms: R.httpRtt });
+    }
+    if (!probePoints.length) return null;
     let violation = null;
     if (R.ipLat != null && R.ipLon != null && Number.isFinite(R.ipLat) && Number.isFinite(R.ipLon)) {
-      for (const r of list) {
+      for (const r of probePoints) {
         const km = haversineKm(R.ipLat, R.ipLon, r.lat, r.lon);
         // 光纤往返物理下限 ≈ 距离 / 100 ms（单程 200 km/ms），预先扣除 800 km 的 IP 库定位误差
         const floorMs = Math.max(0, (km - 800) / 100);
@@ -4627,7 +4757,7 @@
         }
       }
     }
-    return { best: list[0], violation, count: list.length };
+    return { best: list[0] || null, violation, count: list.length };
   }
   function refreshRttGeoProbe() {
     if (!R.rttGeo) return;
@@ -6152,18 +6282,21 @@
     const ex = R.exits || {};
     const cnIp = ex.ex_cn;
     const sp = analyzeExitSplit();
+    const exitNameMap = { ex_self: "本站", ex_cn: "国内流媒体", ex_cn_alt: "国内测速", ex_intl: "国际", ex_gpt: "ChatGPT", ex_claude: "Claude", ex_cf: "CF", stack_v4: "IPv4", stack_v6: "IPv6" };
 
     if (!R.exitsDone) {
       out.split = { level: "info", summary: "正在并发比对国内外与 AI 平台分流出口…" };
-    } else if (sp.state === "cn-leak" && cnIp) {
-      out.split = { level: "bad", summary: `规则分流直接露底：本站走 ${ipCountry}，但大陆测速探针直连暴露真实国内宽带 (${cnIp.ip} · ${cnIp.label})！` };
+    } else if (sp.state === "cn-leak" && (sp.leakedExit || cnIp)) {
+      const lk = sp.leakedExit || cnIp;
+      const multiTail = sp.distinctCount >= 3 ? `（全局共分流至 ${sp.distinctCount} 个不同出口）` : "";
+      out.split = { level: "bad", summary: `规则分流直接露底：本站走 ${ipCountry}，但国内/双栈链路直连暴露真实大陆宽带 (${lk.ip}${lk.label ? " · " + lk.label : ""})${multiTail}！` };
     } else if (sp.state === "multi-country" || sp.state === "multi-prefix" || sp.state === "dual-stack-mismatch") {
-      const detail = sp.validExits.map(([k, v]) => `${({ ex_self: "本站", ex_cn: "国内", ex_intl: "国际", ex_gpt: "ChatGPT", ex_claude: "Claude", ex_cf: "CF" })[k] || k}:${v.cc || "?"}`).join(" / ");
+      const detail = sp.validExits.map(([k, v]) => `${exitNameMap[k] || k}:${v.cc || "?"}`).join(" / ");
       out.split = {
         level: "warn",
         summary: sp.state === "multi-country"
-          ? `检测到跨国多路分流：并发请求落在了 ${sp.distinctCount} 个不同国家/地区 (${detail})`
-          : `检测到多路代理分流：并发请求落在了不同运营商/异构出口网段 (${detail})`
+          ? `检测到跨国多路分流：并发请求分流到了 ${sp.distinctCount} 个不同出口 (${detail})`
+          : `检测到多路代理分流：并发请求分流到了 ${sp.distinctCount} 个异构出口网段 (${detail})`
       };
     } else {
       out.split = {
@@ -6294,19 +6427,36 @@
       const sample = `HTTP 响应 ${R.httpRtt} ms，SYN→ClientHello ${R.srvTcpRtt} ms`;
       out.rtt = {
         level: gap.level,
-        summary: gap.level !== "ok"
+        reverseInflation: !!gap.reverseInflation,
+        summary: gap.reverseInflation
+          ? `双阶段握手或计时异常：${sample}（握手反超 +${Math.abs(gap.extra)} ms），符合 SOCKS5/CONNECT 代理分段建连或端侧计时干扰特征`
+          : gap.level !== "ok"
           ? `${gap.level === "bad" ? "时序差异明显" : "HTTP 响应开销偏高"}：${sample}（+${gap.extra} ms）。差值不能确定转发跳数。`
           : `${sample}；${gap.cellularJitter ? "差值在蜂窝链路常见波动范围内" : "两种耗时接近"}`
       };
     }
 
-    // Independent evidence may still report a timing anomaly.
+    // Independent evidence may still report a timing anomaly (speed-of-light, WebSocket Pong, or same-country local Cloudflare PoP RTT).
     const geoRtt = analyzeRttGeo();
+    const cfSameCountry = R.cfLocalRtt != null && R.cfLocalColo && ipCC && CF_COLO_CC[R.cfLocalColo] === ipCC && !R.coarseTimer
+      && (!R.exits?.ex_cf?.ip || cleanIp(R.exits.ex_cf.ip) === cleanIp(R.ip) || isSameCarrierCandidate(R.exits.ex_cf.ip));
+    const wideCountry = /^(US|CA|AU|BR|RU|IN)$/.test(ipCC || "");
+    const cellLink = isCellularNativeLink(uaOs, false) && !getLeakedWebrtcIps().length;
+    const cfWarnMs = cellLink ? 175 : wideCountry ? 145 : 105;
+    const cfBadMs = cellLink ? 240 : wideCountry ? 195 : 155;
+
     if (geoRtt?.violation && out.rtt?.level !== "bad") {
       const v = geoRtt.violation;
       out.rtt = { level: "bad", summary: `光速违例：到 ${v.name} 的响应仅 ${v.ms} ms，低于以出口定位估算的光纤下限 ${v.floorMs} ms；需核对出口定位或实际请求路径` };
     } else if (R.wsPingRtt != null && R.srvTcpRtt != null && classifyHandshakeGap(R.wsPingRtt, R.srvTcpRtt).level === "bad" && out.rtt?.level !== "bad") {
       out.rtt = { level: "bad", wsComparison: true, summary: `控制帧与握手时序差异明显：WebSocket Pong ${R.wsPingRtt} ms，SYN→ClientHello ${R.srvTcpRtt} ms；仅凭差值不能确定中转路径` };
+    } else if (cfSameCountry && R.cfLocalRtt >= cfWarnMs && out.rtt?.level !== "bad" && !(out.rtt?.level === "warn" && R.cfLocalRtt < cfBadMs)) {
+      const cfLv = R.cfLocalRtt >= cfBadMs ? "bad" : "warn";
+      out.rtt = {
+        level: cfLv,
+        cfComparison: true,
+        summary: `同国边缘往返延迟偏高：出口位于 ${ipCountry} 且命中本地 Cloudflare ${R.cfLocalColo} 节点，但复用连接往返仍需 ${R.cfLocalRtt} ms，符合跨境代理中转延迟特征`
+      };
     } else if (geoRtt?.best && out.rtt?.level === "ok") {
       out.rtt = { ...out.rtt, summary: `${out.rtt.summary} · 全球测距最近 ${geoRtt.best.name} ${geoRtt.best.ms} ms` };
     }
@@ -6742,16 +6892,17 @@
           ? { left: `DNS ${flagEmoji(R.dnsCC)}${R.dnsCC}`, op: "≠", right: `出口 ${flagEmoji(R.ipCC)}${R.ipCC}` }
           : { single: "ECS 子网外泄" };
       case "split": {
-        if (R.exits?.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN") {
-          return { left: `海外 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: "直连 🇨🇳CN" };
+        const spNow = analyzeExitSplit();
+        if (spNow.state === "cn-leak" && R.ipCC && R.ipCC !== "CN") {
+          return { left: `海外 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: spNow.distinctCount >= 3 ? `直连 🇨🇳CN (${spNow.distinctCount}出口)` : "直连 🇨🇳CN" };
         }
         const foreignEx = R.ipCC === "CN"
-          ? Object.entries(R.exits || {}).find(([k, v]) => v?.cc && v.cc !== "CN" && !isSafariSubprobeRelay(k, v))?.[1]
+          ? spNow.validExits?.find(([, v]) => v?.cc && v.cc !== "CN")?.[1]
           : null;
         if (foreignEx) {
           return { left: "直连 🇨🇳CN", op: "≠", right: `代理 ${flagEmoji(foreignEx.cc)}${foreignEx.cc}` };
         }
-        return { single: "多出口网段分流" };
+        return { single: `分流到 ${spNow.distinctCount || 2} 个出口` };
       }
       case "conn":
         if (/HTTP\/2 原始帧/.test(res?.summary || "")) return { left: claimedBrowser() || "UA", op: "≠", right: R.h2Fp?.clientGuess || "H2 帧异常" };
@@ -6776,6 +6927,12 @@
         const gv = analyzeRttGeo()?.violation;
         if (gv && /光速违例/.test(res?.summary || "")) {
           return { left: `${gv.name} ${gv.ms}ms`, op: "<", right: `光速下限 ${gv.floorMs}ms` };
+        }
+        if (res.cfComparison) {
+          return { left: `${R.cfLocalColo} 边缘 ${R.cfLocalRtt}ms`, op: "≫", right: "本地 <45ms" };
+        }
+        if (res.reverseInflation) {
+          return { left: `握手 ${R.srvTcpRtt}ms`, op: "≫", right: `HTTP ${R.httpRtt}ms` };
         }
         if (res.wsComparison) {
           return { left: `Pong ${R.wsPingRtt}ms`, op: "≫", right: `握手 ${R.srvTcpRtt}ms` };
@@ -7504,27 +7661,28 @@
     const l1Badge = $("#topoLink1Badge"), l1Line = $("#topoLine1"), l1Arrow = $("#topoArrow1"), l1Sub = $("#topoLink1Sub");
     if (l1Badge && l1Line && l1Arrow) {
       const splitLv = checks.split?.level || "info";
+      const spTopo = R.exitsDone ? analyzeExitSplit() : null;
       if (splitLv === "bad") {
         l1Badge.textContent = "分流漏底";
         l1Badge.className = "py-0.5 px-2 rounded-full text-[10.5px] font-semibold whitespace-nowrap bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300";
         l1Line.setAttribute("stroke-dasharray", "4 4");
         l1Line.setAttribute("class", "topo-flow-anim stroke-rose-500");
         l1Arrow.setAttribute("class", "stroke-rose-500");
-        if (l1Sub) l1Sub.textContent = "国内直连暴露";
+        if (l1Sub) l1Sub.textContent = spTopo?.distinctCount >= 3 ? `分流至 ${spTopo.distinctCount} 个出口` : "国内直连暴露";
       } else if (splitLv === "warn") {
         l1Badge.textContent = "多路分流";
         l1Badge.className = "py-0.5 px-2 rounded-full text-[10.5px] font-semibold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300";
         l1Line.setAttribute("stroke-dasharray", "4 4");
         l1Line.setAttribute("class", "topo-flow-anim stroke-amber-500");
         l1Arrow.setAttribute("class", "stroke-amber-500");
-        if (l1Sub) l1Sub.textContent = "多出口网段";
+        if (l1Sub) l1Sub.textContent = `分流至 ${spTopo?.distinctCount || 2} 个出口`;
       } else if (R.exitsDone) {
         l1Badge.textContent = "全局一致";
         l1Badge.className = "py-0.5 px-2 rounded-full text-[10.5px] font-semibold whitespace-nowrap bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300";
         l1Line.removeAttribute("stroke-dasharray");
         l1Line.setAttribute("class", "stroke-emerald-500");
         l1Arrow.setAttribute("class", "stroke-emerald-500");
-        if (l1Sub) l1Sub.textContent = "8 路同出口";
+        if (l1Sub) l1Sub.textContent = `${Math.max(1, spTopo?.validExits?.length || 1)} 路同出口`;
       }
     }
 

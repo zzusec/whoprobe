@@ -502,3 +502,67 @@ test("single-source dc tag on ISP-announced leased block reconciles to ISP + lea
   assert.equal(ck.lease.level, "warn");
   assert.match(ck.lease.summary, /商业租赁/);
 });
+
+test("reverse handshake inflation (28ms HTTP vs 317ms SYN->ClientHello), local CF PoP RTT, and 3-way split-tunneling are caught", () => {
+  // 1) 28 ms HTTP vs 317 ms SYN->ClientHello (SOCKS5/CONNECT two-stage handshake or clamped ResourceTiming)
+  const hRev = harness({
+    state: {
+      finished: true,
+      values: {},
+      ip: "9.9.9.42",
+      ipCC: "TH",
+      netKind: "isp",
+      dev: { os: "Linux" },
+      latDone: true,
+      httpRtt: 28,
+      srvTcpRtt: 317,
+    },
+  });
+  const rttRev = hRev.check().rtt;
+  assert.equal(rttRev.level, "bad");
+  assert.match(rttRev.summary, /317 ms/);
+  assert.equal(hRev.compare("rtt", rttRev).left, "握手 317ms");
+
+  // 2) Same-country local Cloudflare PoP (BKK in TH) warm RTT 215 ms reveals proxy hop even when server handshake looks close
+  const hCf = harness({
+    state: {
+      finished: true,
+      values: {},
+      ip: "9.9.9.42",
+      ipCC: "TH",
+      netKind: "isp",
+      dev: { os: "Linux" },
+      latDone: true,
+      httpRtt: 95,
+      srvTcpRtt: 85,
+      cfLocalColo: "BKK",
+      cfLocalRtt: 215,
+      exits: { ex_self: { ip: "9.9.9.42", cc: "TH" }, ex_cf: { ip: "9.9.9.42", cc: "TH", colo: "BKK" } },
+    },
+  });
+  const rttCf = hCf.check().rtt;
+  assert.equal(rttCf.level, "bad");
+  assert.match(rttCf.summary, /BKK.*215 ms/);
+
+  // 3) 3-way split-tunneling across Mainland streaming DIRECT + TH proxy + US AI rule / IPv6 stack
+  const hSplit = harness({
+    state: {
+      finished: true,
+      values: {},
+      ip: "9.9.9.42",
+      ipCC: "TH",
+      netKind: "isp",
+      exitsDone: true,
+      exits: {
+        ex_self: { ip: "9.9.9.42", cc: "TH", label: "泰国" },
+        ex_cn: { ip: "203.0.113.10", cc: "CN", label: "中国 · ZheJiang · CMNET" },
+        ex_cn_alt: { ip: "9.9.9.42", cc: "TH", label: "泰国" },
+        ex_gpt: { ip: "198.51.100.88", cc: "US", label: "美国" },
+      },
+      stack: { v4: "9.9.9.42", v6: "2409:8a00::1" },
+    },
+  });
+  const sp = hSplit.check().split;
+  assert.equal(sp.level, "bad");
+  assert.match(sp.summary, /203\.0\.113\.10.*3 个不同出口/);
+});

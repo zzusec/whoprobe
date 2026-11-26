@@ -15,6 +15,9 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
     readCpu: probeCpuArch,
     readPopup: probePopupBlocker,
     readHardware: probeAsyncHardware,
+    readMqScreen: probeMqScreen,
+    readFontLocal: probeFontLocal,
+    readHeaders: probeHeaderForensics,
     updateUdp: updateUdpRttProbe,
     setIceTiming: value => { R.stunRttMs = value; },
     check: evaluateAllChecks,
@@ -375,4 +378,89 @@ test("automatic page probes never call window.open or Widevine DRM on Linux/Andr
   assert.equal(windowOpenCalled, false);
   assert.equal(sandbox.tests.getState().popupDisabled, false);
   assert.deepEqual(drmCalls, ["org.w3.clearkey"]);
+});
+
+test("genuine Android phone with nav-bar height inset, PostScript font aliases, zh-Hans-CN and GMS-less ROM passes tamper with zero popups", async () => {
+  const ua = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36";
+  let fidoCalled = false, btCalled = false, widevineCalled = false;
+  const navigator = {
+    userAgent: ua,
+    platform: "Linux armv81",
+    language: "zh-Hans-CN",
+    languages: ["zh-Hans-CN"],
+    hardwareConcurrency: 8,
+    bluetooth: { getAvailability: async () => { btCalled = true; return true; } },
+    requestMediaKeySystemAccess: async ks => {
+      if (ks !== "org.w3.clearkey") widevineCalled = true;
+      return {};
+    },
+  };
+  const matchMedia = q => {
+    if (q === "(pointer: coarse)") return { matches: true };
+    if (q === "(orientation: portrait)") return { matches: true };
+    const mw = /^\(min-device-width:\s*(\d+)px\)$/.exec(q);
+    if (mw) return { matches: Number(mw[1]) <= 360 };
+    const mh = /^\(min-device-height:\s*(\d+)px\)$/.exec(q);
+    if (mh) return { matches: Number(mh[1]) <= 770 }; // full 1080x2310 @ 3x panel height
+    if (q.includes("resolution")) return { matches: false }; // simulate Android font-scale dppx shift
+    return { matches: false };
+  };
+  class FontFace {
+    constructor(_fam, src) { this.src = src; }
+    async load() {
+      // Android fonts.xml loads PostScript names without matching CSS family names in Canvas
+      if (/NotoSansCJKsc-Regular|HelveticaNeue|Roboto/.test(this.src)) return this;
+      throw new Error("not found");
+    }
+  }
+  const nodes = Object.fromEntries(["sceneBadge", "topGiveaway", "scoreSub", "issueCount", "cntBad", "cntWarn", "cntOk"].map(id => [`#${id}`, {}]));
+  const win = {
+    innerWidth: 360,
+    innerHeight: 660,
+    devicePixelRatio: 3,
+    matchMedia,
+    PublicKeyCredential: { isUserVerifyingPlatformAuthenticatorAvailable: async () => { fidoCalled = true; return true; } },
+    open: () => { throw new Error("popup forbidden"); },
+  };
+  const sandbox = {
+    document: { querySelector: k => nodes[k] || null, querySelectorAll: () => [], addEventListener() {}, createElement: () => ({ style: {}, setAttribute() {}, remove() {} }), body: { appendChild() {} } },
+    navigator,
+    screen: { width: 360, height: 728 }, // 42px Android navigation bar subtracted
+    window: win,
+    FontFace,
+    URL,
+    Intl,
+    location: { hostname: "localhost", href: "http://localhost/", search: "" },
+    setTimeout,
+  };
+  vm.runInNewContext(instrumented, sandbox, { filename: "static/app.js" });
+  sandbox.tests.setState({
+    finished: true,
+    values: {},
+    dev: { os: "Android", osv: "9", kind: "phone", model: "Example-Phone" },
+    br: { name: "Chrome", v: "138", inApp: false },
+    engine: "V8",
+    langs: ["zh-Hans-CN"],
+    fonts: ["Roboto"],
+    tzOff: 480,
+    dateOff: 480,
+    srv: {
+      headers: {
+        "user-agent": ua,
+        "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+      },
+      proxyHeaders: { names: [], xffHops: 0, via: "" },
+    },
+  });
+  sandbox.tests.readPopup();
+  sandbox.tests.readMqScreen();
+  await sandbox.tests.readFontLocal();
+  sandbox.tests.readHeaders();
+  await sandbox.tests.readHardware();
+
+  assert.equal(fidoCalled, false, "PublicKeyCredential must not be called on Android");
+  assert.equal(btCalled, false, "bluetooth.getAvailability must not be called on Android");
+  assert.equal(widevineCalled, false, "Widevine must not be called on Android");
+  const checks = sandbox.tests.check();
+  assert.equal(checks.tamper.level, "ok", checks.tamper.summary);
 });

@@ -2301,7 +2301,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         if content_type.startswith("text/html") and (not extra_headers or "Permissions-Policy" not in extra_headers):
             self.send_header(
                 "Permissions-Policy",
-                "local-network-access=(), local-network=(), loopback-network=(), camera=(), microphone=(), usb=(), serial=(), hid=(), midi=(), payment=(), idle-detection=(), window-management=(), local-fonts=(), display-capture=()",
+                "local-network-access=(), local-network=(), loopback-network=(), encrypted-media=(), bluetooth=(), publickey-credentials-get=(), publickey-credentials-create=(), camera=(), microphone=(), usb=(), serial=(), hid=(), midi=(), payment=(), idle-detection=(), window-management=(), local-fonts=(), display-capture=()",
             )
         if use_gzip:
             self.send_header("Content-Encoding", "gzip")

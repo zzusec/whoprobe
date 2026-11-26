@@ -3138,16 +3138,16 @@
       setProbe("hwdec", hw.length ? `芯片硬解: ${hw.join(" · ")}` : "纯软件解码或未暴露硬解状态");
     })();
 
-    // DRM (skip Firefox & Android/Linux protected-media-identifier permission prompts)
+    // DRM (skip Firefox & Android/Linux/touch protected-media-identifier permission prompts unconditionally)
+    const isAndroidOrHarmony = /Android|HarmonyOS|OpenHarmony/i.test(navigator.userAgent);
     const pDrm = (async () => {
       if (!navigator.requestMediaKeySystemAccess || /Firefox\//.test(navigator.userAgent)) {
         return setNA("drm", "当前内核免打扰跳过或不支持");
       }
-      let pmiPrompt = /Android|CrOS|Linux/i.test(navigator.userAgent) || mq("(pointer: coarse)");
-      if (navigator.permissions?.query) {
+      let pmiPrompt = isAndroidOrHarmony || /CrOS|Linux/i.test(navigator.userAgent) || mq("(pointer: coarse)");
+      if (!pmiPrompt && navigator.permissions?.query) {
         const st = await within(navigator.permissions.query({ name: "protected-media-identifier" }).then(s => s?.state, () => null), 600, null);
         if (st === "prompt" || st === "denied") pmiPrompt = true;
-        else if (st === "granted") pmiPrompt = false;
       }
       const cfg = [{ initDataTypes: ["cenc"], videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.42E01E"' }] }];
       const sys = pmiPrompt
@@ -3155,19 +3155,21 @@
         : [["Widevine", "com.widevine.alpha"], ["FairPlay", "com.apple.fps"], ["PlayReady", "com.microsoft.playready.recommendation"], ["ClearKey", "org.w3.clearkey"]];
       const r = await Promise.all(sys.map(([n, ks]) => within(navigator.requestMediaKeySystemAccess(ks, cfg).then(() => n, () => null), 1800, null)));
       const ok = r.filter(Boolean);
-      setProbe("drm", ok.length ? `${ok.join(" · ")}${pmiPrompt ? "（Widevine 免弹窗跳过）" : ""}` : (pmiPrompt ? "已免弹窗跳过受保护内容权限查询" : "未启用 DRM 模块"));
+      setProbe("drm", ok.length ? `${ok.join(" · ")}${pmiPrompt ? "（免弹窗模式）" : ""}` : (pmiPrompt ? "已免弹窗跳过受保护内容权限查询" : "未启用 DRM 模块"));
     })();
 
-    // Biometrics
+    // Biometrics (skip on Android/HarmonyOS so non-GMS Huawei/domestic ROMs never pop up Google Play Services FIDO2 dialogs)
     const pBio = (async () => {
+      if (isAndroidOrHarmony) return setNA("bio", "移动端免弹窗跳过 FIDO2/GMS 服务查询");
       const fn = window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable;
       if (!fn) return setNA("bio");
       const ok = await within(fn.call(PublicKeyCredential), 1500, null);
       setProbe("bio", ok ? "已配备平台生物识别硬件 (Touch ID / Windows Hello / Face ID)" : "未检出内置生物识别模块");
     })();
 
-    // Bluetooth
+    // Bluetooth (skip on Android/HarmonyOS so OEM ROM permission guards never pop up nearby-device prompts)
     const pBt = (async () => {
+      if (isAndroidOrHarmony) return setNA("bt", "移动端免弹窗跳过蓝牙状态查询");
       if (!navigator.bluetooth?.getAvailability) return setNA("bt", "非 Chromium 内核未开放 WebBluetooth");
       const ok = await within(navigator.bluetooth.getAvailability(), 1500, null);
       setProbe("bt", ok ? "本机蓝牙硬件可用" : "无蓝牙模块或已关闭");
@@ -4222,19 +4224,34 @@
   }
   function probeMqScreen() {
     const W = screen.width, H = screen.height, dpr = window.devicePixelRatio || 1;
+    const isMobileTouch = mq("(pointer: coarse)") || /Android|HarmonyOS|OpenHarmony|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const diffs = [], okParts = [];
     const cssW = mqMaxPx("device-width"), cssH = mqMaxPx("device-height");
     if (cssW != null && cssH != null) {
-      if (Math.abs(cssW - W) > 1 || Math.abs(cssH - H) > 1) diffs.push(`JS screen ${W}×${H} ≠ CSS device ${cssW}×${cssH}`);
-      else okParts.push(`device ${cssW}×${cssH}`);
+      const wDiff = Math.abs(cssW - W), hDiff = Math.abs(cssH - H);
+      // Mobile OS cutout / status / gesture-nav bars legitimately cause one dimension of screen vs CSS device-* to differ by up to ~150 CSS px
+      const mobileInsetOnly = isMobileTouch && (
+        (wDiff <= 4 && hDiff <= 160) ||
+        (hDiff <= 4 && wDiff <= 160)
+      );
+      if ((wDiff > 2 || hDiff > 2) && !mobileInsetOnly) {
+        diffs.push(`JS screen ${W}×${H} ≠ CSS device ${cssW}×${cssH}`);
+      } else {
+        okParts.push(`device ${cssW}×${cssH}`);
+      }
     }
-    const lo = Math.max(0.01, dpr - 0.02).toFixed(3), hi = (dpr + 0.02).toFixed(3);
-    if (mq("(min-resolution: 0.001dppx)")) {
-      if (!mq(`(min-resolution: ${lo}dppx) and (max-resolution: ${hi}dppx)`)) diffs.push(`devicePixelRatio=${dpr} 与 CSS resolution 不符`);
-      else okParts.push(`${+dpr.toFixed(3)}dppx`);
-    } else if (mq("(-webkit-min-device-pixel-ratio: 0.001)")) {
-      if (!mq(`(-webkit-min-device-pixel-ratio: ${lo}) and (-webkit-max-device-pixel-ratio: ${hi})`)) diffs.push(`devicePixelRatio=${dpr} 与 -webkit-device-pixel-ratio 不符`);
-      else okParts.push(`${+dpr.toFixed(3)}x`);
+    const vvScale = window.visualViewport?.scale || 1;
+    const lo = Math.max(0.01, dpr - 0.03).toFixed(3), hi = (dpr + 0.03).toFixed(3);
+    if (!isMobileTouch && vvScale > 0.98 && vvScale < 1.02) {
+      if (mq("(min-resolution: 0.001dppx)")) {
+        if (!mq(`(min-resolution: ${lo}dppx) and (max-resolution: ${hi}dppx)`)) diffs.push(`devicePixelRatio=${dpr} 与 CSS resolution 不符`);
+        else okParts.push(`${+dpr.toFixed(3)}dppx`);
+      } else if (mq("(-webkit-min-device-pixel-ratio: 0.001)")) {
+        if (!mq(`(-webkit-min-device-pixel-ratio: ${lo}) and (-webkit-max-device-pixel-ratio: ${hi})`)) diffs.push(`devicePixelRatio=${dpr} 与 -webkit-device-pixel-ratio 不符`);
+        else okParts.push(`${+dpr.toFixed(3)}x`);
+      }
+    } else {
+      okParts.push(`${+dpr.toFixed(3)}x`);
     }
     if (Math.abs(window.innerWidth - window.innerHeight) > 40) {
       const cssPortrait = mq("(orientation: portrait)");
@@ -4376,19 +4393,25 @@
       1500, false
     );
     const results = await Promise.all(LOCAL_FONT_PROBES.map(async ([fam, os, names]) => {
+      const exactLoaded = await tryName(fam);
+      if (exactLoaded) return [fam, os, true, true];
       for (const n of names) {
-        if (await tryName(n)) return [fam, os, true];
+        if (n !== fam && await tryName(n)) return [fam, os, true, false];
       }
-      return [fam, os, false];
+      return [fam, os, false, false];
     }));
     const found = results.filter(r => r[2]);
     R.localFonts = found.map(r => r[0]);
     const usable = found.length >= 2;
-    const canvasSet = new Set(R.fonts || []);
-    const hidden = usable && !navigator.brave ? found.filter(r => PROBE_FONTS.includes(r[0]) && !canvasSet.has(r[0])).map(r => r[0]) : [];
-    const phantom = usable ? results.filter(r => !r[2] && canvasSet.has(r[0])).map(r => r[0]) : [];
-    const osHas = k => found.some(r => r[1] === k);
     const os = R.dev?.os || "";
+    const isMobileRom = /^(Android|HarmonyOS|iOS|iPadOS)$/.test(os) || /Android|HarmonyOS|OpenHarmony|iPhone|iPad/i.test(navigator.userAgent);
+    const canvasSet = new Set(R.fonts || []);
+    // Only compare exact family-name local() loads on desktop OSes; Android fonts.xml maps aliases/PostScript names without matching CSS family names
+    const hidden = usable && !navigator.brave && !isMobileRom
+      ? found.filter(r => r[3] && PROBE_FONTS.includes(r[0]) && !canvasSet.has(r[0])).map(r => r[0])
+      : [];
+    const phantom = usable && !isMobileRom ? results.filter(r => !r[2] && canvasSet.has(r[0])).map(r => r[0]) : [];
+    const osHas = k => found.some(r => r[1] === k);
     let osConflict = "";
     if (usable) {
       if (os === "macOS" && !osHas("apple")) osConflict = "自报 macOS 却缺少 Menlo / Helvetica Neue / PingFang 等系统必备字体";
@@ -4616,8 +4639,16 @@
       if (toks[i].q > toks[i - 1].q + 1e-9) { issues.push("q 权重未递减"); break; }
     }
     if (toks.some(t => !(t.q > 0 && t.q <= 1) || (t.qRaw != null && !/^(0(\.\d{1,3})?|1(\.0{1,3})?)$/.test(t.qRaw)))) issues.push("q 值格式非法");
-    const navPrim = new Set((R.langs || []).map(l => String(l).toLowerCase().split("-")[0]));
-    const alien = toks.filter(t => t.tag && t.tag !== "*" && !navPrim.has(t.tag.split("-")[0])).map(t => t.tag);
+    const navPrim = new Set((R.langs || []).map(l => String(l).toLowerCase().replace(/_/g, "-").split("-")[0]));
+    const firstMatch = toks.length > 0 && navPrim.has(toks[0].tag.replace(/_/g, "-").split("-")[0]);
+    // Chrome on single-language Android/Windows legitimately appends low-q en-US,en fallback in Accept-Language
+    const alien = toks.filter(t => {
+      if (!t.tag || t.tag === "*") return false;
+      const prim = t.tag.replace(/_/g, "-").split("-")[0];
+      if (navPrim.has(prim)) return false;
+      if (firstMatch && prim === "en" && t.q < 1) return false;
+      return true;
+    }).map(t => t.tag);
     if (alien.length && navPrim.size) issues.push(`含 JS 语言列表之外的语种 (${alien.slice(0, 3).join(", ")})`);
     const reduced = toks.length === 1 && (R.langs || []).length > 1;
     R.alIssues = issues;
@@ -5136,51 +5167,10 @@
   }
 
   /* ---------- v7.6 Deep Protocol, Launch-Flag & Cross-Realm Probes (7 client items + h2akamai server item) ---------- */
-  let bootPopupOpened = null;
-
-  // (13) Popup blocker flag (--disable-popup-blocking): manual opt-in only so page load never triggers window.open popups or blocked-popup banners
+  // (13) Popup blocker flag: completely disabled (zero window.open popups)
   function probePopupBlocker() {
-    R.popupDisabled = bootPopupOpened === true;
-    if (bootPopupOpened == null) {
-      setProbe("popupblk", `<button type="button" id="btnRunPopupBlk" class="py-0.5 px-2 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-sans font-medium text-[11px] dark:bg-blue-500/15 dark:text-blue-400">点击延迟自检无手势弹窗拦截</button>`, {
-        html: true,
-        rawText: "未触发手动弹窗拦截自检"
-      });
-      const btn = $("#btnRunPopupBlk");
-      if (btn) {
-        btn.onclick = async ev => {
-          ev.stopPropagation();
-          btn.disabled = true;
-          btn.textContent = "等待 5.2s 手势激活窗口期结束…";
-          await new Promise(r => setTimeout(r, 5200));
-          if (navigator.userActivation?.isActive) {
-            await new Promise(r => setTimeout(r, 1500));
-          }
-          try {
-            const w = window.open("about:blank", "_blank", "width=80,height=80,left=9999,top=9999");
-            if (w) {
-              bootPopupOpened = true;
-              try { w.close(); } catch (e) {}
-            } else {
-              bootPopupOpened = false;
-            }
-          } catch (e) {
-            bootPopupOpened = false;
-          }
-          R.popupDisabled = bootPopupOpened === true;
-          setProbe("popupblk", bootPopupOpened
-            ? "无用户手势下 window.open 未被拦截（已立即关闭）：检出 --disable-popup-blocking 或站点放行弹窗"
-            : "无手势弹窗已被浏览器默认拦截（正常真人策略）",
-          { tone: bootPopupOpened ? "warn" : "ok" });
-          renderChecksAndScore(false);
-        };
-      }
-      return;
-    }
-    setProbe("popupblk", bootPopupOpened
-      ? "无用户手势下 window.open 未被拦截（已立即关闭）：检出 --disable-popup-blocking 或站点放行弹窗"
-      : "无手势弹窗已被浏览器默认拦截（正常真人策略）",
-    { tone: bootPopupOpened ? "warn" : "ok" });
+    R.popupDisabled = false;
+    setNA("popupblk", "已禁用弹窗探测（零弹窗免打扰策略）");
   }
 
   // (14) IPC flooding protection flag (--disable-ipc-flooding-protection) via hidden same-origin blank iframe
@@ -6454,9 +6444,11 @@
     // 16. tamper: Environment Tampering & Native Prototype Lies
     const tamperReasons = [];
     const hdrUa = R.srv?.headers?.["user-agent"] || "";
-    const hdrLang = ((R.srv?.headers?.["accept-language"] || "").split(",")[0] || "").split(";")[0].trim().toLowerCase();
+    const hdrLang = ((R.srv?.headers?.["accept-language"] || "").split(",")[0] || "").split(";")[0].trim().toLowerCase().replace(/_/g, "-");
+    const jsFirstLang = String(R.langs?.[0] || "").trim().toLowerCase().replace(/_/g, "-");
+    const hdrPrim = hdrLang.split("-")[0], jsPrim = jsFirstLang.split("-")[0];
     if (hdrUa && navigator.userAgent && hdrUa !== navigator.userAgent) tamperReasons.push("HTTP User-Agent 头与 JS navigator.userAgent 不一致");
-    if (hdrLang && R.langs?.[0] && hdrLang !== R.langs[0].toLowerCase()) tamperReasons.push(`HTTP 语言头 (${hdrLang}) 与 JS 语言 (${R.langs[0]}) 不一致`);
+    if (hdrPrim && jsPrim && hdrPrim !== jsPrim) tamperReasons.push(`HTTP 语言头 (${hdrLang}) 与 JS 语言 (${R.langs[0]}) 不一致`);
     if (R.tzOff != null && R.dateOff != null && R.tzOff !== R.dateOff) tamperReasons.push("Date 时区偏移与 Intl 时区相互矛盾");
     if (R.osFontMismatch) tamperReasons.push(R.osFontMismatch);
     if ((R.iframeDiffs || []).length) tamperReasons.push(`洁净 iframe 沙箱读数差异 (${R.iframeDiffs.join(", ")})`);
@@ -6779,7 +6771,12 @@
       case "hwvirt":
         return { single: R.gpuSoft ? "SwiftShader 软卡" : `抢占 ${R.cpuBench?.stealRatio || 1}x` };
       case "tamper":
-        return { single: `${(R.lies || []).length || 1} 处接口/头矛盾` };
+        if ((R.lies || []).length) return { single: `${R.lies.length} 处原型钩子` };
+        if ((R.mqDiffs || []).length) return { single: "屏幕媒体查询矛盾" };
+        if ((R.fontLocalHidden || []).length) return { single: "字体探测钩子" };
+        if ((R.iframeDiffs || []).length) return { single: "iframe 读数不符" };
+        if (R.tzDstMismatch || R.tzOff !== R.dateOff) return { single: "时区接口矛盾" };
+        return { single: "请求头/接口不一致" };
       case "fpb":
         if ((R.workerDiff || []).length) return { left: "主线程", op: "≠", right: "Worker 线程" };
         if ((R.swRealmDiff || []).length) return { left: "主线程", op: "≠", right: "Shared/SW 线程" };
@@ -8211,7 +8208,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.9.4",
+        version: "7.9.5",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,

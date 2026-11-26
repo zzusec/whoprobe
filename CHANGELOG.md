@@ -1,5 +1,12 @@
 # Changelog
 
+## [v7.9.5] - 2026-11-26
+
+- 彻底取消弹窗与系统服务提示：完全停用 `popupblk` 的 `window.open` 探测，移动端免弹窗跳过 `PublicKeyCredential`（消除华为/国产无 GMS 机型弹出「启用 Google Play 服务」提示）与蓝牙状态查询，HTML 响应头新增 `encrypted-media=(), bluetooth=(), publickey-credentials-get=(), publickey-credentials-create=()` 并加入 `notranslate` 元标签。
+- 修复安卓真机蜂窝网络下 `tamper`（「环境篡改检测」）高危误报：兼容挖孔屏/虚拟导航栏导致的 `screen.height` 与 CSS `device-height` 系统栏高度差及移动端系统字体缩放，规避安卓 `fonts.xml` PostScript 字体别名在 `local()` 与 Canvas 族名间的固有差异，并兼容单语种系统 Chrome 默认附带低权重 `en-US,en` 兜底 `Accept-Language` 请求头的原生行为。
+
+---
+
 ## [v7.9.4] - 2026-11-26
 
 - 彻底消除页面加载时的三类浏览器弹窗与权限提示：① 将 `popupblk` 改为纯手动点击自检，首屏不再自动调用 `window.open("about:blank")`（消除窗口闪烁及地址栏「已拦截弹出式窗口」提示）；② 服务端对 HTML 页面下发 `Permissions-Policy: local-network-access=(), local-network=(), loopback-network=()` 等策略头，静默阻止 Chrome 142–148 在跨域探针域名被 DNS 去广告或 Fake-IP 解析至本地网段时弹出「想要查找并连接到本地网络上的设备」权限框；③ Android / Linux / 触屏环境下免弹窗跳过需设备标识符授权的 Widevine 查询（消除「想要播放受保护的内容」权限弹窗）。

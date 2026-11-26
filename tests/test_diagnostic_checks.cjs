@@ -13,6 +13,8 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
     readIframe: probeLiesAndIframe,
     readShared: probeSwRealm,
     readCpu: probeCpuArch,
+    readPopup: probePopupBlocker,
+    readHardware: probeAsyncHardware,
     updateUdp: updateUdpRttProbe,
     setIceTiming: value => { R.stunRttMs = value; },
     check: evaluateAllChecks,
@@ -334,4 +336,43 @@ test("a single mail-only DNSBL hit on home broadband affects SMTP only, while ab
   assert.equal(abuseHit.compare("reputation", repAbuse).single, "黑名单 1 家");
   const scAbuse = abuseHit.scenarios();
   assert.ok(scAbuse.captcha.score < 70 && scAbuse.social.score < 80);
+});
+
+test("automatic page probes never call window.open or Widevine DRM on Linux/Android", async () => {
+  const drmCalls = [];
+  const linuxAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+  const navigator = {
+    userAgent: linuxAgent,
+    platform: "Linux x86_64",
+    language: "en-US",
+    languages: ["en-US"],
+    hardwareConcurrency: 8,
+    requestMediaKeySystemAccess: async keySystem => {
+      drmCalls.push(keySystem);
+      return {};
+    },
+  };
+  const nodes = Object.fromEntries(["sceneBadge", "topGiveaway", "scoreSub", "issueCount", "cntBad", "cntWarn", "cntOk"].map(id => [`#${id}`, {}]));
+  let windowOpenCalled = false;
+  const win = {
+    open: () => { windowOpenCalled = true; throw new Error("window.open must not run on load"); },
+    matchMedia: () => ({ matches: false }),
+  };
+  const sandbox = {
+    document: { querySelector: k => nodes[k] || null, querySelectorAll: () => [], addEventListener() {}, createElement: () => ({ style: {}, setAttribute() {}, remove() {} }), body: { appendChild() {} } },
+    navigator,
+    screen: { width: 1920, height: 1080 },
+    window: win,
+    URL,
+    Intl,
+    location: { hostname: "localhost", href: "http://localhost/", search: "" },
+    setTimeout,
+  };
+  vm.runInNewContext(instrumented, sandbox, { filename: "static/app.js" });
+  sandbox.tests.setState({ finished: true, values: {} });
+  sandbox.tests.readPopup();
+  await sandbox.tests.readHardware();
+  assert.equal(windowOpenCalled, false);
+  assert.equal(sandbox.tests.getState().popupDisabled, false);
+  assert.deepEqual(drmCalls, ["org.w3.clearkey"]);
 });

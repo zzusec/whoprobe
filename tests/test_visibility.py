@@ -174,6 +174,14 @@ class VisibilityHttpTest(unittest.TestCase):
             self.assertEqual(self.request("GET", "/api/who/visibility/bgp?prefix=8.8.8.0%2F24")[0], 200)
             lookup.assert_called_once_with("8.8.8.0/24")
 
+    def test_html_responses_disable_local_network_permission_prompts(self):
+        status, headers, _ = self.request("GET", "/")
+        self.assertEqual(status, 200)
+        policy = headers.get("Permissions-Policy", "")
+        self.assertIn("local-network-access=()", policy)
+        self.assertIn("local-network=()", policy)
+        self.assertIn("loopback-network=()", policy)
+
 
 if __name__ == "__main__":
     unittest.main()

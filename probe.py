@@ -2298,6 +2298,11 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
+        if content_type.startswith("text/html") and (not extra_headers or "Permissions-Policy" not in extra_headers):
+            self.send_header(
+                "Permissions-Policy",
+                "local-network-access=(), local-network=(), loopback-network=(), camera=(), microphone=(), usb=(), serial=(), hid=(), midi=(), payment=(), idle-detection=(), window-management=(), local-fonts=(), display-capture=()",
+            )
         if use_gzip:
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Vary", "Accept-Encoding")

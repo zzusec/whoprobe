@@ -361,7 +361,7 @@
     ["focus", "brw", "页面焦点、可见性与用户激活", false, "document.hasFocus()、visibilityState 与 navigator.userActivation：无头或后台自动化常见「页面可见却从未获得焦点、也从无用户手势」。"],
     ["ipcflood", "brw", "IPC 洪泛保护开关 (replaceState)", false, "在隐藏同源空白 iframe 内瞬时调用 260 次 history.replaceState（约 12ms，不改主页面 URL）：正常 Chromium 在 200 次处触发限流保护，而 Puppeteer / Playwright 默认启动参数 --disable-ipc-flooding-protection 会全量放行。"],
     ["cspbypass", "brw", "CSP 内容安全策略绕过检测", false, "在隔离 srcdoc iframe 内设置 script-src 'none' 并放置探针内联脚本：正常浏览器 100% 拦截，开启 Playwright bypassCSP 或 CDP Page.setBypassCSP 时脚本会违规执行。"],
-    ["popupblk", "brw", "弹窗拦截策略开关 (popup-blocking)", false, "在页面首次无用户激活手势阶段静默测试 window.open 是否被浏览器默认拦截（若打开则毫秒级立即关闭），识别自动化框架默认参数 --disable-popup-blocking。"],
+    ["popupblk", "brw", "弹窗拦截策略开关（手动）", false, "仅在手动点击自检时等待用户手势窗口期结束后测试 window.open 是否被拦截，首屏绝不自动调用 window.open 以免触发浏览器弹窗或拦截提示条。"],
     ["glworker", "brw", "Worker OffscreenCanvas 显卡跨线程核验", false, "在独立 Web Worker 线程内通过 OffscreenCanvas 读取 WebGL 真实显卡渲染器并与主线程对比，专杀只篡改主页面 WebGL 的 stealth 插件与指纹浏览器（CreepJS hasBadWebGL 同款）。"],
     ["adblock", "brw", "广告拦截插件双重实测", false, "结合页面多类名广告 DOM 诱饵隐藏检测与 Google 广告脚本网络请求拦截对照（排除断网误判）。"],
     ["ext", "brw", "页面注入痕迹识别扩展", false, "检测加密钱包全局对象（MetaMask/OKX/Phantom/Rabby）、DevTools 钩子与翻译/暗色插件 DOM 标记。"],
@@ -3138,14 +3138,24 @@
       setProbe("hwdec", hw.length ? `芯片硬解: ${hw.join(" · ")}` : "纯软件解码或未暴露硬解状态");
     })();
 
-    // DRM (skip Firefox prompt)
+    // DRM (skip Firefox & Android/Linux protected-media-identifier permission prompts)
     const pDrm = (async () => {
-      if (!navigator.requestMediaKeySystemAccess || /Firefox\//.test(navigator.userAgent)) return setNA("drm", "当前内核免打扰跳过或不支持");
+      if (!navigator.requestMediaKeySystemAccess || /Firefox\//.test(navigator.userAgent)) {
+        return setNA("drm", "当前内核免打扰跳过或不支持");
+      }
+      let pmiPrompt = /Android|CrOS|Linux/i.test(navigator.userAgent) || mq("(pointer: coarse)");
+      if (navigator.permissions?.query) {
+        const st = await within(navigator.permissions.query({ name: "protected-media-identifier" }).then(s => s?.state, () => null), 600, null);
+        if (st === "prompt" || st === "denied") pmiPrompt = true;
+        else if (st === "granted") pmiPrompt = false;
+      }
       const cfg = [{ initDataTypes: ["cenc"], videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.42E01E"' }] }];
-      const sys = [["Widevine", "com.widevine.alpha"], ["FairPlay", "com.apple.fps"], ["PlayReady", "com.microsoft.playready.recommendation"], ["ClearKey", "org.w3.clearkey"]];
+      const sys = pmiPrompt
+        ? [["ClearKey", "org.w3.clearkey"]]
+        : [["Widevine", "com.widevine.alpha"], ["FairPlay", "com.apple.fps"], ["PlayReady", "com.microsoft.playready.recommendation"], ["ClearKey", "org.w3.clearkey"]];
       const r = await Promise.all(sys.map(([n, ks]) => within(navigator.requestMediaKeySystemAccess(ks, cfg).then(() => n, () => null), 1800, null)));
       const ok = r.filter(Boolean);
-      setProbe("drm", ok.length ? ok.join(" · ") : "未启用 DRM 模块");
+      setProbe("drm", ok.length ? `${ok.join(" · ")}${pmiPrompt ? "（Widevine 免弹窗跳过）" : ""}` : (pmiPrompt ? "已免弹窗跳过受保护内容权限查询" : "未启用 DRM 模块"));
     })();
 
     // Biometrics
@@ -5126,31 +5136,49 @@
   }
 
   /* ---------- v7.6 Deep Protocol, Launch-Flag & Cross-Realm Probes (7 client items + h2akamai server item) ---------- */
-  let bootPopupChecked = false;
   let bootPopupOpened = null;
 
-  // (13) Popup blocker flag (--disable-popup-blocking): only auto-invoked when transient userActivation is inactive
+  // (13) Popup blocker flag (--disable-popup-blocking): manual opt-in only so page load never triggers window.open popups or blocked-popup banners
   function probePopupBlocker() {
-    if (!bootPopupChecked && !(navigator.userActivation && navigator.userActivation.isActive)) {
-      bootPopupChecked = true;
-      try {
-        const w = window.open("about:blank", "_blank", "width=80,height=80,left=9999,top=9999");
-        if (w) {
-          bootPopupOpened = true;
-          try { w.close(); } catch (e) {}
-        } else {
-          bootPopupOpened = false;
-        }
-      } catch (e) {
-        bootPopupOpened = false;
-      }
-    }
     R.popupDisabled = bootPopupOpened === true;
     if (bootPopupOpened == null) {
-      return setNA("popupblk", "当前处于用户手势激活窗口期，跳过自动弹窗测试以免打扰");
+      setProbe("popupblk", `<button type="button" id="btnRunPopupBlk" class="py-0.5 px-2 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-sans font-medium text-[11px] dark:bg-blue-500/15 dark:text-blue-400">点击延迟自检无手势弹窗拦截</button>`, {
+        html: true,
+        rawText: "未触发手动弹窗拦截自检"
+      });
+      const btn = $("#btnRunPopupBlk");
+      if (btn) {
+        btn.onclick = async ev => {
+          ev.stopPropagation();
+          btn.disabled = true;
+          btn.textContent = "等待 5.2s 手势激活窗口期结束…";
+          await new Promise(r => setTimeout(r, 5200));
+          if (navigator.userActivation?.isActive) {
+            await new Promise(r => setTimeout(r, 1500));
+          }
+          try {
+            const w = window.open("about:blank", "_blank", "width=80,height=80,left=9999,top=9999");
+            if (w) {
+              bootPopupOpened = true;
+              try { w.close(); } catch (e) {}
+            } else {
+              bootPopupOpened = false;
+            }
+          } catch (e) {
+            bootPopupOpened = false;
+          }
+          R.popupDisabled = bootPopupOpened === true;
+          setProbe("popupblk", bootPopupOpened
+            ? "无用户手势下 window.open 未被拦截（已立即关闭）：检出 --disable-popup-blocking 或站点放行弹窗"
+            : "无手势弹窗已被浏览器默认拦截（正常真人策略）",
+          { tone: bootPopupOpened ? "warn" : "ok" });
+          renderChecksAndScore(false);
+        };
+      }
+      return;
     }
     setProbe("popupblk", bootPopupOpened
-      ? "无用户手势下 window.open 未被拦截（已毫秒级关闭）：检出 --disable-popup-blocking 或全局放行弹窗"
+      ? "无用户手势下 window.open 未被拦截（已立即关闭）：检出 --disable-popup-blocking 或站点放行弹窗"
       : "无手势弹窗已被浏览器默认拦截（正常真人策略）",
     { tone: bootPopupOpened ? "warn" : "ok" });
   }
@@ -8183,7 +8211,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.9.3",
+        version: "7.9.4",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,

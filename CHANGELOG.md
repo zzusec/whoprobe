@@ -1,5 +1,11 @@
 # Changelog
 
+## [v7.9.4] - 2026-11-26
+
+- 彻底消除页面加载时的三类浏览器弹窗与权限提示：① 将 `popupblk` 改为纯手动点击自检，首屏不再自动调用 `window.open("about:blank")`（消除窗口闪烁及地址栏「已拦截弹出式窗口」提示）；② 服务端对 HTML 页面下发 `Permissions-Policy: local-network-access=(), local-network=(), loopback-network=()` 等策略头，静默阻止 Chrome 142–148 在跨域探针域名被 DNS 去广告或 Fake-IP 解析至本地网段时弹出「想要查找并连接到本地网络上的设备」权限框；③ Android / Linux / 触屏环境下免弹窗跳过需设备标识符授权的 Widevine 查询（消除「想要播放受保护的内容」权限弹窗）。
+
+---
+
 ## [v7.9.3] - 2026-11-26
 
 - 区分实时 DNSBL 中的「25 端口邮件反垃圾库 (`mail`)」与「攻击/爆破/开放代理/Tor 黑名单 (`abuse` / `tor`)」：动态家庭宽带仅单点命中 1 家纯邮件 RBL（如 `Barracuda`）且无其他风险时，仅影响 SMTP 25 端口发信评分，不再将核心体检 `reputation` 误判为高危破绽，也不再连坐扣减 AI、社媒、Turnstile 免盾与支付场景通过率。

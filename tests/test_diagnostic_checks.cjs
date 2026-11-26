@@ -19,6 +19,7 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
     score: () => { renderChecksAndScore(); return R.score; },
     read: id => R.values[id],
     setState: state => { R = state; },
+    getState: () => R,
     compare: (id, result) => getVisualConflict(id, result),
   };
 })();`);
@@ -56,6 +57,7 @@ function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIn
     port = { start() {}, close() {}, postMessage() { this.onmessage({ data: shared }); } };
   };
   vm.runInNewContext(instrumented, sandbox, { filename: "static/app.js" });
+  sandbox.tests.node = id => nodes[`#${id}`];
   sandbox.tests.setState({ finished: true, values: {}, ...state });
   return sandbox.tests;
 }
@@ -158,4 +160,103 @@ test("a measured TCP vs HTTP gap is still reported, without claiming an exact ro
   assert.equal(verdict.level, "bad");
   assert.match(verdict.summary, /450 ms.*45 ms|45 ms.*450 ms/);
   assert.doesNotMatch(verdict.summary, /抓获|实锤/);
+});
+
+test("partial-coverage 5G IPv4 and IPv6 intel with sufficient sources pass reputation without false timeout retest", () => {
+  const cleanBase = {
+    finished: true,
+    values: {},
+    ip: "9.9.9.42",
+    ipCC: "US",
+    tz: "America/New_York",
+    langs: ["en-US"],
+    dnsCC: "US",
+    exitsDone: true,
+    exits: { ex_self: { ip: "9.9.9.42", cc: "US" }, ex_intl: { ip: "9.9.9.42", cc: "US" } },
+    latDone: true,
+    httpRtt: 38,
+    srvTcpRtt: 34,
+    rtcDone: true,
+    rtc: ["9.9.9.42"],
+    netKind: "mobile",
+    asn: "AS7922",
+    org: "Example Wireless",
+    fontRast: { engine: "CoreText", rgbRatio: 0 },
+    scrollbarW: 0,
+    cpuBench: { stealRatio: 1.1, simdOk: true },
+    hwCodecs: 4,
+    dev: { os: "iOS" },
+    osLabel: "iOS 18.7",
+  };
+
+  // 5G IPv4 where Shodan returned 404 (unseen -> uncertain: true) and 2 free APIs timed out (41/46 known)
+  const h4 = harness({
+    state: {
+      ...cleanBase,
+      intel: {
+        ok: true,
+        ipVersion: 4,
+        purity: { score: 99, grade: "S", uncertain: true, coverage: { known: 41, unknown: 5, notApplicable: 2, applicable: 46, ratio: 0.891 } },
+        votes: { proxy: { of: 4, E: 0.02 }, hosting: { of: 5, E: 0.02 }, vpn: { of: 4, E: 0 }, tor: { of: 4, E: 0 } },
+        dnsbl: { total: 11, listedCount: 0 },
+        cidr: { hits: [], neighbours: { dirtyCount: 0, wholeBlockListed: [] } },
+        tls443: { probed: false },
+      },
+    },
+  });
+  const rep4 = h4.check().reputation;
+  assert.equal(rep4.level, "ok");
+  assert.match(rep4.summary, /99\/100 \(S\).*覆盖 41\/46/);
+  assert.equal(h4.score(), 100);
+  assert.equal(h4.getState().grade, "A+");
+  assert.equal(h4.getState().unverifiedCnt, 0);
+  assert.doesNotMatch(h4.node("scoreSub").textContent, /超时|覆盖不足/);
+
+  // 5G IPv6 where DNSBL/CIDR are not_applicable (13/17 known, uncertain: true)
+  const h6 = harness({
+    state: {
+      ...cleanBase,
+      ip: "2620:fe::42",
+      rtc: ["2620:fe::42"],
+      intel: {
+        ok: true,
+        ipVersion: 6,
+        purity: { score: 93, grade: "A", uncertain: true, coverage: { known: 13, unknown: 4, notApplicable: 29, applicable: 17, ratio: 0.765 } },
+        votes: { proxy: { of: 3, E: 0 }, hosting: { of: 4, E: 0 }, vpn: { of: 3, E: 0 }, tor: { of: 3, E: 0 } },
+        dnsbl: { total: 0, listedCount: 0 },
+        cidr: { hits: [], neighbours: { dirtyCount: 0, wholeBlockListed: [] } },
+        tls443: { probed: false },
+      },
+    },
+  });
+  assert.equal(h6.check().reputation.level, "ok");
+  assert.equal(h6.score(), 100);
+  assert.equal(h6.getState().unverifiedCnt, 0);
+
+  // Truly sparse upstream coverage keeps fail-closed uncertainty cap, without falsely blaming probe timeout
+  const sparse = harness({
+    state: {
+      ...cleanBase,
+      intel: {
+        ok: true,
+        ipVersion: 4,
+        purity: { score: 92, grade: "A", uncertain: true, coverage: { known: 0, unknown: 44, notApplicable: 2, applicable: 44, ratio: 0 } },
+        votes: { proxy: { of: 0, E: 0 }, hosting: { of: 0, E: 0 } },
+        dnsbl: { total: 0, listedCount: 0 },
+        cidr: { hits: [], neighbours: { dirtyCount: 0, wholeBlockListed: [] } },
+        tls443: { probed: false },
+      },
+    },
+  });
+  assert.equal(sparse.check().reputation.level, "info");
+  assert.equal(sparse.score(), 95);
+  assert.equal(sparse.getState().grade, "A");
+  assert.match(sparse.node("scoreSub").textContent, /覆盖不足/);
+  assert.doesNotMatch(sparse.node("scoreSub").textContent, /超时/);
+
+  // Real client-to-server /api/who/intel timeout still reports network probe timeout
+  const timedOut = harness({ state: { ...cleanBase, intel: null } });
+  assert.equal(timedOut.check().reputation.level, "info");
+  timedOut.score();
+  assert.match(timedOut.node("scoreSub").textContent, /网络探针超时/);
 });

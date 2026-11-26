@@ -611,6 +611,18 @@
     const hay = [geo.isp, geo.org, geo.asFull, geo.asName, geo.ptr].filter(Boolean).join(" ");
     return !!(geo.mobile || MOBILE_RE.test(hay));
   }
+  function hasUsablePurity(intel) {
+    const p = intel?.purity;
+    if (!p || typeof p.score !== "number") return false;
+    if (!p.uncertain) return true;
+    const cov = p.coverage;
+    if (!cov || typeof cov.ratio !== "number") return false;
+    if ((cov.known || 0) < 6 || cov.ratio < 0.55) return false;
+    const v = intel.votes;
+    if (v && (v.proxy?.of || 0) < 2 && (v.hosting?.of || 0) < 2) return false;
+    if (intel.ipVersion === 4 && intel.dnsbl && (intel.dnsbl.total || 0) < 6) return false;
+    return true;
+  }
   function cleanIp(raw) {
     let s = String(raw || "").trim();
     if (!s) return "";
@@ -1681,6 +1693,7 @@
       return;
     }
     const p = intel.purity || {};
+    const usablePurity = hasUsablePurity(intel);
     const c = intel.consensus || {};
     window.WhoVisibilityPanel?.updateIntel(intel);
     const v = intel.votes || {};
@@ -1713,9 +1726,9 @@
       });
       const pill = $("#purityPill");
       if (pill && (p.uncertain || p.score != null)) {
-        pill.textContent = p.uncertain ? "信誉覆盖不足" : `信誉 ${p.score}·${p.grade}`;
+        pill.textContent = !usablePurity ? "信誉覆盖不足" : `信誉 ${p.score}·${p.grade}`;
         pill.className = "inline-flex items-center py-0.5 px-1.5 rounded-full text-[10px] font-mono font-semibold whitespace-nowrap shrink-0 " + (
-          p.uncertain ? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+          !usablePurity ? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
             : p.score >= 82 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
             : p.score >= 58 ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
             : "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
@@ -1775,17 +1788,18 @@
     // 2) rep_score: Purity Score & Ledger
     const dedLines = (p.deductions || []).map(d => `−${d.pts} [${d.label}] ${d.detail}`);
     const bonLines = (p.bonuses || []).map(b => `+${b.pts} [${b.label}]`);
-    setProbe("rep_score", p.uncertain ? `${prefixTag}覆盖不足（${p.coverage?.known ?? 0}/${p.coverage?.applicable ?? 0} 项有数据）`
-      : `${prefixTag}${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}（奖励 +${p.bonusTotal ?? 0} / 扣分 −${p.deductTotal ?? 0}）`, {
-      tone: p.uncertain ? "neutral" : p.score >= 82 ? "ok" : p.score >= 58 ? "warn" : "bad",
-      why: [...bonLines, ...dedLines].join("\n") || (p.uncertain ? "未知来源不算无风险" : "基准分 92")
+    const covNote = p.uncertain && p.coverage?.applicable ? ` · 覆盖 ${p.coverage.known ?? 0}/${p.coverage.applicable}` : "";
+    setProbe("rep_score", !usablePurity ? `${prefixTag}覆盖不足（${p.coverage?.known ?? 0}/${p.coverage?.applicable ?? 0} 项有数据）`
+      : `${prefixTag}${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}（奖励 +${p.bonusTotal ?? 0} / 扣分 −${p.deductTotal ?? 0}${covNote}）`, {
+      tone: !usablePurity ? "neutral" : p.score >= 82 ? "ok" : p.score >= 58 ? "warn" : "bad",
+      why: [...bonLines, ...dedLines].join("\n") || (!usablePurity ? "未知来源不算无风险" : "基准分 92")
     });
 
     // 3) rep_votes: 8-Source Weighted Odds Voting
     const pct = x => x?.of ? `${Math.round(x.E * 100)}%` : "未测";
     const maxAnon = Math.max(v.vpn?.E || 0, v.proxy?.E || 0, v.tor?.E || 0);
     setProbe("rep_votes", `${prefixTag}机房 ${pct(v.hosting)} · 代理 ${pct(v.proxy)} · VPN ${pct(v.vpn)} · Tor ${pct(v.tor)} · 风险分 ${c.riskScore ?? "未测"}`, {
-      tone: maxAnon >= 0.45 || (v.hosting?.E || 0) >= 0.6 ? "bad" : maxAnon >= 0.2 || (v.hosting?.E || 0) >= 0.35 ? "warn" : p.uncertain ? "neutral" : "ok",
+      tone: maxAnon >= 0.45 || (v.hosting?.E || 0) >= 0.6 ? "bad" : maxAnon >= 0.2 || (v.hosting?.E || 0) >= 0.35 ? "warn" : !usablePurity ? "neutral" : "ok",
       why: (intel.sources || []).map(s => `${s.name}: ${s.country || "?"} · ${s.type || "-"} · risk=${s.risk ?? "-"} · ${JSON.stringify(s.flags || {})}`).join("\n")
     });
 
@@ -1899,12 +1913,13 @@
     }
     if (banner) banner.hidden = false;
     const p = ext.purity || {}, c = ext.consensus || {}, ap = ext.asnProfile || {};
+    const usableExtPurity = hasUsablePurity(ext);
     $("#extIpVal").textContent = ext.targetIp || externalQueryIp;
     const pb = $("#extPurityBadge");
     if (pb) {
-      pb.textContent = p.uncertain ? "信誉覆盖不足" : `纯净度 ${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}`;
+      pb.textContent = !usableExtPurity ? "信誉覆盖不足" : `纯净度 ${p.score ?? "--"} / 100 · 等级 ${p.grade || "-"}`;
       pb.className = "inline-flex items-center py-0.5 px-2 rounded-full text-[11px] font-semibold " + (
-        p.uncertain ? "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+        !usableExtPurity ? "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
           : p.score >= 82 ? "bg-emerald-600 text-white" : p.score >= 58 ? "bg-amber-500 text-white" : "bg-rose-600 text-white"
       );
     }
@@ -6295,9 +6310,12 @@
       const cidrHits = (R.intel.cidr?.hits || []).filter(isThreatCidrHit).length;
       const dirty = R.intel.cidr?.neighbours?.dirtyCount || 0;
       const whole = (R.intel.cidr?.neighbours?.wholeBlockListed || []).length > 0;
-      const pScore = R.intel.purity?.uncertain ? null : (R.intel.purity?.score ?? null);
+      const usablePurity = hasUsablePurity(R.intel);
+      const pScore = usablePurity ? R.intel.purity.score : null;
       const pGrade = R.intel.purity?.grade || "-";
-      const scoreLabel = pScore == null ? "综合覆盖不足" : `纯净度 ${pScore}/100 (${pGrade})`;
+      const cov = R.intel.purity?.coverage;
+      const covSuffix = cov?.applicable && R.intel.purity?.uncertain ? ` · 覆盖 ${cov.known ?? 0}/${cov.applicable}` : "";
+      const scoreLabel = pScore == null ? "综合覆盖不足" : `纯净度 ${pScore}/100 (${pGrade})${covSuffix}`;
       const vulns = (R.intel.shodan?.vulns || []).length;
       const torHit = R.intel.threat?.onionoo?.isTorExit || R.intel.threat?.onionoo?.isTorRelay;
       const asnAbuse = R.intel.asnProfile?.abuseDensity?.ratio || 0;
@@ -6313,7 +6331,7 @@
           summary: `存在网段或历史风险线索：${scoreLabel}${dirty ? ` · 同 /24 检出 ${dirty} 个黑名单脏邻居` : ""}${vulns ? ` · Shodan 记录 ${vulns} 个 CVE` : ""}${asnAbuse >= 3.5 ? ` · 全 ASN 滥用密度 ${asnAbuse}x` : ""}`
         };
       } else if (pScore == null) {
-        out.reputation = { level: "info", summary: "出口信誉情报覆盖不足；未命中不能按无风险计" };
+        out.reputation = { level: "info", coverageSparse: true, summary: "出口信誉情报覆盖不足；未命中不能按无风险计" };
       } else {
         out.reputation = {
           level: "ok",
@@ -6749,7 +6767,7 @@
 
   function renderChecksAndScore(recordHistory = false) {
     const checks = evaluateAllChecks();
-    let badCnt = 0, warnCnt = 0, okCnt = 0, unverifiedCnt = 0, penalty = 0;
+    let badCnt = 0, warnCnt = 0, okCnt = 0, unverifiedCnt = 0, sparseCnt = 0, penalty = 0;
 
     const styleMap = {
       ok: {
@@ -6809,6 +6827,7 @@
           !(id === "rtt" && (R.coarseTimer || res.httpOnly))
         ) {
           unverifiedCnt++;
+          if (res.coverageSparse) sparseCnt++;
         }
       }
 
@@ -6928,6 +6947,8 @@
     R.grade = grade;
     R.totalIssues = totalIssues;
     R.unverifiedCnt = unverifiedCnt;
+    R.sparseCnt = sparseCnt;
+    const onlySparse = unverifiedCnt > 0 && sparseCnt === unverifiedCnt;
 
     const sNumEl = $("#scoreNum");
     if (sNumEl) {
@@ -6960,7 +6981,7 @@
     }
 
     $("#scoreSub").textContent = totalIssues === 0 && unverifiedCnt > 0
-      ? `${unverifiedCnt} 项网络探针超时，已按不确定性降级`
+      ? (onlySparse ? `${unverifiedCnt} 项情报源覆盖不足，已按不确定性降级` : `${unverifiedCnt} 项网络探针超时，已按不确定性降级`)
       : totalIssues === 0
       ? (isPriv ? "已核验项未见明显追踪暴露" : "已核验项未见明显冲突")
       : isPriv
@@ -7018,11 +7039,11 @@
             );
           }
           if (ct) {
-            ct.textContent = warnMode ? `${okCnt} 项通过 · ${unverifiedCnt} 项待重测` : "已核验项未见明显冲突";
+            ct.textContent = warnMode ? (onlySparse ? `${okCnt} 项通过 · ${unverifiedCnt} 项覆盖不足` : `${okCnt} 项通过 · ${unverifiedCnt} 项待重测`) : "已核验项未见明显冲突";
             ct.className = "text-xs font-semibold " + (warnMode ? "text-amber-950 dark:text-amber-200" : "text-emerald-950 dark:text-emerald-200");
           }
           if (cs) {
-            cs.textContent = warnMode ? "可点击下方超时项右侧「重测」补齐验证" : "未核对的读数不代表通过";
+            cs.textContent = warnMode ? (onlySparse ? "部分上游信誉源暂未响应，可点击右侧「重测」重试" : "可点击下方超时项右侧「重测」补齐验证") : "未核对的读数不代表通过";
             cs.className = "text-[11px] truncate " + (warnMode ? "text-amber-800/80 dark:text-amber-300/80" : "text-emerald-800/80 dark:text-emerald-300/80");
           }
         }
@@ -7475,7 +7496,10 @@
         else if (checks.rtt?.level === "bad") { alertTone = "bad"; head = "链路观测的时序差异明显，需进一步核对路径"; }
         else if (checks.dc?.level === "bad") { alertTone = "bad"; head = "当前出口属于云服务器/IDC 数据中心机房段"; }
         else if (checks.tamper?.level === "bad" || checks.tamper?.level === "warn") { alertTone = checks.tamper.level; head = "检测到浏览器原型钩子或请求头不一致"; }
-        else if ((R.unverifiedCnt || 0) > 0) { alertTone = "warn"; head = `${R.unverifiedCnt} 项网络情报探针超时，可单项重测`; }
+        else if ((R.unverifiedCnt || 0) > 0) {
+          alertTone = "warn";
+          head = R.sparseCnt === R.unverifiedCnt ? "出口信誉源覆盖不足，可单项重测" : `${R.unverifiedCnt} 项网络情报探针超时，可单项重测`;
+        }
 
         wowEl.className = "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs max-w-full " + (
           alertTone === "bad" ? "border-rose-200 bg-rose-50/90 dark:bg-rose-500/12 dark:border-rose-500/25"
@@ -7498,6 +7522,7 @@
     // 3. Render 6-Tile Scannable Hardware, Protocol & Reputation Matrix (#identityTiles)
     const tilesBox = $("#identityTiles");
     const pur = R.intel?.purity;
+    const usablePurity = hasUsablePurity(R.intel);
     const blCnt = R.intel?.dnsbl?.listedCount ?? 0;
     const dirty = R.intel?.cidr?.neighbours?.dirtyCount ?? 0;
     const isNative = R.intel?.consensus?.isNative;
@@ -7516,7 +7541,7 @@
       const fpReady = !!R.hwId || R.finished;
 
       const tzTone = !tzReady ? "pending" : (checks.tz?.level === "bad" || checks.lang?.level === "bad" ? "bad" : (checks.tz?.level === "warn" || checks.lang?.level === "warn" ? "warn" : "ok"));
-      const repTone = !repReady ? "pending" : (checks.reputation?.level === "bad" || checks.dc?.level === "bad" ? "bad" : (checks.reputation?.level === "warn" || checks.lease?.level === "warn" ? "warn" : "ok"));
+      const repTone = !repReady ? "pending" : (checks.reputation?.level === "bad" || checks.dc?.level === "bad" ? "bad" : (checks.reputation?.level === "warn" || checks.lease?.level === "warn" || (R.intel && !usablePurity) ? "warn" : "ok"));
       const protoTone = !protoReady ? "pending" : (checks.conn?.level === "bad" || checks.synspoof?.level === "bad" ? "bad" : (checks.conn?.level === "warn" || checks.synspoof?.level === "warn" ? "warn" : "ok"));
       const hwTone = !hwReady ? "pending" : (R.gpuSoft || checks.hwvirt?.level === "bad" ? "bad" : (checks.hwvirt?.level === "warn" || checks.subpixel?.level === "warn" ? "warn" : "ok"));
       const brwTone = checks.tamper?.level === "bad" || checks.fpb?.level === "bad" || checks.bot?.level === "bad" ? "bad" : (checks.tamper?.level === "warn" ? "warn" : "ok");
@@ -7538,9 +7563,9 @@
           iconKey: "shield",
           icon: TILE_ICONS.shield,
           label: "BGP 与黑名单",
-          status: repTone === "pending" ? "查询中" : repTone === "bad" ? (R.netKind === "dc" ? "机房段" : "污染") : repTone === "warn" ? "瑕疵" : "洁净",
+          status: repTone === "pending" ? "查询中" : repTone === "bad" ? (R.netKind === "dc" ? "机房段" : "污染") : repTone === "warn" ? (R.intel && !usablePurity && checks.reputation?.level === "info" && checks.lease?.level !== "warn" ? "待复核" : "瑕疵") : "洁净",
           tone: repTone,
-          val: !repReady ? "拉取 8 源情报…" : (pur?.score != null ? `纯净度 ${pur.score} / 100` : (R.netKind === "dc" ? "IDC 机房线路" : "宽带 ISP")),
+          val: !repReady ? "拉取 8 源情报…" : (usablePurity ? `纯净度 ${pur.score} / 100` : (R.netKind === "dc" ? "IDC 机房线路" : R.netKind === "mobile" ? "蜂窝移动网络" : "信誉覆盖不足")),
           sub: !repReady ? "核对 DNSBL 与同段脏邻居…" : `${blCnt} 黑名单 · ${dirty} 脏邻居 · ${isNative === false ? "广播IP" : "原生段"}`,
           probes: "rep_score,rep_votes,rep_dnsbl,rep_neigh"
         },
@@ -7632,7 +7657,7 @@
     const p2 = `运行${chip(`${R.osLabel || "未知系统"} (${navigator.hardwareConcurrency || "?"} 核)`, ["os", "cpu", "arch"], "default", false, "，")}浏览器为${chip(`${R.engine || "?"} 内核 ${R.browserLabel || "浏览器"}`, ["browser", "engine", "engver"], "default", false, "，")}物理屏${chip(`${R.physScreen || "–"} · ${R.hz || 60}Hz`, ["screen", "hz"], "default", false, "，")}显卡${chip(cleanGpuShort, ["gpu", "webgpu"], R.gpuSoft ? "bad" : "default", false, "（")}${chip(rigLabel, ["gpu", "cpubench"], "default", false, "）。")}`;
     const netTypeDesc = R.netKind === "dc" ? `机房线路 (${R.org || R.asn})` : R.netKind === "mobile" ? `蜂窝移动 (${R.org || R.asn})` : `原生宽带 (${R.org || R.asn})`;
     const rttDesc = R.httpRtt != null && R.srvTcpRtt != null ? `HTTP ${R.httpRtt}ms / 握手 ${R.srvTcpRtt}ms` : "延迟已采样";
-    const purityPhrase = pur?.score != null ? `纯净度${chip(`${pur.score}/100 (${pur.grade})`, ["rep_score", "rep_votes"], pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad", false, "，")}` : "";
+    const purityPhrase = usablePurity ? `纯净度${chip(`${pur.score}/100 (${pur.grade})`, ["rep_score", "rep_votes"], pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad", false, "，")}` : "";
     const p3 = `链路走${chip(netTypeDesc, ["isp", "nettype", "rep_asn"], R.netKind === "dc" ? "bad" : "ok", true, "，")}${purityPhrase}DNS 位于${chip(R.dnsCC ? `${flagEmoji(R.dnsCC)} ${countryName(R.dnsCC)}` : "未检出", ["dns", "ecs"], checks.dns?.level === "bad" ? "bad" : "default", false, "，")}测距${chip(rttDesc, ["tcprtt", "muxjitter"], checks.rtt?.level === "bad" ? "bad" : checks.rtt?.level === "warn" ? "warn" : "ok", false, "。")}`;
 
     $("#storyProse").innerHTML = `<p>${p1}</p><p>${p2}</p><p>${p3}</p>`;
@@ -8119,7 +8144,7 @@
     $("#btnCopyJson")?.addEventListener("click", () => {
       const masked = document.body.classList.contains("is-masked");
       const payload = {
-        version: "7.9.1",
+        version: "7.9.2",
         timestamp: new Date().toISOString(),
         score: R.score,
         grade: R.grade,
@@ -8244,8 +8269,9 @@
     const netTypeShort = R.netKind === "dc" ? "机房 IDC" : R.netKind === "mobile" ? "移动蜂窝" : R.netKind === "relay" ? "隐私中继" : "宽带 ISP";
     const exitRegionClean = `${R.ipCC ? flagEmoji(R.ipCC) + " " + countryName(R.ipCC) : "未知地区"}${R.asn ? " · " + R.asn : ""}`;
     const pur = R.intel?.purity;
-    const purityText = pur?.score != null ? `信誉 ${pur.score} · ${pur.grade}` : "信誉 --";
-    const purityTone = pur?.score == null ? "neutral" : pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad";
+    const usablePur = hasUsablePurity(R.intel);
+    const purityText = usablePur ? `信誉 ${pur.score} · ${pur.grade}` : "信誉 --";
+    const purityTone = !usablePur ? "neutral" : pur.score >= 82 ? "ok" : pur.score >= 58 ? "warn" : "bad";
 
     const splitLv = checks.split?.level || "info";
     const link1Tone = splitLv === "bad" ? "bad" : splitLv === "warn" ? "warn" : R.exitsDone ? "ok" : "neutral";

@@ -151,6 +151,21 @@ class PurityTests(OfflineTests):
         # Only separate affirmative evidence (matching geolocation and a valid ROA) remains.
         self.assertEqual([b["pts"] for b in partial["bonuses"]], [0.5, 0.5])
 
+    def test_sparse_coverage_bypasses_intel_cache_while_usable_coverage_caches(self):
+        first_sparse, _, _ = self.inspect()
+        second_sparse, _, _ = self.inspect()
+        self.assertFalse(first_sparse["cacheHit"])
+        self.assertFalse(second_sparse["cacheHit"])
+
+        for key, flags in self.flags.items():
+            self.sources[key].return_value = {"id": key, "name": key, "country": "US", "asn": 7922, "flags": dict.fromkeys(flags, False)}
+        self.dnsbl.side_effect = lambda entry, *_: {**entry, "status": "ok", "listed": False}
+        self.cidr.return_value = intel._parse_cidr_ranges("203.0.113.9")
+        first_ok, _, _ = self.inspect()
+        second_ok, _, _ = self.inspect()
+        self.assertFalse(first_ok["cacheHit"])
+        self.assertTrue(second_ok["cacheHit"])
+
 
 class SourceSchemaTests(OfflineTests):
     def test_missing_threat_fields_and_empty_cidr_body_are_not_denials(self):

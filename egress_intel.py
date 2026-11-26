@@ -2375,5 +2375,6 @@ def inspect_ip_intelligence(target_ip: str, enable_active_443: bool = True, enab
             },
         },
     }
-    INTEL_CACHE.set(cache_key, payload)
+    if (coverage.get("ratio") or 0) >= 0.55:
+        INTEL_CACHE.set(cache_key, payload)
     return payload

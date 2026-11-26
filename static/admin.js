@@ -263,7 +263,7 @@
         <article class="surface-sheet rounded-2xl overflow-hidden flex flex-col justify-between">
           <div>
             <!-- Live Rendered SVG Result Card -->
-            <button type="button" data-previewshare="${esc(s.id)}" class="block w-full bg-[#0B0E14] border-b border-zinc-950/[0.08] dark:border-white/[0.08] overflow-hidden group cursor-pointer" title="点击展开完整 24 项详情与打开者 IP 列表">
+            <button type="button" data-previewshare="${esc(s.id)}" class="block w-full bg-[#0B0E14] border-b border-zinc-950/[0.08] dark:border-white/[0.08] overflow-hidden group cursor-pointer" title="点击展开完整 23 项详情与打开者 IP 列表">
               <img src="./r/${esc(s.id)}.svg" loading="lazy" alt="分享卡片 #${esc(s.id)}" class="w-full h-auto block aspect-[2/1] group-hover:scale-[1.01] transition-transform duration-200">
             </button>
 

@@ -2,6 +2,12 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Changelog</title>
 <style>html{color-scheme:light}body{max-width:960px;margin:36px auto;padding:0 24px;color:#14212a;background:#fff;font:16px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow-wrap:anywhere}h1,h2,h3,h4{line-height:1.3;margin:1.6em 0 .6em}h1{margin-top:0}h2{font-size:1.4rem;border-bottom:1px solid #d8e0e5;padding-bottom:.35em}a{color:#0a6e8a}pre{padding:16px;background:#f3f6f8;border:1px solid #d8e0e5;border-radius:6px;overflow:auto}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}p code,li code,td code{background:#f3f6f8;padding:1px 4px}blockquote{margin:1em 0;padding:.4em 1em;border-left:4px solid #9fb3bf;background:#f7f9fa;color:#33444f}table{border-collapse:collapse;display:block;max-width:100%;overflow:auto;font-size:.9rem}th,td{padding:8px 12px;border:1px solid #d8e0e5;text-align:left;vertical-align:top}th{background:#f3f6f8}li+li{margin-top:6px}hr{border:0;border-top:1px solid #d8e0e5;margin:2em 0}img{max-width:100%}@media(max-width:600px){body{margin:20px auto;padding:0 16px;font-size:15px}pre{white-space:pre-wrap;overflow-wrap:anywhere}}@media print{body{max-width:none;margin:0;padding:0;font-size:10.5pt;color:#000}a{color:inherit}pre{white-space:pre-wrap}table{display:table;overflow:visible}h2,h3{break-after:avoid}tr,pre{break-inside:avoid}@page{margin:18mm}}</style></head><body>
 <h1>Changelog</h1>
+<h2>[v7.9.10] - 2026-11-26</h2>
+<ul><li>移除页面底部页脚的 GitHub 外链入口，保持页面底部简洁无外跳干扰。</li></ul>
+<hr>
+<h2>[v7.9.9] - 2026-11-26</h2>
+<ul><li>下线「跨站指纹与无痕缓存追踪抗性 (<code>fp</code>)」计分体检项（收敛为 23 项体检），避免常规浏览器二次回访因正常保留 HTTP ETag 或本地缓存被标红扣分。</li></ul>
+<hr>
 <h2>[v7.9.8] - 2026-11-26</h2>
 <ul><li>修复跨境住宅代理在「往返延迟 (<code>rtt</code>)」上的两处漏检：① 补齐 <code>SYN→ClientHello</code> 反向远超 <code>HTTP RTT</code> 的双阶段 SOCKS5/CONNECT 握手膨胀判定（如 <code>HTTP 28ms vs 握手 317ms</code> 不再因负差值误判通过），剔除 <code>navigation</code> 预热缓存对 <code>preHttpRtt</code> 的污染，并校验 <code>ResourceTiming</code> 被干扰或本站在远距下的光速违例；② 新增本地同国 Cloudflare 边缘节点（如泰国 <code>BKK</code>、新加坡 <code>SIN</code>、东京 <code>NRT</code> 等）复用连接 RTT 交叉测距，精准识别源站在东京时跨境住宅代理多出的中转延迟。</li>
 <li>修复规则分流在「多路由分流 (<code>split</code>)」上的漏检：替换已失效的 <code>forge.speedtest.cn</code>（404），新增国内主流流媒体边缘（<code>iqiyi.com</code>，命中 <code>GEOSITE,cn</code> 直连规则，规避代理规则集将 <code>ipip.net</code> 劫持走代理的绕过手法），补齐中文属地国家码映射，并将 <code>IPv4/IPv6</code> 独立双栈出口纳入统一分流桶计数（准确统计分流至 2/3+ 个不同出口）。</li></ul>

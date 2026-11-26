@@ -421,8 +421,7 @@
     ["tamper", "浏览器环境篡改与谎言检测", ["disguise"]],
     ["fpb", "浏览器平台与跨线程一致性", ["disguise"]],
     ["ua", "UA、Client Hints 与显卡系统一致性", ["disguise"]],
-    ["bot", "自动化控制与无头浏览器痕迹", ["disguise"]],
-    ["fp", "跨站指纹与无痕缓存追踪抗性", ["privacy"]]
+    ["bot", "自动化控制与无头浏览器痕迹", ["disguise"]]
   ];
 
   const PROTO_CHECKS = [
@@ -6077,11 +6076,11 @@
   }
 
 
-  /* ---------- 24 Cross-Layer Disguise, Deep Stack, Reputation & Protocol Checks Evaluator ---------- */
+  /* ---------- 23 Cross-Layer Disguise, Deep Stack, Reputation & Protocol Checks Evaluator ---------- */
   const CHECK_WEIGHTS = {
     bot: 9, webrtc: 9, reality: 9, conn: 8, split: 8, reputation: 8,
     dns: 7, tz: 7, tamper: 7, fpb: 7, synspoof: 6, ua: 6,
-    dc: 6, rtt: 5, lease: 5, subpixel: 5, hwvirt: 4, lang: 4, syslang: 3, fp: 3
+    dc: 6, rtt: 5, lease: 5, subpixel: 5, hwvirt: 4, lang: 4, syslang: 3
   };
 
   function getFixSteps(id) {
@@ -6189,10 +6188,6 @@
         "无头窗口：outerWidth/outerHeight 为 0 或与视口完全相同属于无头 / Kiosk 特征；合成事件 (isTrusted=false) 则直接证明页面交互由脚本 dispatchEvent 伪造。",
         "大厂同款清单：BotD / PerimeterX / Akamai / TikTok 会扫描 60 余个框架全局变量（$cdc_、__nightmare、Cypress、%hammerhead%…）、Node / Electron 宿主、ActiveText 纯红与破损图 0×0 等无头渲染特征，以及 stealth 插件留下的 webdriver=undefined、伪造 window.chrome、srcdoc iframe 代理与 Proxy 错误栈——打补丁只会留下更多破绽，建议直接使用真实有界面浏览器。",
         "正常使用请直接双击打开原生浏览器；自动化测试需配合底层 C++ 级补丁或真实无注入隔离环境。"
-      ],
-      fp: [
-        "常规 Chrome / Edge 允许网站通过 Canvas、WebGL、音频与 HTTP ETag 缓存生成跨站稳定指纹，清 Cookie 也无法摆脱。",
-        "若追求强隐私防追踪（非账号养号场景），可使用 Brave 浏览器（内置动态 Farbling 随机加噪）或 Safari 无痕浏览。"
       ],
       pq: [
         "现代 Chrome 124+ / Edge / Firefox 已默认支持 X25519MLKEM768 后量子混合密钥交换；若显示未启用，通常是中间代理节点或旧版 TLS 库降级了握手。"
@@ -6763,30 +6758,8 @@
       ? { level: "warn", summary: `存在调试 / 无头环境迹象：${botWarn.join(" · ")}` }
       : { level: "ok", summary: "未发现 WebDriver、CDP 附着、无头窗口外框或合成输入事件" };
 
-    // 20. fp: Cross-Site Tracking Resistance & Partial Storage Wipe / ETag Resurrection
-    const protectedFp = ["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind);
     const lsCleared = !R.traceSurvived || !R.traceSurvived.includes("LocalStorage");
-    const cacheResurrected = R.finished && lsCleared && (!!R.etag?.seen || (R.traceSurvived || []).length > 0);
-    R.cacheResurrected = cacheResurrected;
-
-    if (!R.fpId && !R.finished) {
-      out.fp = { level: "info", summary: "正在校验缓存 ETag、多重本地留痕与跨站硬件码…" };
-    } else if (cacheResurrected) {
-      out.fp = {
-        level: "bad",
-        summary: R.etag?.seen
-          ? `防关联隔离穿帮：已清空本地存储试图伪装新访客，但浏览器 HTTP ETag 缓存 (${R.etag.id.slice(0, 8)}) 仍直接认出老身份！`
-          : `防关联残留复活：LocalStorage 虽已清除，但 ${R.traceSurvived.join(" / ")} 仍保留旧标记 (${R.traceTag})！`
-      };
-    } else if (protectedFp) {
-      out.fp = { level: "ok", summary: `已受 ${R.shieldLabel} 保护，跨站静态指纹已被动态打散` };
-    } else if (R.etag?.seen || (R.traceSurvived || []).length > 1) {
-      out.fp = currentScene === "privacy"
-        ? { level: "bad", summary: `无防指纹保护且已被缓存 ETag / 多重存储跨会话锁定 (硬件码 ${R.hwId})` }
-        : { level: "info", summary: `同环境持久化会话正常：当前独立窗口保留了会话缓存与固定硬件码 (${R.hwId})，多账号防关联请在不同环境窗口间对比硬件码` };
-    } else {
-      out.fp = { level: "warn", summary: `画布、音频与硬件指纹完全固定 (${R.fpId})，网站无需 Cookie 即可跨站认出你` };
-    }
+    R.cacheResurrected = R.finished && lsCleared && (!!R.etag?.seen || (R.traceSurvived || []).length > 0);
 
     // 4 Protocol Checks (Informational / Transport Diagnostics)
     const edgeKex = R.cfEdge?.kex || "";
@@ -6818,9 +6791,8 @@
     const def = CORE_CHECKS.find(c => c[0] === id);
     if (!def) return false;
     if (currentScene === "privacy") {
-      return ["webrtc", "dns", "fp", "fpb", "tamper", "bot"].includes(id);
+      return ["webrtc", "dns", "fpb", "tamper", "bot"].includes(id);
     }
-    if (id === "fp" && R.cacheResurrected) return true;
     return def[2].includes("disguise");
   }
 
@@ -6843,8 +6815,7 @@
     tamper: "环境篡改检测",
     fpb: "浏览器读数不一致",
     ua: "UA 与高熵头",
-    bot: "自动化痕迹",
-    fp: "缓存与防关联"
+    bot: "自动化痕迹"
   };
 
   function shortTzCity(tz) {
@@ -7000,12 +6971,6 @@
                 : "匀速机械轨迹"
             }
           : { single: (R.inputUntrusted || 0) > 0 && !(R.botHits || []).length ? "合成输入事件" : "暴露自动化特征" };
-      case "fp":
-        return R.cacheResurrected && R.etag?.seen
-          ? { left: "清空存储", op: "≠", right: "ETag 命中" }
-          : R.cacheResurrected
-          ? { left: "清空存储", op: "≠", right: "残留复活" }
-          : { single: R.etag?.seen ? "ETag/存储跨会话锁定" : "跨站指纹固定" };
       default:
         return { single: lv === "bad" ? "高危冲突" : "可疑" };
     }
@@ -7161,7 +7126,7 @@
     const sCardTitle = $("#scoreCardTitle");
     if (sCardTitle) sCardTitle.textContent = isPriv ? "防追踪隐私度" : "抗风控健康度";
     const pHeadTitle = $("#priorityHeading");
-    if (pHeadTitle) pHeadTitle.textContent = isPriv ? "隐私暴露项（点按查看防护方法）" : "头号穿帮项（点按查看改法）";
+    if (pHeadTitle) pHeadTitle.textContent = isPriv ? "隐私暴露项" : "头号穿帮项";
     const iUnit = $("#issueUnit");
     if (iUnit) iUnit.textContent = isPriv ? "项追踪暴露" : "处暴露破绽";
 
@@ -7239,10 +7204,8 @@
       ? (onlySparse ? `${unverifiedCnt} 项情报源覆盖不足，已按不确定性降级` : `${unverifiedCnt} 项网络探针超时，已按不确定性降级`)
       : totalIssues === 0
       ? (isPriv ? "已核验项未见明显追踪暴露" : "已核验项未见明显冲突")
-      : isPriv
-      ? "常规浏览器未开防指纹加噪 · 网站可免 Cookie 跨站认出回访"
       : badCnt > 0
-      ? `${badCnt} 项高危冲突 · 易触发验证码或风控拦截`
+      ? (isPriv ? `${badCnt} 项高危隐私暴露` : `${badCnt} 项高危冲突 · 易触发验证码或风控拦截`)
       : `${warnCnt} 项细节可疑 · 无致命协议冲突`;
 
     $("#issueCount").textContent = String(totalIssues);
@@ -9057,7 +9020,7 @@
           <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
         </div>
         <h3 class="text-sm font-semibold text-zinc-950 dark:text-white">原始 IP 与底层硬件探针明细已隐私隔离</h3>
-        <p class="max-w-md mx-auto text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">为确保分享链接绝不泄露分享者的真实公网 IP、国内分流宽带与唯一硬件哈希，公开快照仅保留脱敏后的 24 项风控体检结论与场景评分。</p>
+        <p class="max-w-md mx-auto text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">为确保分享链接绝不泄露分享者的真实公网 IP、国内分流宽带与唯一硬件哈希，公开快照仅保留脱敏后的 23 项风控体检结论与场景评分。</p>
         <div class="pt-1">
           <a href="./" class="inline-flex items-center gap-1.5 py-2 px-4 rounded-lg text-xs font-semibold bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">实时检测我的当前环境 →</a>
         </div>

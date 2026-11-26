@@ -484,7 +484,7 @@ test("single-source dc tag on ISP-announced leased block reconciles to ISP + lea
     targetIp: "9.9.9.42",
     ipVersion: 4,
     consensus: { country: "US", isNative: true, asn: 5650, org: "Verizon Business" },
-    votes: { hosting: { of: 4, yes: 1, E: 0.35 }, proxy: { of: 4, E: 0 }, vpn: { of: 4, E: 0 }, tor: { of: 3, E: 0 } },
+    votes: { hosting: { of: 5, yes: 2, E: 0.504 }, proxy: { of: 5, E: 0.222 }, vpn: { of: 4, E: 0 }, tor: { of: 3, E: 0 } },
     asnProfile: {
       inferred: { cls: "isp", conflict: null },
       lease: { leased: true, possible: false, confidence: 0.6, reasons: ["管理/滥用联系人命中 IP 租赁/托管平台 (PF IPV4 Borrower)"] },

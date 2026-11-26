@@ -643,7 +643,7 @@
   function isIntelConfirmedIsp(intel) {
     if (!intel?.ok) return false;
     const v = intel.votes || {}, inf = intel.asnProfile?.inferred || {}, ci = intel.cidr || {};
-    return (v.hosting?.of || 0) >= 3 && (v.hosting?.E || 0) < 0.50
+    return (v.hosting?.of || 0) >= 3 && (v.hosting?.E || 0) < 0.55
       && (inf.cls === "isp" || inf.cls === "mobile")
       && !inf.conflict && !ci.x4bDatacenter;
   }

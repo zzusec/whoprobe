@@ -851,9 +851,21 @@
       allValidExits.push(["stack_v6", { ip: v6, cc: candidateCC(v6), label: "IPv6 独立栈" }]);
       seenIps.add(v6);
     }
-    const enrichedExits = allValidExits.map(([k, v]) => [k, { ...v, cc: v.cc || candidateCC(v.ip) || "" }]);
+    const enrichedExits = allValidExits.map(([k, v]) => {
+      const cip = cleanIp(v.ip);
+      const sameSelf = !!(R.ip && cip && (cip === cleanIp(R.ip) || netPrefix(cip) === netPrefix(R.ip)));
+      const metaCC = cip ? R.ipMeta?.[cip]?.cc : "";
+      const effCC = (sameSelf && R.ipCC) ? R.ipCC : (metaCC || v.cc || candidateCC(cip) || "");
+      return [k, { ...v, cc: effCC }];
+    });
     const leakedCnPair = (R.ipCC && R.ipCC !== "CN")
-      ? enrichedExits.find(([, v]) => v.cc === "CN")
+      ? enrichedExits.find(([k, v]) =>
+          k !== "ex_self"
+          && v.cc === "CN"
+          && cleanIp(v.ip) !== cleanIp(R.ip)
+          && (!R.ip || netPrefix(v.ip) !== netPrefix(R.ip))
+          && !isSameCarrierCandidate(v.ip)
+        )
       : null;
 
     const bucketCount = list => {
@@ -2292,16 +2304,27 @@
 
     const ZH_CC_MAP = [
       [/香港/, "HK"], [/台湾/, "TW"], [/澳门/, "MO"],
-      [/中国|北京|上海|广东|浙江|江苏|四川|湖北|福建|山东|河南|湖南|安徽|河北|陕西|辽宁|重庆|天津|广西|云南|江西|山西|贵州|吉林|黑龙江|内蒙古|新疆|甘肃|海南|宁夏|青海|西藏/, "CN"],
       [/日本/, "JP"], [/新加坡/, "SG"], [/美国/, "US"], [/韩国/, "KR"], [/泰国/, "TH"], [/马来西亚/, "MY"],
       [/越南/, "VN"], [/菲律宾/, "PH"], [/印度尼西亚|印尼/, "ID"], [/印度/, "IN"], [/英国/, "GB"], [/德国/, "DE"],
-      [/法国/, "FR"], [/荷兰/, "NL"], [/俄罗斯/, "RU"], [/加拿大/, "CA"], [/澳大利亚|澳洲/, "AU"], [/巴西/, "BR"], [/土耳其/, "TR"]
+      [/法国/, "FR"], [/荷兰/, "NL"], [/俄罗斯/, "RU"], [/加拿大/, "CA"], [/澳大利亚|澳洲/, "AU"], [/巴西/, "BR"], [/土耳其/, "TR"],
+      [/中国|北京|上海|广东|浙江|江苏|四川|湖北|福建|山东|河南|湖南|安徽|河北|陕西|辽宁|重庆|天津|广西|云南|江西|山西|贵州|吉林|黑龙江|内蒙古|新疆|甘肃|海南|宁夏|青海|西藏/, "CN"]
     ];
-    const inferZhLocCC = loc => {
-      const s = String(loc || "");
-      for (const [re, code] of ZH_CC_MAP) if (re.test(s)) return code;
+    const inferIpipCC = locArr => {
+      const arr = Array.isArray(locArr) ? locArr : [String(locArr || "")];
+      // Only inspect geographic fields (country + province/region), never ISP name (e.g. "中国移动" in Singapore CMI roaming!)
+      const geoHead = [arr[0] || "", arr[1] || ""].join(" · ");
+      if (/香港/.test(geoHead)) return "HK";
+      if (/台湾/.test(geoHead)) return "TW";
+      if (/澳门/.test(geoHead)) return "MO";
+      for (const [re, code] of ZH_CC_MAP) {
+        if (re.test(arr[0] || "")) return code;
+      }
+      for (const [re, code] of ZH_CC_MAP) {
+        if (re.test(geoHead)) return code;
+      }
       return "";
     };
+    const CN_PROV_PINYIN_RE = /^(AnHui|BeiJing|ChongQing|FuJian|GanSu|GuangDong|GuangXi|GuiZhou|HaiNan|HeBei|HeiLongJiang|HeNan|HuBei|HuNan|JiangSu|JiangXi|JiLin|LiaoNing|NeiMengGu|InnerMongolia|NingXia|QingHai|ShaanXi|ShanDong|ShangHai|ShanXi|SiChuan|TianJin|XinJiang|XiZang|Tibet|YunNan|ZheJiang|China|Mainland)$/i;
     const parseIqiyiExit = j => {
       const raw = String(j?.t || "").trim();
       const dash = raw.lastIndexOf("-");
@@ -2309,11 +2332,24 @@
       const ip = cleanIp(raw.slice(dash + 1));
       if (!ip) return null;
       const [net = "", locCode = ""] = raw.slice(0, dash).split("|");
+      const sameSelf = !!(R.ip && (ip === cleanIp(R.ip) || netPrefix(ip) === netPrefix(R.ip)));
+      if (sameSelf && R.ipCC) {
+        return { ip, cc: R.ipCC, label: [countryName(R.ipCC), locCode, net].filter(Boolean).join(" · ") };
+      }
       if (/^OVERSEA$/i.test(net)) {
         const cc = /^[A-Z]{2}$/i.test(locCode) ? locCode.toUpperCase() : "";
         return { ip, cc, label: [cc ? countryName(cc) : "海外", "国内流媒体边缘"].filter(Boolean).join(" · ") };
       }
-      return { ip, cc: "CN", label: ["中国", locCode, net].filter(Boolean).join(" · ") };
+      if (/^(HK|HongKong)$/i.test(locCode)) return { ip, cc: "HK", label: ["中国香港", net].filter(Boolean).join(" · ") };
+      if (/^(TW|TaiWan)$/i.test(locCode)) return { ip, cc: "TW", label: ["中国台湾", net].filter(Boolean).join(" · ") };
+      if (/^(MO|Macao|Macau)$/i.test(locCode)) return { ip, cc: "MO", label: ["中国澳门", net].filter(Boolean).join(" · ") };
+      if (/^[A-Z]{2}$/i.test(locCode) && locCode.toUpperCase() !== "CN") {
+        const cc = locCode.toUpperCase();
+        return { ip, cc, label: [countryName(cc), net].filter(Boolean).join(" · ") };
+      }
+      const isMainlandProv = CN_PROV_PINYIN_RE.test(locCode) || /北京|上海|广东|浙江|江苏|四川|湖北|福建|山东|河南|湖南|安徽|河北|陕西|辽宁|重庆|天津|广西|云南|江西|山西|贵州|吉林|黑龙江|内蒙古|新疆|甘肃|海南|宁夏|青海|西藏/.test(locCode);
+      const cc = isMainlandProv ? "CN" : (candidateCC(ip) || "");
+      return { ip, cc, label: [cc === "CN" ? "中国" : (cc ? countryName(cc) : ""), locCode, net].filter(Boolean).join(" · ") };
     };
 
     // Mainland China exit probe: pair GEOSITE:cn streaming CDN (iqiyi.com, routed DIRECT by Clash/Surge rules)
@@ -2328,18 +2364,23 @@
       if (iqyObs) cands.push(iqyObs);
       if (jIpip?.data?.ip) {
         const ip2 = cleanIp(jIpip.data.ip);
-        const loc2 = (jIpip.data.location || []).filter(Boolean).join(" · ");
-        if (ip2) cands.push({ ip: ip2, cc: inferZhLocCC(loc2), label: loc2 });
+        const locArr = Array.isArray(jIpip.data.location) ? jIpip.data.location : [];
+        const loc2 = locArr.filter(Boolean).join(" · ");
+        const sameSelf2 = !!(R.ip && ip2 && (ip2 === cleanIp(R.ip) || netPrefix(ip2) === netPrefix(R.ip)));
+        const cc2 = (sameSelf2 && R.ipCC) ? R.ipCC : inferIpipCC(locArr);
+        if (ip2) cands.push({ ip: ip2, cc: cc2, label: loc2 });
       }
       if (!cands.length) {
         setNA("ex_cn", "连接超时或被当前代理阻断");
         setRouteRow("ex_cn", "未连通", "大陆探针接口超时");
         return;
       }
-      // Prioritize a Mainland CN leak or an exit that diverges from R.ip soipcheck-rule hijacking never hides a real DIRECT split
+      // Prioritize a genuine Mainland CN leak (different IP from R.ip!) or an exit that diverges from R.ip
       cands.sort((a, b) => {
-        const aLeak = a.cc === "CN" && R.ipCC && R.ipCC !== "CN" ? 2 : (R.ip && a.ip !== cleanIp(R.ip) ? 1 : 0);
-        const bLeak = b.cc === "CN" && R.ipCC && R.ipCC !== "CN" ? 2 : (R.ip && b.ip !== cleanIp(R.ip) ? 1 : 0);
+        const aDiff = !!(R.ip && a.ip !== cleanIp(R.ip) && netPrefix(a.ip) !== netPrefix(R.ip));
+        const bDiff = !!(R.ip && b.ip !== cleanIp(R.ip) && netPrefix(b.ip) !== netPrefix(R.ip));
+        const aLeak = aDiff && a.cc === "CN" && R.ipCC && R.ipCC !== "CN" ? 2 : (aDiff ? 1 : 0);
+        const bLeak = bDiff && b.cc === "CN" && R.ipCC && R.ipCC !== "CN" ? 2 : (bDiff ? 1 : 0);
         return bLeak - aLeak;
       });
       const chosen = cands[0];
@@ -2347,7 +2388,8 @@
       if (cands[1] && cands[1].ip !== chosen.ip) {
         R.exits.ex_cn_alt = cands[1];
       }
-      const leak = chosen.cc === "CN" && R.ipCC && R.ipCC !== "CN";
+      const isDiffExit = !R.ip || (chosen.ip !== cleanIp(R.ip) && netPrefix(chosen.ip) !== netPrefix(R.ip));
+      const leak = isDiffExit && chosen.cc === "CN" && R.ipCC && R.ipCC !== "CN";
       setProbe("ex_cn", `${chosen.cc ? flagEmoji(chosen.cc) + " " : ""}${chosen.ip} · ${chosen.label}`, { tone: leak ? "bad" : "neutral" });
       setRouteRow("ex_cn", `${chosen.cc ? flagEmoji(chosen.cc) + " " : ""}${chosen.ip}`, chosen.label, leak ? "bad" : "ok");
       if (!R.isSharedView) {
@@ -6098,11 +6140,13 @@
     const ipTz = R.ipTz || "America/Los_Angeles";
     const ipCountry = countryName(R.ipCC || "US");
 
-    const osTzStep = os === "macOS"
+    const osTzStep = /^(iOS|iPadOS)$/.test(os)
+      ? `iPhone / iPad：打开「设置 → 通用 → 日期与时间」，关闭「自动设置」（国际流量漫游时本地基站 NITZ 会自动下发驻留国时区），手动选择 ${ipCountry} 对应城市（${ipTz}）。`
+      : os === "macOS"
       ? `macOS：打开「系统设置 → 通用 → 日期与时间」，关闭「使用当前位置自动设置时区」，手动改为 ${ipTz}。`
       : os === "Windows"
       ? `Windows：打开「设置 → 时间和语言 → 日期和时间」，关闭「自动设置时区」，手动选择与 ${ipCountry} 对应的时区。`
-      : `系统设置 → 日期与时间：关闭自动时区，手动切换至 ${ipTz}（切勿用浏览器改时区插件，会被原型检测直接抓包）。`;
+      : `手机 / 系统设置 → 日期与时间：关闭自动设置时区（漫游时基站会下发驻留地时区），手动切换至 ${ipTz}。`;
 
     const GUIDE = {
       tz: [
@@ -6230,7 +6274,7 @@
       } else if (!sameOff && R.ipTzOff != null) {
         out.tz = { level: "bad", summary: `时区严重穿帮：出口在 ${ipCountry} (${R.ipTz || ""} UTC${fmtUtcOffset(R.ipTzOff)})，系统时钟却是 ${R.tz} (UTC${fmtUtcOffset(R.tzOff)})` };
       } else {
-        out.tz = { level: "warn", summary: `UTC 偏移相近，但系统时区 ID (${R.tz}) 指向 ${countryName(userTzCC)}，而非出口地 ${ipCountry}` };
+        out.tz = { level: "warn", summary: `UTC${fmtUtcOffset(R.tzOff)} 偏移一致，但系统时区 ID (${R.tz}) 指向 ${countryName(userTzCC)} 而非出口地 ${ipCountry}（国际卡漫游时基站会自动下发驻留地时区，网页可通过 Intl 读出）` };
       }
     }
 

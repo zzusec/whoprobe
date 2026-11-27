@@ -565,4 +565,35 @@ test("reverse handshake inflation (28ms HTTP vs 317ms SYN->ClientHello), local C
   const sp = hSplit.check().split;
   assert.equal(sp.level, "bad");
   assert.match(sp.summary, /203\.0\.113\.10.*3 个不同出口/);
+
+  // 4) Overseas roaming SIM in Mainland China (same SG exit IP across all probes, even if a domestic geo DB mislabels CMI carrier as CN):
+  //    split MUST pass (ok), while Asia/Shanghai vs Asia/Singapore (both UTC+8) stays a mild warn!
+  const hRoam = harness({
+    state: {
+      finished: true,
+      values: {},
+      ip: "9.9.9.42",
+      ipCC: "SG",
+      ipTz: "Asia/Singapore",
+      ipTzOff: 480,
+      tz: "Asia/Shanghai",
+      tzOff: 480,
+      langs: ["zh-CN"],
+      dnsCC: "SG",
+      netKind: "mobile",
+      dev: { os: "iOS" },
+      exitsDone: true,
+      exits: {
+        ex_self: { ip: "9.9.9.42", cc: "SG", label: "新加坡 · CMLink" },
+        ex_cn: { ip: "9.9.9.42", cc: "CN", label: "新加坡 · 新加坡 · 中国移动" },
+        ex_intl: { ip: "9.9.9.42", cc: "SG", label: "新加坡" },
+        ex_cf: { ip: "9.9.9.42", cc: "SG", colo: "SIN" },
+      },
+      stack: { v4: "9.9.9.42", v6: "" },
+    },
+  });
+  const roamChecks = hRoam.check();
+  assert.equal(roamChecks.split.level, "ok");
+  assert.equal(roamChecks.tz.level, "warn");
+  assert.match(roamChecks.tz.summary, /漫游/);
 });

@@ -2384,11 +2384,13 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         """返回当前请求关联的连接协商与包观测；缺测为 null/空串，无 IP 回退。"""
         trusted = self._is_trusted_edge()
         key = self._observed_wire_key()
+        ingress_ip = key[0] if key else self._trusted_real_ip()
+        origin_leg = bool(ingress_ip and is_cloudflare_edge_ip(ingress_ip))
         ingress_proto = self._single_header("X-HTTP-Version") if trusted else ""
         ingress_alpn = self._single_header("X-TLS-ALPN") if trusted else ""
         # TCP/UDP can reuse the same tuple. A CDN's connection to this origin
         # also must not be reported as the forwarded browser's wire evidence.
-        browser_tcp = key is not None and not (ingress_proto.upper().startswith("HTTP/3") or ingress_alpn.startswith("h3"))
+        browser_tcp = key is not None and not origin_leg and not (ingress_proto.upper().startswith("HTTP/3") or ingress_alpn.startswith("h3"))
         browser_tcp = browser_tcp and (not trusted or self._extract_client_ip() == key[0])
         record = PACKET_CACHE.get(key) if browser_tcp else None
         rec = record if isinstance(record, dict) else {}
@@ -2405,6 +2407,8 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             conn["httpVersion"] = self.request_version
             if isinstance(self.connection, ssl.SSLSocket):
                 conn.update(_socket_tls_meta(self.connection))
+        if origin_leg:
+            conn["source"] = "origin-leg"
 
         tls_hello = rec.get("tlsClientHello")
         return conn, {

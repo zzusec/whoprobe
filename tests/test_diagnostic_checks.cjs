@@ -18,6 +18,11 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
     readMqScreen: probeMqScreen,
     readFontLocal: probeFontLocal,
     readHeaders: probeHeaderForensics,
+    readDns: probeDns,
+    readRoutes: probeQuicAndExits,
+    readRtc: probeWebrtc,
+    readV6: probeV6Mac,
+    readNav: () => probeNavigationTiming(),
     readHighEntropy: probeHighEntropyHints,
     detectDevice,
     detectBrowser,
@@ -35,7 +40,7 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
 })();`);
 assert.notEqual(instrumented, app, "browser closure to exercise was not found");
 
-function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIntel", userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", cssSupports, shared, readings = {}, state = {} } = {}) {
+function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIntel", userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", cssSupports, shared, readings = {}, state = {}, fetch, performance, peer } = {}) {
   const navigator = Object.create({ userAgent, platform: mainPlatform, language: "en-US", languages: ["en-US"], hardwareConcurrency: 8, deviceMemory: mainMemory });
   const screen = Object.create({ width: 1440, height: 900 });
   const iframe = {
@@ -51,14 +56,15 @@ function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIn
     terminate() {}
   }
   const nodes = Object.fromEntries([
-    "sceneBadge", "topGiveaway", "scoreSub", "issueCount", "cntBad", "cntWarn", "cntOk",
+    "sceneBadge", "topGiveaway", "scoreSub", "issueCount", "cntBad", "cntWarn", "cntOk", "splitSummaryBadge", "tabRoutesBadge",
   ].map(id => [`#${id}`, {}]));
   const document = {
     querySelector: key => nodes[key] || null, querySelectorAll: () => [], addEventListener() {},
     createElement: tag => { assert.equal(tag, "iframe"); return iframe; }, body: { appendChild() {} }
   };
   const sandbox = {
-    document, navigator, screen, window: { Worker, Blob }, Worker, Blob, URL, Intl,
+    document, navigator, screen, window: { Worker, Blob, RTCPeerConnection: peer }, Worker, Blob, URL, Intl,
+    performance: performance || { getEntriesByType: () => [], now: () => 20 }, fetch, AbortSignal, crypto: require("node:crypto").webcrypto, clearTimeout,
     CSS: cssSupports ? { supports: cssSupports } : undefined,
     location: { hostname: "localhost", href: "http://localhost/", search: "" },
     setTimeout() {}, // the fake worker sends its reply in a microtask; no timeout needs to fire
@@ -71,6 +77,136 @@ function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIn
   sandbox.tests.setState({ finished: true, values: {}, ...state });
   return sandbox.tests;
 }
+
+test("routing needs two independent, valid observations, not a copied or malformed exit", async () => {
+  const self = "8.8.8.8";
+  for (const [foreign, v4, v6, measured] of [
+    [null, "<html>login required</html>", "Error: request failed", false],
+    [null, "999.42.1.5", "2606:4700:::1111", false],
+    [null, "2606:4700:4700::1111", self, false],
+    [null, self, "", true],
+    [self, "", "", true],
+  ]) {
+    const h = harness({ state: { ip: self, ipCC: "US", exits: { ex_self: { ip: self, cc: "US" } }, isSharedView: true }, fetch: async url => ({
+      ok: true, json: async () => url.includes("api.ip.sb") ? { ip: foreign, country_code: "US" } : {},
+      text: async () => url.includes("ipv4.icanhazip") ? v4 : url.includes("ipv6.icanhazip") ? v6 : "",
+    }) });
+    await h.readRoutes();
+    assert.equal(h.check().split.level, measured ? "ok" : "info");
+    if (!measured) {
+      assert.deepEqual({ ...h.getState().stack }, { v4: "", v6: "" });
+      assert.match(h.node("splitSummaryBadge").textContent, /不足/);
+      assert.match(h.node("tabRoutesBadge").textContent, /不足/);
+    }
+  }
+  const missingSelf = harness({ state: { srvFailed: true, isSharedView: true }, fetch: async url => ({
+    ok: true, json: async () => url.includes("api.ip.sb") ? { ip: self, country_code: "US" } : {}, text: async () => "",
+  }) });
+  await missingSelf.readRoutes();
+  assert.equal(missingSelf.getState().exits.ex_intl.ip, self);
+  assert.ok(!missingSelf.getState().ip && !missingSelf.getState().exits.ex_self);
+  assert.equal(missingSelf.check().split.level, "info");
+  const ipv6 = harness({ state: { ip: "2606:4700:4700::1111", exits: { ex_self: { ip: "2606:4700:4700::1111" } } }, fetch: async url => ({
+    ok: true, json: async () => ({}), text: async () => url.includes("ipv6.icanhazip") ? "2606:4700:4700:0000:0000:0000:0000:1111\n" : "",
+  }) });
+  await ipv6.readRoutes();
+  assert.equal(ipv6.getState().stack.v6, ipv6.getState().ip);
+  assert.equal(ipv6.check().split.level, "ok");
+});
+
+test("DNS comparison separates missing geography, observed ECS and failed remeasurement", async () => {
+  const resolver = { dns: { ip: "1.1.1.1", geo: "China - Example Resolver" } };
+  let responses = [resolver, resolver];
+  const h = harness({ state: { ip: "8.8.8.8" }, fetch: async () => ({ ok: true, json: async () => responses.shift() }) });
+  await h.readDns();
+  assert.equal(h.check().dns.level, "info");
+  assert.doesNotMatch(h.read("ecs"), /同国|DoH|泄漏/);
+  h.setState({ ...h.getState(), ipCC: "CN" });
+  responses = [resolver, { ...resolver, edns: { ip: "8.8.8.0/24" } }];
+  await h.readDns();
+  assert.match(h.check().dns.summary, /ECS.*8\.8\.8\.0\/24/);
+  assert.doesNotMatch(h.check().dns.summary, /无 ECS|异网段/);
+  responses = [resolver, { dns: { ip: "9.9.9.9", geo: "Singapore - Second Resolver" } }];
+  await h.readDns();
+  assert.equal(h.check().dns.level, "warn");
+  assert.match(h.compare("dns", h.check().dns).left, /SG/);
+  responses = [resolver, { ...resolver, edns: { ip: "0.0.0.0/0" } }];
+  await h.readDns();
+  assert.equal(h.check().dns.level, "ok");
+  assert.ok(!h.getState().ecsIp);
+  responses = [resolver, { ...resolver, edns: { ip: "8.8.8.0/80" } }];
+  await h.readDns();
+  assert.equal(h.check().dns.level, "info");
+  responses = [{ dns: {} }, null];
+  await h.readDns();
+  assert.equal(h.check().dns.level, "info");
+  assert.ok(!h.getState().dnsIp && !h.getState().ecsIp);
+});
+
+test("only UDP server-reflexive ICE candidates contribute to the STUN exit and timing", async () => {
+  const candidates = [
+    "candidate:123456 1 udp 12345 8.8.8.8 12345 typ host",
+    "candidate:123457 1 udp 12345 8.8.4.4 12345 typ relay",
+    "candidate:123458 1 udp 12345 1.1.1.1 12345 typ prflx",
+    "candidate:123459 1 tcp 12345 1.0.0.1 12345 typ srflx tcptype passive",
+    "candidate:123460 1 udp 12345 9.9.9.9 12345 typ srflx raddr 0.0.0.0 rport 0",
+    "candidate:123461 1 udp 12345 bbccdeff.local 12345 typ host",
+  ];
+  const peer = class {
+    createDataChannel() {} async createOffer() { return {}; } close() {}
+    async setLocalDescription() {
+      for (const candidate of candidates) this.onicecandidate({ candidate: { candidate } });
+      this.onicecandidate({ candidate: null });
+    }
+  };
+  const h = harness({ peer, state: { ip: "9.9.9.9" } });
+  await h.readRtc();
+  assert.deepEqual([...h.getState().rtc], ["9.9.9.9"]);
+  assert.deepEqual([...h.getState().lan], ["bbccdeff.local"]);
+  assert.equal(h.check().webrtc.level, "ok");
+  candidates.splice(4);
+  await h.readRtc();
+  assert.equal(h.getState().stunRttMs, null);
+  assert.equal(h.check().webrtc.level, "info");
+  assert.match(h.read("lan"), /未.*候选/);
+  const denied = harness({ peer: class { constructor() { throw Object.assign(new Error(), { name: "NotAllowedError" }); } } });
+  await denied.readRtc();
+  assert.match(denied.read("webrtc"), /NotAllowedError/);
+  assert.match(denied.read("lan"), /NotAllowedError/);
+  assert.equal(denied.check().webrtc.level, "info");
+  const pattern = harness({ state: { rtcDone: true, rtc: [], ip: "2606:4700::0211:22ff:fe33:4455" } });
+  pattern.readV6();
+  assert.equal(pattern.getState().v6mac, "00:11:22:33:44:55");
+  assert.equal(pattern.check().webrtc.level, "info");
+  assert.match(pattern.read("v6mac"), /不能确认/);
+});
+
+test("navigation metrics never invent a protocol, TLS handshake, or negative duration", () => {
+  const nav = { nextHopProtocol: "", requestStart: 50, responseStart: 0, secureConnectionStart: 0, connectEnd: 0 };
+  const h = harness({ performance: { getEntriesByType: () => [nav] } });
+  h.readNav();
+  assert.doesNotMatch(h.read("perf_nav"), /h2|\d+ms/);
+  Object.assign(nav, { nextHopProtocol: "h3", responseStart: 56, secureConnectionStart: 8, connectEnd: 10 });
+  h.readNav();
+  assert.match(h.read("perf_nav"), /h3.*2\s*ms.*6\s*ms/);
+  Object.assign(nav, { connectEnd: 8, responseStart: 50 });
+  h.readNav();
+  assert.match(h.read("perf_nav"), /TLS耗时 未测出.*首字节 0ms/);
+});
+
+test("STUN comparison does not score cross-family differences against this site's HTTP exit", () => {
+  const ipv6 = "2606:4700:4700::1111";
+  for (const [ip, candidate] of [["1.1.1.1", ipv6], [ipv6, "1.1.1.1"]]) {
+    const state = { rtcDone: true, ip, rtc: [candidate] };
+    const page = harness({ state });
+    assert.equal(page.check().webrtc.level, "info");
+    assert.match(page.check().webrtc.summary, /缺少同地址族/);
+    page.setState({ ...state, rtc: [candidate, ip] });
+    const mixed = page.check().webrtc;
+    assert.equal(mixed.level, "ok");
+    assert.match(mixed.summary, /另一地址族未核对/);
+  }
+});
 
 for (const [name, mainMemory, workerMemory] of [
   ["on the page", undefined, 8],

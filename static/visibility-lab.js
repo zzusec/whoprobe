@@ -91,24 +91,51 @@
     }
   }
 
+  function protocolOfAlpn(alpn) {
+    if (alpn === 'h3' || /^h3-\d{1,3}$/.test(alpn || '')) return 'h3';
+    if (alpn === 'h2') return 'h2';
+    return protocolOfVersion(alpn?.startsWith('http/1.') ? alpn : null);
+  }
+
+  function observedProtocol(httpVersion, reportedAlpn, reportedSource) {
+    const version = protocolOfVersion(httpVersion);
+    const alpn = typeof reportedAlpn === 'string' ? reportedAlpn.toLowerCase() : null;
+    const alpnVersion = protocolOfAlpn(alpn);
+    const source = ['direct', 'trusted-edge', 'origin-leg'].includes(reportedSource) ? reportedSource : 'unknown';
+    const connection = {
+      httpVersion: version ? httpVersion : null,
+      alpn: alpnVersion ? alpn : null,
+      source
+    };
+    if (source === 'origin-leg') return { status: 'unknown', reason: 'origin-leg', connection };
+    if (source === 'unknown' || !version) return { status: 'unknown', reason: 'unconfirmed-protocol', connection };
+    if (alpn && alpn !== 'unknown' && alpnVersion !== version) return { status: 'unknown', reason: 'conflicting-protocol', connection };
+    return { status: `confirmed-${version}`, connection };
+  }
+
   function sampleResult(data, challenge) {
     if (data?.ok !== true || data.challenge !== challenge) return { status: 'unknown', reason: 'invalid-sample' };
     const ip = literalIP(data.peer?.ip);
     const peer = ip ? { ip, family: ip.includes(':') ? 6 : 4 } : null;
     const wire = data.connection;
-    const version = protocolOfVersion(wire?.httpVersion);
-    const alpn = typeof wire?.alpn === 'string' ? wire.alpn.toLowerCase() : null;
-    const alpnVersion = alpn === 'h3' || /^h3-\d{1,3}$/.test(alpn || '') ? 'h3'
-      : alpn === 'h2' ? 'h2' : protocolOfVersion(alpn?.startsWith('http/1.') ? alpn : null);
-    const source = wire?.source === 'direct' || wire?.source === 'trusted-edge' ? wire.source : 'unknown';
-    const connection = {
-      httpVersion: version ? wire.httpVersion : null,
-      alpn: alpnVersion ? alpn : null,
-      source
-    };
-    if (source === 'unknown' || !version) return { status: 'unknown', reason: 'unconfirmed-protocol', peer, connection };
-    if (alpn && alpn !== 'unknown' && alpnVersion !== version) return { status: 'unknown', reason: 'conflicting-protocol', peer, connection };
-    return { status: `confirmed-${version}`, peer, connection };
+    return { ...observedProtocol(wire?.httpVersion, wire?.alpn, wire?.source), peer };
+  }
+
+  function navigation(connection) {
+    let entry;
+    try { entry = win?.performance?.getEntriesByType?.('navigation')?.[0]; } catch (_) { /* Timing can be restricted. */ }
+    const nextHop = typeof entry?.nextHopProtocol === 'string' ? entry.nextHopProtocol.toLowerCase() : null;
+    const browser = nextHop === 'h2c' ? 'h2' : protocolOfAlpn(nextHop);
+    const observed = observedProtocol(connection?.httpVersion, connection?.tlsAlpn, connection?.source);
+    let comparison = 'unknown';
+    if (observed.reason === 'origin-leg') comparison = 'origin-leg';
+    else if (browser && observed.status !== 'unknown' && !(entry.workerStart > 0 || entry.deliveryType || entry.transferSize === 0)) {
+      comparison = observed.status === `confirmed-${browser}` ? 'same' : 'different';
+    }
+    const encodedBytes = entry?.encodedBodySize, decodedBytes = entry?.decodedBodySize;
+    const body = entry?.responseEnd > 0 && [encodedBytes, decodedBytes].every(size => Number.isSafeInteger(size) && size > 0)
+      ? { encodedBytes, decodedBytes } : null;
+    return { protocol: browser ? nextHop : null, comparison, body };
   }
 
   async function route(probeURL, opts) {
@@ -576,7 +603,7 @@
   }
 
   return {
-    api: Object.freeze({ route, rtc, storage }), installSupport,
+    api: Object.freeze({ navigation, route, rtc, storage }), installSupport,
     helpers: { endpoint, distinctSites, sampleResult, turnConfig, selectedPair, authentic, mediaStatus, runInFrame }
   };
 });

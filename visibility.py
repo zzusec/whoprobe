@@ -247,10 +247,12 @@ class View:
         client_ip = handler._extract_client_ip()
         peer_source = "edge-reported" if trusted and client_ip != backend_peer["ip"] else source
         peer = address(client_ip, wire_key[1] if wire_key and wire_key[0] == client_ip else None)
-        if source == "unknown" and peer_source != "edge-reported":
+        origin_peer_only = source == "origin-leg" and client_ip == (wire_key[0] if wire_key else handler._trusted_real_ip())
+        if origin_peer_only or (source == "unknown" and peer_source != "edge-reported"):
             peer = address(None)
+            peer_source = "unknown"
         peer["source"] = peer_source
-        forwarded_scheme = handler.headers.get("X-Forwarded-Proto") if trusted else None
+        forwarded_scheme = handler._single_header("X-Forwarded-Proto") if trusted else None
         scheme = forwarded_scheme if forwarded_scheme in ("http", "https") else (
             "https" if meta.get("tlsProtocol") else "http" if source == "direct" else None
         )

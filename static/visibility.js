@@ -30,7 +30,7 @@
   const present = value => value ? "收到；不回显值" : "这次未收到";
   const time = t => Number.isFinite(t) ? new Date(t).toLocaleString() : "未记录";
   const ipPort = p => !p?.ip ? null : p.port ? `${p.family === 6 ? `[${p.ip}]` : p.ip}:${p.port}` : p.ip;
-  const sourceLabel = source => ({ direct: "本站直接监听", "trusted-edge": "受信边缘转交", "edge-reported": "受信入口转交地址" })[source] || "访客侧未观测";
+  const sourceLabel = source => ({ direct: "本站直接监听", "trusted-edge": "受信边缘转交", "edge-reported": "受信入口转交地址", "origin-leg": "CDN 到本站的回源连接" })[source] || "访客侧未观测";
   const measuredProtocol = result => result?.status?.startsWith("confirmed-") ? result.connection?.httpVersion : null;
 
   function renderReceipt(receipt) {
@@ -88,14 +88,25 @@
 
   function renderLocal() {
     const list = byId("visibilityLocal");
+    list.replaceChildren();
     let tz;
     try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { /* optional API */ }
-    const navTiming = performance.getEntriesByType?.("navigation")?.[0];
+    const timing = lab?.navigation?.(nav.connection);
     row(list, "语言 / 时区", [navigator.language, tz].filter(Boolean), true);
     row(list, "视口 / 像素比例", `${innerWidth}×${innerHeight} / ${devicePixelRatio}`, true);
     row(list, "屏幕 / 触点数", `${screen.width}×${screen.height} / ${navigator.maxTouchPoints ?? "未暴露"}`, true);
     row(list, "可见逻辑核数 / 内存提示", [navigator.hardwareConcurrency ?? "未暴露", navigator.deviceMemory == null ? "未暴露" : `约 ${navigator.deviceMemory} GiB`], true);
-    row(list, "浏览器记录的导航协议", navTiming?.nextHopProtocol);
+    row(list, "浏览器记录的导航协议", timing?.protocol);
+    const comparison = {
+      same: `协议族一致（入口 ${nav.connection?.httpVersion}）`,
+      different: `协议族不同（入口 ${nav.connection?.httpVersion}）；不代表连接失败`,
+      "origin-leg": "不可直接对照：入口协议只代表 CDN 回源",
+      unknown: "没有可直接对照的两份协议读数"
+    };
+    row(list, "原导航的协议对照", comparison[timing?.comparison || "unknown"]);
+    const body = timing?.body;
+    row(list, "导航正文（解码前 / 后）", body
+      ? `${body.encodedBytes.toLocaleString("zh-CN")} B / ${body.decodedBytes.toLocaleString("zh-CN")} B` : "未取得完整字节数");
     row(list, "还可通过脚本测量", "字体、Canvas、WebGL、WebGPU、音频、媒体能力、存储和 ICE 候选；取决于浏览器能力、权限及策略。");
   }
 
@@ -139,6 +150,7 @@
 
   renderReceipt(nav);
   renderLocal();
+  if (document.readyState !== "complete") window.addEventListener("load", renderLocal, { once: true });
   byId("visibilityRestore").addEventListener("click", () => renderReceipt(nav));
   run("visibilityRefresh", "visibilityReceiptError", true, async () => {
     const result = await api("request");
@@ -155,7 +167,7 @@
       const first = await lab.route(url);
       // Allow the first successful response to advertise Alt-Svc; report both on a cold start.
       const second = key === "h3" && (first.status === "confirmed-h2" || first.status === "confirmed-h1") ? await lab.route(url) : null;
-      const label = result => measuredProtocol(result) || (result?.reason ? `未确认（${result.reason}）` : "未确认");
+      const label = result => measuredProtocol(result) || (result?.reason === "origin-leg" ? "未确认浏览器协议（仅见 CDN 回源）" : result?.reason ? `未确认（${result.reason}）` : "未确认");
       const note = [label(first), ...(second ? [label(second)] : [])].join(" → ");
       return [routeNames[key], `${note}；所见出口 ${second?.peer?.ip || first?.peer?.ip || "未测出"}`, true];
     }));

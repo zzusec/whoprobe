@@ -25,6 +25,38 @@ if (process.argv.includes('--fixture')) {
       assert.equal(helpers.sampleResult(unconfirmed, token).status, 'unknown');
     }
     assert.equal(helpers.sampleResult(sample('HTTP/3', 'h3'), token).peer.ip, '2001:db8::1');
+    assert.equal(helpers.sampleResult(sample('HTTP/2', 'h2', 'origin-leg'), token).reason, 'origin-leg');
+  });
+
+  const ingress = { source: 'trusted-edge', httpVersion: 'HTTP/2.0', tlsAlpn: 'h2' };
+  const normalNav = { nextHopProtocol: 'h2', encodedBodySize: 2400, decodedBodySize: 9000, responseEnd: 50 };
+  const navigation = (entry = normalNav, connection = ingress) => makeLab({ performance: { getEntriesByType(type) {
+    assert.equal(type, 'navigation'); return entry ? [entry] : [];
+  } } }).api.navigation(connection);
+
+  test('original navigation compares observed protocol families without conflating hops or cache', () => {
+    assert.equal(navigation().comparison, 'same');
+    assert.equal(navigation({ ...normalNav, nextHopProtocol: 'http/1.0' }, { source: 'direct', httpVersion: 'HTTP/1.1' }).comparison, 'same');
+    assert.equal(navigation({ ...normalNav, nextHopProtocol: 'h3-29' }).comparison, 'different');
+    assert.equal(navigation(normalNav, { ...ingress, source: 'origin-leg' }).comparison, 'origin-leg');
+    for (const [entry, connection] of [
+      [null, ingress], [{ ...normalNav, nextHopProtocol: '' }, ingress],
+      [normalNav, { ...ingress, tlsAlpn: 'h3' }], [normalNav, { ...ingress, tlsAlpn: 'h2c' }], [normalNav, { ...ingress, source: 'unknown' }],
+      [{ ...normalNav, workerStart: 4 }, ingress], [{ ...normalNav, deliveryType: 'cache' }, ingress],
+      [{ ...normalNav, transferSize: 0 }, ingress], [normalNav, null]
+    ]) assert.equal(navigation(entry, connection).comparison, 'unknown');
+    assert.equal(makeLab({ performance: { getEntriesByType() { throw new Error('unavailable'); } } }).api.navigation(ingress).comparison, 'unknown');
+  });
+
+  test('body measurement needs two exposed sizes on a completed nonempty navigation', () => {
+    for (const encodedBytes of [2400, 9000, 9300]) {
+      const measured = navigation({ ...normalNav, encodedBodySize: encodedBytes,
+        get name() { throw new Error('navigation URL must stay unread'); } });
+      assert.deepEqual(measured.body, { encodedBytes, decodedBytes: 9000 });
+    }
+    for (const unavailable of [null, { ...normalNav, responseEnd: 0 }, { ...normalNav, encodedBodySize: 0 },
+      { ...normalNav, decodedBodySize: -1 }, { ...normalNav, decodedBodySize: undefined },
+      { ...normalNav, encodedBodySize: NaN }]) assert.equal(navigation(unavailable).body, null);
   });
 
   test('route uses one fresh challenge and an anonymous no-store, no-redirect GET', async () => {

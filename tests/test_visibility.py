@@ -142,6 +142,30 @@ class VisibilityHttpTest(unittest.TestCase):
         self.assertNotIn(b"whoNavigationReceipt", body)
         self.assertNotIn(b"private-example-agent", body)
 
+    def test_cdn_protocol_belongs_to_the_origin_hop_not_the_browser(self):
+        ingress = {
+            "X-Edge-Peer-IP": "104.16.2.3", "X-Edge-Peer-Port": "44301",
+            "X-Edge-Local-IP": "192.0.2.1", "X-Edge-Local-Port": "443",
+            "X-HTTP-Version": "HTTP/2.0", "X-TLS-ALPN": "h2", "X-Real-IP": "104.16.2.3",
+        }
+        sample_path = "/api/who/visibility/sample?challenge=" + "ab" * 16
+        cache = probe.TTLCache(maxsize=4, ttl_sec=30)
+        cache.set(("104.16.2.3", 44301, "192.0.2.1", 443), {"tcp": {"ja4t": "cdn-tcp"}})
+        with patch.object(probe, "PACKET_CACHE", cache):
+            for forwarded in ({"CF-Connecting-IP": "9.9.9.9"}, {}, {"CF-Connecting-IP": "invalid"}):
+                headers = {**ingress, **forwarded}
+                expected_ip = "9.9.9.9" if forwarded.get("CF-Connecting-IP") == "9.9.9.9" else None
+                with self.subTest(forwarded=forwarded):
+                    receipt = self.embedded(self.request("GET", "/who/", headers)[2])
+                    self.assertEqual(receipt["connection"]["source"], "origin-leg")
+                    self.assertEqual(receipt["connection"]["httpVersion"], "HTTP/2.0")
+                    self.assertEqual(receipt["edgePeer"]["ip"], "104.16.2.3")
+                    self.assertIsNone(receipt["wire"]["tcp"])
+                    self.assertEqual(receipt["peer"]["ip"], expected_ip)
+                    sample = json.loads(self.request("GET", sample_path, headers)[2])
+                    self.assertEqual(sample["connection"]["source"], "origin-leg")
+                    self.assertEqual(sample["peer"]["ip"], expected_ip)
+
     def test_dns_handles_stay_in_same_origin_json(self):
         class Dns:
             def issue(self):

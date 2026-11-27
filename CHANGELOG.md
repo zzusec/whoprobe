@@ -1,5 +1,12 @@
 # Changelog
 
+## [v7.9.14] - 2026-11-27
+
+- 首页增加原导航 HTTP 协议双端对照、文档解码前后字节数。已识别的 Cloudflare 回源只作为回源观测；缓存及缺失读数不当作访客协议证据。
+- 修正旧探针在分流对照不足、ECS 部分返回、STUN 候选类型或地址族不同、TLS 复用时的误判。不新增外部探测目标。
+
+---
+
 ## [v7.9.13] - 2026-11-27
 
 - 修复 iOS / iPadOS 26 及 27+ 系统在 Safari 与第三方浏览器下被误识别为 `iOS 18.6` / `iOS 18.7` 的问题：Apple 自 iOS 26 起将 WebKit User-Agent 中的 `CPU iPhone OS` 字段永久冻结在 `18_6` / `18_7`（并在 Safari 中隐藏第 3 位补丁号如 `.1`），现双向对比 `CPU OS` 与 `Safari Version/` 三段式版本号（保留 `27.2.1` / `27.0.1` 等小版本），并对不含 `Version/` 的第三方 iOS 浏览器（`CriOS` / `FxiOS` / `EdgiOS` / `WKWebView`）通过系统 WebKit 原生特性（`::field-content`、`appearance: base-select`、`ariaNotify`、`anchor-name`）反推真实系统大版本。

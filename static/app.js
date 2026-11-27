@@ -232,13 +232,13 @@
     ["quicfp", "net", "HTTP/3 (QUIC / UDP 443) 探测", false, "结合边缘协商与 ResourceTiming 检测当前网络及代理链路是否放行基于 UDP 443 的 QUIC 协议。"],
     ["quicpar", "net", "QUIC Initial 解密与传输参数 (JA4Q)", false, "触发原生 WebTransport QUIC v1 握手，服务端利用 RFC 9001 公开初始盐无私钥解密多包 CRYPTO 帧，提取 JA4Q 与 quic_transport_parameters（流控窗口、GREASE 位等），识别 Chromium quiche、Firefox neqo、Apple nw_quic 与代理 quic-go。"],
     ["dns", "net", "递归 DNS 解析器出口", true, "生成随机一次性子域名触发真实递归查询，定位替你解析域名的上游 DNS 服务器国家与运营商。"],
-    ["ecs", "net", "多路递归 DNS 集群与 ECS 归属", true, "并发探测上游 DNS 集群节点并核验 EDNS Client Subnet (ECS) 子网透传及运营商同源性（本网 ISP / 公共 Anycast / 跨境泄漏）。"],
-    ["webrtc", "net", "WebRTC STUN 公网地址", true, "通过 STUN 协议在 UDP 通道探测本机反射出的真实公网 IPv4/IPv6 地址，未开 TUN 的代理常在此漏底。"],
+    ["ecs", "net", "递归 DNS 节点与 ECS 子网", true, "对照两次查询中观测到的递归节点及 EDNS Client Subnet (ECS)；节点地区不等于终端位置。"],
+    ["webrtc", "net", "WebRTC STUN 公网地址", true, "读取浏览器通过 UDP STUN 获取的公网反射候选；候选地址不代表实际选中路径。"],
     ["rtcsdp", "net", "WebRTC SDP 协议栈与 SCTP 模板", false, "纯本地生成 RTCPeerConnection Offer SDP（不连外网），提取 ice-options、DTLS 指纹哈希算法、SCTP max-message-size 与 RTP 扩展模板签名，区分 libwebrtc、WebKit 与 Gecko 真实媒体栈。"],
     ["ufrag", "net", "SDP ice-ufrag 长度与 Origin 引擎互证", false, "核验 SDP Offer 的 o= Origin 签名（Firefox 必含 THIS_IS_SDPARTA）与 a=ice-ufrag 随机串长度（Chromium libwebrtc 恒为 4 字符，Firefox nICEr 为 8 字符），专杀 Chromium 套壳伪装 Firefox 或 Camoufox 伪装 Chrome。"],
     ["udprtt", "net", "WebRTC 首个公网 ICE 候选出现耗时", false, "测量从开始 ICE 收集到首个公网候选出现的时间，不是端到端 UDP RTT。是否存在不同出口另按候选地址与本站地址核对。"],
     ["lan", "net", "WebRTC 局域网地址与 mDNS", true, "读取 ICE Host 候选：现代浏览器通常用随机 .local (mDNS) 隐藏内网 IP，旧环境或特殊设置会直接暴露。"],
-    ["v6mac", "net", "IPv6 物理网卡 MAC 泄露", true, "扫描所有观测到的 IPv6 地址后 64 位是否含 ff:fe (EUI-64)，一旦命中即永久暴露物理网卡 MAC。"],
+    ["v6mac", "net", "IPv6 EUI-64 格式线索", true, "检查地址低 64 位是否符合从 MAC 派生的 EUI-64 格式。仅凭这一模式无法识别设备所有者或物理网卡。"],
 
     // Group 2: rep (11) — Multi-Source Egress Reputation, BGP/RDAP & Dirty Neighbours
     ["rep_score", "rep", "出口 IP 纯净度评分与加扣分账单", false, "基准 92 分 + 最高 10 分原生安全奖励 − 五维封顶扣分（匿名化/黑名单/同段邻居/机房租赁/广播分歧），输出 S~F 纯净度等级。"],
@@ -696,15 +696,22 @@
       && !inf.conflict && !ci.x4bDatacenter;
   }
   function cleanIp(raw) {
-    let s = String(raw || "").trim();
-    if (!s) return "";
-    if (s.startsWith("[")) {
-      const close = s.indexOf("]");
-      s = close > 0 ? s.slice(1, close) : s.replace(/^\[+|\]+$/g, "");
+    if (typeof raw !== "string") return "";
+    const text = raw.trim();
+    if (text.length > 47) return "";
+    if (!text.includes(":")) {
+      const octets = text.split(".");
+      return octets.length === 4 && octets.every(part => /^(?:0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255) ? text : "";
     }
-    const pct = s.indexOf("%");
-    if (pct > 0) s = s.slice(0, pct);
-    return s.includes(":") ? s.toLowerCase() : s;
+    const literal = text.startsWith("[") && text.endsWith("]") ? text.slice(1, -1) : text;
+    if (!/^[\da-f:.]+$/i.test(literal)) return "";
+    try {
+      const canonical = new URL(`http://[${literal}]/`).hostname.slice(1, -1);
+      const mapped = /^::ffff:([\da-f]+):([\da-f]+)$/.exec(canonical);
+      if (!mapped) return canonical;
+      const upper = parseInt(mapped[1], 16), lower = parseInt(mapped[2], 16);
+      return [upper >> 8, upper & 255, lower >> 8, lower & 255].join(".");
+    } catch { return ""; }
   }
 
   const RELAY4 = [[104, 28], [172, 224], [172, 225], [172, 226], [146, 75], [140, 248]];
@@ -862,10 +869,13 @@
     return false;
   }
 
+  function comparableRtcIps() {
+    const self = cleanIp(R.ip);
+    return self && Array.isArray(R.rtc) ? R.rtc.map(cleanIp).filter(ip => ip && ip.includes(":") === self.includes(":")) : [];
+  }
+
   function getLeakedWebrtcIps() {
-    const rtcList = Array.isArray(R.rtc) ? R.rtc : [];
-    if (!rtcList.length || !R.ip) return [];
-    return rtcList.filter(ip => !isSameCarrierCandidate(ip));
+    return comparableRtcIps().filter(ip => !isSameCarrierCandidate(ip));
   }
 
   function isSafariSubprobeRelay(key, v) {
@@ -879,18 +889,10 @@
 
   function analyzeExitSplit() {
     const ex = R.exits || {};
-    const allValidExits = Object.entries(ex).filter(([, v]) => v && v.ip);
-    const seenIps = new Set(allValidExits.map(([, v]) => cleanIp(v.ip)).filter(Boolean));
-    if (R.stack?.v4 && !seenIps.has(cleanIp(R.stack.v4))) {
-      const v4 = cleanIp(R.stack.v4);
-      allValidExits.push(["stack_v4", { ip: v4, cc: candidateCC(v4), label: "IPv4 独立栈" }]);
-      seenIps.add(v4);
-    }
-    if (R.stack?.v6 && !seenIps.has(cleanIp(R.stack.v6))) {
-      const v6 = cleanIp(R.stack.v6);
-      allValidExits.push(["stack_v6", { ip: v6, cc: candidateCC(v6), label: "IPv6 独立栈" }]);
-      seenIps.add(v6);
-    }
+    const allValidExits = Object.entries(ex).filter(([, value]) => cleanIp(value?.ip));
+    const v4 = cleanIp(R.stack?.v4), v6 = cleanIp(R.stack?.v6);
+    if (v4 && !v4.includes(":")) allValidExits.push(["stack_v4", { ip: v4, cc: candidateCC(v4), label: "IPv4 独立栈" }]);
+    if (v6.includes(":")) allValidExits.push(["stack_v6", { ip: v6, cc: candidateCC(v6), label: "IPv6 独立栈" }]);
     const enrichedExits = allValidExits.map(([k, v]) => {
       const cip = cleanIp(v.ip);
       const sameSelf = !!(R.ip && cip && (cip === cleanIp(R.ip) || netPrefix(cip) === netPrefix(R.ip)));
@@ -934,7 +936,7 @@
       return Math.max(1, buckets.size);
     };
 
-    if (leakedCnPair) {
+    if (leakedCnPair && enrichedExits.length >= 2) {
       const allCountries = new Set(enrichedExits.map(([, v]) => v.cc).filter(Boolean));
       return {
         state: "cn-leak",
@@ -949,6 +951,7 @@
     const filteredExits = relayedSubprobes.length ? enrichedExits.filter(([k, v]) => !isSafariSubprobeRelay(k, v)) : enrichedExits;
     const validExits = filteredExits.length ? filteredExits : enrichedExits;
     const countries = new Set(validExits.map(([, v]) => v.cc).filter(Boolean));
+    if (validExits.length < 2) return { state: "insufficient", countries, validExits };
     const distinctBuckets = bucketCount(validExits);
     if (countries.size > 1) {
       return { state: "multi-country", countries, distinctCount: Math.max(countries.size, distinctBuckets), validExits };
@@ -1467,7 +1470,8 @@
   function backfillExitMeta(meta = {}) {
     if (!meta) return;
     const metaIp = cleanIp(meta.ip);
-    const allowPrimaryFill = !!meta.isSelf || !!R.srvFailed;
+    if (!metaIp) return;
+    const allowPrimaryFill = meta.isSelf === true;
     let changed = false;
     if (!R.ip && metaIp && allowPrimaryFill) {
       R.ip = metaIp;
@@ -1477,7 +1481,7 @@
     }
     const sameExit = !R.ip
       ? allowPrimaryFill
-      : (!metaIp || metaIp === cleanIp(R.ip) || (netPrefix(metaIp) && netPrefix(metaIp) === netPrefix(R.ip)));
+      : metaIp === cleanIp(R.ip);
     if (!sameExit) return;
 
     if (!R.ipCC && meta.cc) {
@@ -1668,7 +1672,8 @@
     // Protocol & Cipher
     const ngTls = data.connection || data.nginxTls || {};
     const observedProtocol = [ngTls.httpVersion || ngTls.httpProtocol, ngTls.tlsProtocol, ngTls.tlsCipher].filter(Boolean).join(" · ");
-    if (observedProtocol) setProbe("proto", observedProtocol);
+    if (ngTls.source === "origin-leg") setNA("proto", `仅观测到 CDN 回源链路${observedProtocol ? `：${observedProtocol}` : ""}；浏览器到入口的协议未知`);
+    else if (observedProtocol) setProbe("proto", observedProtocol);
     else setNA("proto", "未观测到入口的协议协商");
 
     // Passive TCP SYN fingerprint
@@ -1909,7 +1914,7 @@
     if (intel.isSelfEgress !== false) {
       backfillExitMeta({
         ip: intel.targetIp,
-        isSelf: true,
+        isSelf: intel.isSelfEgress === true,
         cc: c.country,
         city: c.city,
         region: c.region,
@@ -2332,6 +2337,10 @@
   }
 
   async function probeQuicAndExits() {
+    R.exitsDone = false;
+    R.cfLocalRtt = null;
+    R.cfLocalColo = "";
+    R.cfEdge = null;
     const prevSelf = R.exits?.ex_self || null;
     R.exits = prevSelf ? { ex_self: prevSelf } : {};
     if (R.srv && R.ip) {
@@ -2444,8 +2453,8 @@
         getJSON("https://api.ip.sb/geoip", 4200).catch(() => null),
         getJSON("https://ipwho.is/", 4200).catch(() => null)
       ]);
-      let j = j1?.ip ? j1 : null;
-      if (!j && j2?.ip) {
+      let j = cleanIp(j1?.ip) ? j1 : null;
+      if (!j && cleanIp(j2?.ip)) {
         j = {
           ip: j2.ip,
           country_code: j2.country_code,
@@ -2496,7 +2505,7 @@
       kv.ip = traceIp;
       const cc = kv.loc || "";
       const relayNote = isAppleRelay(traceIp) && (!kv.warp || kv.warp === "off") && /^(iOS|iPadOS|macOS)$/.test(R.dev?.os || "") ? " · Safari 隐私中继" : "";
-      const sub = `${countryName(cc)} · 边缘节点 ${kv.colo || "?"} · ${kv.http || "h2"}${relayNote}`;
+      const sub = `${countryName(cc)} · 边缘节点 ${kv.colo || "?"} · ${kv.http || "协议未报告"}${relayNote}`;
       R.exits[key] = { ip: traceIp, cc, colo: kv.colo, http: kv.http, kex: kv.kex, sni: kv.sni, warp: kv.warp, gateway: kv.gateway, label: sub };
       setProbe(key, `${flagEmoji(cc)} ${traceIp} · ${sub}`);
       setRouteRow(key, `${flagEmoji(cc)} ${traceIp}`, sub, "ok");
@@ -2534,15 +2543,16 @@
     // Dual-stack IPv4 vs IPv6 independent probe
     const pStack = (async () => {
       const [r4, r6] = await Promise.all([
-        getText("https://ipv4.icanhazip.com", 3800).then(s => ({ ip: cleanIp(s) }), () => null),
-        getText("https://ipv6.icanhazip.com", 3800).then(s => ({ ip: cleanIp(s) }), () => null)
+        getText("https://ipv4.icanhazip.com", 3800).then(cleanIp, () => ""),
+        getText("https://ipv6.icanhazip.com", 3800).then(cleanIp, () => "")
       ]);
-      const v4 = r4?.ip || "";
-      const v6 = r6?.ip && r6.ip.includes(":") ? r6.ip : "";
+      const v4 = r4.includes(":") ? "" : r4;
+      const v6 = r6.includes(":") ? r6 : "";
       R.stack = { v4, v6 };
-      setProbe("stack", `IPv4: ${v4 || "未测出"} · IPv6: ${v6 || "未测出"}`);
+      if (v4 || v6) setProbe("stack", `IPv4: ${v4 || "未测出"} · IPv6: ${v6 || "未测出"}`);
+      else setNA("stack", "两种地址均未测出");
       const observed = v4 && v6 ? "观测到 IPv4 和 IPv6" : v4 ? "仅观测到 IPv4" : v6 ? "仅观测到 IPv6" : "两种地址均未测出";
-      setRouteRow("stack", observed, `v4: ${v4 || "–"} / v6: ${v6 || "–"}`, v4 && v6 ? "ok" : "neutral");
+      setRouteRow("stack", observed, `v4: ${v4 || "未测出"} / v6: ${v6 || "未测出"}`, v4 && v6 ? "ok" : "neutral");
     })();
 
     const [, , , , cfKv] = await Promise.all([pCn, pIntl, pGpt, pClaude, pCf, pStack]);
@@ -2551,7 +2561,7 @@
 
     // WARP & Gateway
     if (edgeKv.warp) {
-      setProbe("warp", `WARP: ${edgeKv.warp} · Gateway: ${edgeKv.gateway || "off"}`, {
+      setProbe("warp", `WARP: ${edgeKv.warp} · Gateway: ${edgeKv.gateway || "未报告"}`, {
         tone: edgeKv.warp !== "off" ? "ok" : "neutral"
       });
     } else setNA("warp", "未经过 Cloudflare 边缘");
@@ -2573,9 +2583,10 @@
     const sp = analyzeExitSplit();
     const isBad = sp.state === "cn-leak";
     const isWarn = sp.state === "multi-country" || sp.state === "multi-prefix" || sp.state === "dual-stack-mismatch";
+    const insufficient = sp.state === "insufficient";
     const badge = $("#splitSummaryBadge");
     if (badge) {
-      badge.textContent = isBad
+      badge.textContent = insufficient ? "独立出口样本不足" : isBad
         ? "大陆分流漏底"
         : isWarn
         ? `分流到 ${sp.distinctCount} 个出口`
@@ -2583,9 +2594,9 @@
         ? "同运营商双栈一致"
         : sp.cgnatAligned
         ? "同运营商 CGNAT 一致"
-        : "全局单一出口";
+        : "已测出口一致";
       badge.className = "inline-flex items-center py-1 px-3 rounded-full text-xs font-medium " + (
-        isBad
+        insufficient ? "text-zinc-500 dark:text-zinc-400" : isBad
           ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
           : isWarn
           ? "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
@@ -2594,23 +2605,13 @@
     }
     const tabRt = $("#tabRoutesBadge");
     if (tabRt) {
-      tabRt.textContent = isBad ? "分流漏底" : isWarn ? `${sp.distinctCount} 出口` : "单一出口";
+      tabRt.textContent = insufficient ? "样本不足" : isBad ? "分流漏底" : isWarn ? `${sp.distinctCount} 出口` : "已测一致";
       tabRt.className = "py-0.5 px-1.5 rounded-full font-mono text-[11px] " + (
-        isBad
+        insufficient ? "text-zinc-500 dark:text-zinc-400" : isBad
           ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
           : isWarn
           ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
           : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
-      );
-    }
-    if (R.stack && (R.stack.v4 || R.stack.v6)) {
-      const { v4, v6 } = R.stack;
-      const v6Leak = v4 && v6 && R.ip && !isSameCarrierCandidate(v6) && !isSameCarrierCandidate(v4);
-      setRouteRow(
-        "stack",
-        v4 && v6 ? "IPv4 + IPv6 双栈在线" : v4 ? "纯 IPv4 链路" : "纯 IPv6 链路",
-        `v4: ${v4 || "–"} / v6: ${v6 || "无"}`,
-        v6Leak ? "bad" : "ok"
       );
     }
   }
@@ -2632,6 +2633,16 @@
     return (resolveEnglishCountry._cache && resolveEnglishCountry._cache[name]) || null;
   }
 
+  function ecsObservation(raw) {
+    if (raw == null || raw === "") return { status: "not-reported" };
+    const parts = String(raw).trim().split("/");
+    const addr = cleanIp(parts[0]);
+    const width = addr.includes(":") ? 128 : 32;
+    if (!addr || parts.length > 2 || (parts.length === 2 && (!/^\d{1,3}$/.test(parts[1]) || Number(parts[1]) > width))) return { status: "unrecognized" };
+    if ((parts.length === 2 && Number(parts[1]) === 0) || (parts.length === 1 && (addr === "0.0.0.0" || addr === "::"))) return { status: "no-address" };
+    return { status: "address", value: parts.length === 2 ? `${addr}/${Number(parts[1])}` : addr };
+  }
+
   async function probeDns() {
     const randHex1 = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("");
     const randHex2 = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -2639,56 +2650,33 @@
       getJSON(`https://${randHex1}.edns.ip-api.com/json`, 4200).catch(() => null),
       getJSON(`https://${randHex2}.edns.ip-api.com/json`, 4200).catch(() => null)
     ]);
-    const j = j1?.dns ? j1 : j2;
-    if (!j || !j.dns) {
-      R.dnsCC = null;
-      R.dnsClass = null;
+    const samples = [j1, j2].filter(reply => cleanIp(reply?.dns?.ip)).map(reply => {
+      const [country, ...org] = String(reply.dns.geo || "").split(" - ");
+      return { ip: cleanIp(reply.dns.ip), cc: resolveEnglishCountry(country.trim()), org: org.join(" - ").trim(), ecs: ecsObservation(reply.edns?.ip) };
+    });
+    const countries = [...new Set(samples.map(sample => sample.cc).filter(Boolean))];
+    R.dnsCountries = countries;
+    R.dnsGeoMissing = samples.some(sample => !sample.cc);
+    R.dnsCC = samples[0]?.cc || null;
+    R.dnsIp = samples[0]?.ip || "";
+    R.dnsOrg = samples[0]?.org || "";
+    R.ecsIp = samples.find(sample => sample.ecs.status === "address")?.ecs.value || "";
+    R.ecsUnparsed = samples.some(sample => sample.ecs.status === "unrecognized");
+    if (!samples.length) {
       setNA("dns", "DNS 探针被拦截或超时");
       setNA("ecs", "上游递归集群不可达");
-      setRouteRow("dns", "未测出", "edns 探针超时");
+      setRouteRow("dns", "未测出", "未获得有效递归地址");
       return;
     }
-    const d = j.dns;
-    const parts = String(d.geo || "").split(" - ");
-    const cname = (parts[0] || "").trim();
-    const org = parts.slice(1).join(" - ").trim();
-    const cc = resolveEnglishCountry(cname);
-    const ecsIp = j.edns?.ip || j2?.edns?.ip || "";
-    const ecsGeo = j.edns?.geo || j2?.edns?.geo || "";
-    R.dnsCC = cc;
-    R.dnsIp = d.ip || "";
-    R.dnsOrg = org || cname;
-    R.ecsIp = ecsIp;
-
-    // Collect multi-resolver cluster & classify DNS alignment (own / public / same / leak / leak-cn)
-    const resolvers = Array.from(new Set([j1?.dns?.ip, j2?.dns?.ip].filter(Boolean)));
-    const isPublicAnycast = /Google|Cloudflare|Quad9|OpenDNS|Cisco|NextDNS|AdGuard|Control D|CleanBrowsing/i.test(org);
-    const sameOrg = R.org && org && (org.toLowerCase().includes(R.org.toLowerCase().split(/\s+/)[0]) || R.org.toLowerCase().includes(org.toLowerCase().split(/\s+/)[0]));
-    let dnsClass = "same", clsLabel = "同国合规解析";
-    if (cc === "CN" && R.ipCC && R.ipCC !== "CN") {
-      dnsClass = "leak-cn";
-      clsLabel = "国内 DNS 致命抢答泄漏";
-    } else if (cc && R.ipCC && cc !== R.ipCC) {
-      dnsClass = isPublicAnycast ? "public-cross" : "leak";
-      clsLabel = isPublicAnycast ? `公共 Anycast 跨国节点 (${org})` : `跨国第三方递归 (${countryName(cc)})`;
-    } else if (sameOrg) {
-      dnsClass = "own";
-      clsLabel = "本网 ISP 原生递归 (最优隐蔽度)";
-    } else if (isPublicAnycast) {
-      dnsClass = "public";
-      clsLabel = `同国公共 DoH/Anycast (${org})`;
-    }
-    R.dnsClass = dnsClass;
-
-    const leak = cc && R.ipCC && cc !== R.ipCC;
-    setProbe("dns", `${flagEmoji(cc)} ${d.ip || ""} · ${countryName(cc)} (${org || cname})`, {
-      tone: leak && cc === "CN" ? "bad" : leak ? "warn" : "ok"
+    const resolvers = [...new Set(samples.map(sample => sample.ip))];
+    const locations = countries.map(countryName).join(" / ") || "归属未知";
+    const ecsNote = R.ecsIp ? `报告 ECS 子网 ${R.ecsIp}` : R.ecsUnparsed ? "ECS 字段无法识别" : "样本未报告含地址的 ECS";
+    setProbe("dns", `${resolvers.join(" / ")} · ${locations}${R.dnsOrg && resolvers.length === 1 ? ` (${R.dnsOrg})` : ""}`);
+    setProbe("ecs", `${samples.length}/2 个有效样本 · ${resolvers.length} 个递归节点 · ${ecsNote}`, {
+      tone: R.ecsIp ? "warn" : "neutral",
+      why: "递归端的地址和估算地区不能证明客户端的 DNS 协议或实际位置。"
     });
-    setProbe("ecs", `${clsLabel} · 采样 ${resolvers.length} 节点 · ${ecsIp ? `暴露 ECS 子网 ${ecsIp}${ecsGeo ? " (" + ecsGeo + ")" : ""}` : "无 ECS 客户端子网泄露"}`, {
-      tone: dnsClass === "leak-cn" ? "bad" : (dnsClass === "leak" || (ecsIp && netPrefix(ecsIp) !== netPrefix(R.ip))) ? "warn" : "ok",
-      why: `观测递归节点: ${resolvers.join(", ")}\n判定等级: ${dnsClass}`
-    });
-    setRouteRow("dns", `${flagEmoji(cc)} ${countryName(cc)}`, `${d.ip || ""} · ${clsLabel}`, leak ? "warn" : "ok");
+    setRouteRow("dns", locations, resolvers.join(" / "));
   }
 
   function refreshMuxJitterProbe() {
@@ -2726,6 +2714,8 @@
     if (!RTCPeer) {
       R.rtc = "off";
       R.rtcDone = true;
+      R.stunRttMs = null;
+      R.lan = [];
       setNA("webrtc", "WebRTC 已禁用");
       setNA("udprtt", "WebRTC 已禁用");
       setNA("lan", "WebRTC 已禁用");
@@ -2733,50 +2723,59 @@
     }
     const pubIps = new Set(), lanItems = new Set();
     let firstSrflxMs = null;
-    let pc = null;
+    let pc = null, timer, failure = "";
     try {
       pc = new RTCPeer({ iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] });
       pc.createDataChannel("p");
       let tStart = performance.now();
       const done = new Promise(resolve => {
-        const timer = setTimeout(resolve, 2600);
+        timer = setTimeout(resolve, 2600);
         pc.onicecandidate = ev => {
           if (!ev || !ev.candidate) { clearTimeout(timer); resolve(); return; }
-          const c = ev.candidate.candidate || "";
-          const mLocal = c.match(/([0-9a-fA-F-]{8,}\.local)\b/);
-          if (mLocal) lanItems.add(mLocal[1]);
-          const ipMatch = c.match(/(?:\b|(?:candidate:\S+\s+\d+\s+\S+\s+\d+\s+))((?:\d{1,3}\.){3}\d{1,3}|\[?[0-9a-fA-F:]{3,39}\]?)(?:\b|\s|$)/);
-          const rawAddr = ev.candidate.address || (ipMatch && ipMatch[1]) || "";
-          if (!rawAddr || String(rawAddr).endsWith(".local")) return;
+          const candidate = ev.candidate;
+          const fields = String(candidate.candidate || "").trim().split(/\s+/);
+          const validSdp = /^candidate:/i.test(fields[0]) && fields[6] === "typ";
+          const rawAddr = candidate.address || (validSdp ? fields[4] : "");
+          const type = String(candidate.type || (validSdp ? fields[7] : "")).toLowerCase();
+          const protocol = String(candidate.protocol || (validSdp ? fields[2] : "")).toLowerCase();
+          if (type === "host" && /^[\w.-]+\.local\.?$/i.test(rawAddr)) {
+            lanItems.add(rawAddr.toLowerCase().replace(/\.$/, ""));
+            return;
+          }
           const addr = cleanIp(rawAddr);
           if (!addr) return;
-          const isSrflx = /\btyp\s+(?:srflx|prflx|relay)\b/i.test(c) || /^(?:srflx|prflx|relay)$/i.test(ev.candidate.type || "");
-          if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|fc[0-9a-f]{0,2}:|fd[0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)/i.test(addr)) {
-            lanItems.add(addr);
-          } else if (/^(0\.0\.0\.0|127\.|169\.254\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|192\.0\.0\.|198\.1[89]\.|::1?$|2001:0?db8:)/i.test(addr)) {
+          if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|f[cd][\da-f]{2}:|fe[89ab][\da-f]:)/i.test(addr)) {
+            if (type === "host") lanItems.add(addr);
             return;
-          } else {
-            if (isSrflx && firstSrflxMs == null) firstSrflxMs = Math.max(1, Math.round(performance.now() - tStart));
-            pubIps.add(addr);
           }
+          if (type !== "srflx" || protocol !== "udp") return;
+          if (addr.includes(":") ? !/^[23][\da-f]{3}:/i.test(addr) || /^2001:db8:/i.test(addr) :
+              /^(0\.|127\.|169\.254\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|192\.0\.(0|2)\.|198\.(18|19|51\.100)\.|203\.0\.113\.)/.test(addr) || Number(addr.split(".")[0]) >= 224) return;
+          if (firstSrflxMs == null) firstSrflxMs = Math.max(0, Math.round(performance.now() - tStart));
+          pubIps.add(addr);
         };
       });
       const offer = await pc.createOffer();
       tStart = performance.now();
       await pc.setLocalDescription(offer);
       await done;
-    } catch (e) {}
-    try { if (pc) pc.close(); } catch (e) {}
+    } catch (err) {
+      failure = err?.name || "Error";
+    } finally {
+      clearTimeout(timer);
+      if (pc) { pc.onicecandidate = null; pc.close(); }
+    }
 
     const pubList = Array.from(pubIps);
     const lanList = Array.from(lanItems);
     R.rtc = pubList;
     R.lan = lanList;
     R.stunRttMs = firstSrflxMs;
+    R.rtcFailure = failure;
     R.rtcDone = true;
 
     if (!pubList.length) {
-      setNA("webrtc", "本轮未获得公网 ICE 候选；无法判定 WebRTC 出口");
+      setNA("webrtc", failure ? `ICE 收集失败 (${failure})；无法判定 WebRTC 出口` : "本轮未获得 UDP STUN 公网反射候选");
     } else if (!R.ip) {
       setProbe("webrtc", `${pubList.join(" · ")} (等待主出口归属核验…)`, { tone: "neutral" });
     } else {
@@ -2785,31 +2784,32 @@
     updateUdpRttProbe();
 
     const realLan = lanList.filter(x => !x.endsWith(".local"));
-    setProbe("lan", realLan.length ? `暴露真实局域网 IP: ${realLan.join(", ")}` : lanList.length ? `已由 mDNS 隐藏 (${lanList[0]})` : "未暴露局域网候选", {
-      tone: realLan.length ? "warn" : "ok"
-    });
+    if (!lanList.length) setNA("lan", failure ? `ICE 收集失败 (${failure})` : "本轮未观测到局域网或 mDNS 主机候选");
+    else setProbe("lan", realLan.length ? `局域网主机候选: ${realLan.join(", ")}` : `观测到 mDNS 主机候选 (${lanList[0]})`, { tone: realLan.length ? "warn" : "neutral" });
   }
 
   function refreshWebrtcProbeRow() {
     if (!R.rtcDone || R.rtc === "off") return;
     const pubList = Array.isArray(R.rtc) ? R.rtc : [];
     if (!pubList.length) {
-      setNA("webrtc", "本轮未获得公网 ICE 候选；无法判定 WebRTC 出口");
+      setNA("webrtc", R.rtcFailure ? `ICE 收集失败 (${R.rtcFailure})；无法判定 WebRTC 出口` : "本轮未获得 UDP STUN 公网反射候选");
       return;
     }
     if (!R.ip) return;
+    const comparable = comparableRtcIps();
+    if (comparable.length === 0) {
+      setProbe("webrtc", `${pubList.join(" · ")}（缺少同地址族的本站 HTTP 出口）`, { tone: "neutral" });
+      return;
+    }
     const leaked = getLeakedWebrtcIps();
-    const directSame = pubList.every(x => cleanIp(x) === cleanIp(R.ip) || netPrefix(x) === netPrefix(R.ip));
-    const lkCC = leaked.length ? candidateCC(leaked[0]) : "";
+    const directSame = comparable.every(addr => addr === cleanIp(R.ip));
     const suffix = leaked.length
-      ? (R.ipCC === "CN" && lkCC && lkCC !== "CN"
-        ? ` (分流至 ${lkCC} 代理，与当前 CN 直连不符！)`
-        : " (与当前代理出口不符！)")
+      ? " (存在与本站 HTTP 出口不同的反射候选)"
       : directSame
-      ? " (与出口一致)"
-      : " (同国同运营商双栈/CGNAT，未跨网泄漏)";
-    setProbe("webrtc", pubList.join(" · ") + suffix, {
-      tone: leaked.length ? "bad" : "ok"
+      ? " (同族候选与本站出口一致)"
+      : " (候选地址不同，网段或运营商线索相近)";
+    setProbe("webrtc", pubList.join(" · ") + suffix + (comparable.length < pubList.length ? "；另一地址族未核对" : ""), {
+      tone: leaked.length ? "warn" : directSame ? "ok" : "neutral"
     });
   }
 
@@ -2847,9 +2847,9 @@
 
   // 6. IPv6 EUI-64 Hardware MAC Leak Check (1 item: v6mac)
   function probeV6Mac() {
-    const v6Pool = [R.ip, R.stack?.v6, ...(Array.isArray(R.rtc) ? R.rtc : []), ...Object.values(R.exits || {}).map(x => x?.ip)]
+    const v6Pool = [...new Set([R.ip, R.stack?.v6, ...(Array.isArray(R.rtc) ? R.rtc : []), ...Object.values(R.exits || {}).map(x => x?.ip)]
       .map(cleanIp)
-      .filter(x => x && x.includes(":"));
+      .filter(x => x && x.includes(":")))];
     if (!v6Pool.length) {
       R.v6mac = null;
       setNA("v6mac", "未观测到可检查的 IPv6 地址");
@@ -2858,7 +2858,7 @@
     const mac = v6Pool.map(extractV6Mac).find(Boolean) || null;
     R.v6mac = mac;
     if (mac) {
-      setProbe("v6mac", `高危：从 IPv6 提取出物理网卡 MAC ${mac}`, { tone: "bad" });
+      setProbe("v6mac", `观测到 EUI-64 形式的接口标识（对应 ${mac}）；不能确认来自本机网卡`, { tone: "neutral" });
     } else {
       setProbe("v6mac", `本轮 ${v6Pool.length} 个 IPv6 地址未见 EUI-64 MAC 格式`, { tone: "neutral" });
     }
@@ -4024,6 +4024,14 @@
   }
 
   // 15. Subpixel Geometry, Math Library, Engine Surface, Timer & Navigation Timing (8 items)
+  function probeNavigationTiming() {
+    const nav = globalThis.performance?.getEntriesByType?.("navigation")?.[0];
+    if (!nav) return setNA("perf_nav", "未获得导航计时记录");
+    const duration = (start, end, handshake) => Number.isFinite(start) && start > 0 && Number.isFinite(end) && (handshake ? end > start : end >= start)
+      ? `${Math.round(end - start)}ms` : "未测出";
+    setProbe("perf_nav", `协议 ${nav.nextHopProtocol || "未报告"} · TLS耗时 ${duration(nav.secureConnectionStart, nav.connectEnd, true)} · 首字节 ${duration(nav.requestStart, nav.responseStart, false)}`);
+  }
+
   async function probeSubpixelAndEngine() {
     // DOMRect rotated subpixel layout
     try {
@@ -4103,12 +4111,7 @@
     setProbe("callstack", `最大栈深 ${depth.toLocaleString("zh-CN")} 层`);
 
     // Navigation timing
-    const nav = performance.getEntriesByType("navigation")[0];
-    if (nav) {
-      const tlsMs = nav.secureConnectionStart > 0 ? Math.round(nav.connectEnd - nav.secureConnectionStart) : 0;
-      const ttfbMs = Math.round(nav.responseStart - nav.requestStart);
-      setProbe("perf_nav", `协议 ${nav.nextHopProtocol || "h2"} · TLS耗时 ${tlsMs}ms · 首字节 ${ttfbMs}ms`);
-    } else setNA("perf_nav");
+    probeNavigationTiming();
 
     // 15b. WASM 128-bit SIMD & Hypervisor VM-Exit CPU Steal Jitter (cpubench)
     try {
@@ -6367,17 +6370,16 @@
     }
 
     // 4. dns: Recursive DNS Resolver & EDNS Client Subnet vs Exit IP
-    const ecsMismatch = R.ecsIp && R.ip && netPrefix(R.ecsIp) && netPrefix(R.ip) && netPrefix(R.ecsIp) !== netPrefix(R.ip);
-    if (!R.dnsCC) {
-      out.dns = { level: "info", summary: R.finished ? "DNS 递归探针未返回结果或被当前网络策略阻断" : "正在发起随机子域名递归 DNS 解析探测…" };
-    } else if (R.dnsCC === "CN" && ipCC !== "CN") {
-      out.dns = { level: "bad", summary: `致命 DNS 泄漏：网页出口在 ${ipCountry}，但替你解析域名的 DNS 仍在中国大陆 (${R.dnsIp})！` };
-    } else if (ipCC && R.dnsCC !== ipCC) {
-      out.dns = { level: "warn", summary: `跨国 DNS 偏移：出口在 ${ipCountry}，但递归 DNS 服务器位于 ${countryName(R.dnsCC)} (${R.dnsOrg})` };
-    } else if (ecsMismatch) {
-      out.dns = { level: "warn", summary: `DNS 同国，但上游递归暴露了异网段 ECS 客户端子网 (${R.ecsIp})` };
+    const dnsCountries = R.dnsCountries || (R.dnsCC ? [R.dnsCC] : []);
+    const differentDns = dnsCountries.filter(country => ipCC && country !== ipCC);
+    if (differentDns.length) {
+      out.dns = { level: "warn", summary: `递归 DNS 估算地区 (${differentDns.map(countryName).join(" / ")}) 与本站出口 (${ipCountry}) 不同；不能据此判断 DNS 劫持或直连${R.ecsIp ? `。本轮报告 ECS 子网 ${R.ecsIp}` : ""}` };
+    } else if (R.ecsIp) {
+      out.dns = { level: "warn", summary: `本轮递归查询报告了 ECS 客户端子网 ${R.ecsIp}；不等于浏览器的完整地址或物理位置` };
+    } else if (!dnsCountries.length || !ipCC || R.dnsGeoMissing || R.ecsUnparsed) {
+      out.dns = { level: "info", summary: R.ecsUnparsed ? "ECS 字段不可识别，无法核对本轮子网结果" : R.finished || R.dnsIp ? "缺少有效的 DNS 或出口地区信息，无法核对" : "正在发起递归 DNS 探测…" };
     } else {
-      out.dns = { level: "ok", summary: `DNS 解析服务器位于 ${countryName(R.dnsCC)} (${R.dnsOrg})，与出口一致且无 ECS 子网泄露` };
+      out.dns = { level: "ok", summary: `已观测的 DNS 递归节点与出口估算地区一致 (${ipCountry})；样本未报告含地址的 ECS` };
     }
 
     // 5. split: Multi-target Split Tunneling
@@ -6388,6 +6390,8 @@
 
     if (!R.exitsDone) {
       out.split = { level: "info", summary: "正在并发比对国内外与 AI 平台分流出口…" };
+    } else if (sp.state === "insufficient") {
+      out.split = { level: "info", coverageSparse: true, summary: `仅有 ${sp.validExits.length} 个独立目标返回可比较的地址，无法判定多目标出口是否一致` };
     } else if (sp.state === "cn-leak" && (sp.leakedExit || cnIp)) {
       const lk = sp.leakedExit || cnIp;
       const multiTail = sp.distinctCount >= 3 ? `（全局共分流至 ${sp.distinctCount} 个不同出口）` : "";
@@ -6404,8 +6408,8 @@
       out.split = {
         level: "ok",
         summary: sp.dualStackAligned || sp.cgnatAligned
-          ? `全局同源一致：所有可达目标均走同一 ${ipCountry} 运营商出口池（双栈 / CGNAT 正常选路）`
-          : `全局路由一致：所有测试目标均稳定走同一 ${ipCountry} 出口网段`
+          ? `本轮 ${sp.validExits.length} 个可比较目标的结果符合同运营商双栈 / CGNAT 选路`
+          : `本轮 ${sp.validExits.length} 个可比较目标观察到同一出口网段`
       };
     }
 
@@ -6565,33 +6569,29 @@
 
     // 10. webrtc: WebRTC STUN Leak & IPv6 MAC Leak
     const rtcList = Array.isArray(R.rtc) ? R.rtc : [];
+    const comparableRtc = comparableRtcIps();
     const leakedRtc = getLeakedWebrtcIps();
     if ((!R.rtcDone || (rtcList.length && !R.ip)) && !R.finished) {
       out.webrtc = { level: "info", summary: "正在执行 STUN UDP 候选穿透与出口运营商同源核查…" };
-    } else if (R.v6mac) {
-      out.webrtc = { level: "bad", summary: `高危硬件泄漏：IPv6 地址中直接编码了物理网卡 MAC 地址 (${R.v6mac})！` };
     } else if (leakedRtc.length) {
-      const leakCC = candidateCC(leakedRtc[0]);
-      const reverseSplit = R.ipCC === "CN" && leakCC && leakCC !== "CN";
-      out.webrtc = {
-        level: "bad",
-        summary: reverseSplit
-          ? `分流导致 TCP/UDP 出口分裂：当前页面走大陆直连 (CN)，但 WebRTC STUN 走了海外代理 (${leakCC} · ${leakedRtc.join(", ")})`
-          : `WebRTC UDP 穿透泄漏了与代理出口不同的真实公网 IP：${leakedRtc.join(", ")}`
-      };
+      out.webrtc = { level: "warn", summary: `STUN 反射候选 (${leakedRtc.join(", ")}) 与本站 HTTP 出口不同；不能据此断言使用代理、位置泄漏或实际选中的通话路径` };
     } else if (!rtcList.length || !R.ip) {
       out.webrtc = { level: "info", summary: !rtcList.length
         ? "未获得公网 ICE 候选；当前条件下无法判定 WebRTC 出口"
         : "缺少本站 HTTP 出口，无法与 WebRTC 候选对照" };
+    } else if (!comparableRtc.length) {
+      out.webrtc = { level: "info", summary: "存在公网反射候选，但缺少同地址族的本站 HTTP 出口，无法对照" };
     } else {
-      const sameNet = rtcList.every(x => cleanIp(x) === cleanIp(R.ip) || netPrefix(x) === netPrefix(R.ip));
+      const sameNet = comparableRtc.every(addr => addr === cleanIp(R.ip));
       out.webrtc = {
-        level: "ok",
+        level: sameNet ? "ok" : "info",
         summary: sameNet
-          ? `本轮观测的 WebRTC 公网候选 (${rtcList[0]}) 与本站 HTTP 出口一致`
-          : `本轮候选 (${rtcList[0]}) 与本站出口为同国同运营商；不能据此确定实际选中路径`
+          ? `本轮同族 WebRTC 公网候选 (${comparableRtc[0]}) 与本站 HTTP 出口一致`
+          : `本轮同族候选 (${comparableRtc.join(" · ")}) 与本站出口地址不同，网段或运营商线索相近；不能据此确定实际选中路径`
       };
     }
+    if (comparableRtc.length && comparableRtc.length < rtcList.length) out.webrtc.summary += "；另一地址族未核对";
+    if (R.v6mac) out.webrtc.summary += "；已测 IPv6 中另见 EUI-64 格式线索，无法确认物理网卡";
 
     // 11. dc: Multi-Source Weighted Voting Datacenter / Hosting / Proxy Check
     const hostE = R.intel?.votes?.hosting?.E || 0;
@@ -6946,8 +6946,8 @@
       switch (id) {
         case "tz": return { single: `${shortTzCity(R.tz)} 对齐` };
         case "lang": return { single: `${R.langs?.[0] || "语言"} 吻合` };
-        case "dns": return { single: `${R.dnsCC ? flagEmoji(R.dnsCC) + " " + R.dnsCC : "同国"} 无泄漏` };
-        case "split": return { single: "全局同出口" };
+        case "dns": return { single: "已测地区一致" };
+        case "split": return { single: "已测出口一致" };
         case "conn": return { single: `${uaOs} 栈吻合` };
         case "rtt": return { single: `${R.httpRtt ?? "--"}ms 正常` };
         case "dc": return { single: R.netKind === "mobile" ? "蜂窝移动/ISP" : "原生宽带/ISP" };
@@ -6965,10 +6965,10 @@
         return { left: R.langs?.[0] || "语言", op: "≠", right: R.ipCC ? `${flagEmoji(R.ipCC)} ${R.ipCC}` : "出口" };
       case "syslang":
         return { left: "系统字库/语音", op: "≠", right: R.ipCC ? `${flagEmoji(R.ipCC)} ${R.ipCC}` : "出口" };
-      case "dns":
-        return R.dnsCC && R.ipCC && R.dnsCC !== R.ipCC
-          ? { left: `DNS ${flagEmoji(R.dnsCC)}${R.dnsCC}`, op: "≠", right: `出口 ${flagEmoji(R.ipCC)}${R.ipCC}` }
-          : { single: "ECS 子网外泄" };
+      case "dns": {
+        const different = (R.dnsCountries || [R.dnsCC]).find(country => country && R.ipCC && country !== R.ipCC);
+        return different ? { left: `DNS ${flagEmoji(different)}${different}`, op: "≠", right: `出口 ${flagEmoji(R.ipCC)}${R.ipCC}` } : { single: "观测到 ECS 子网" };
+      }
       case "split": {
         const spNow = analyzeExitSplit();
         if (spNow.state === "cn-leak" && R.ipCC && R.ipCC !== "CN") {
@@ -7018,13 +7018,12 @@
         return { left: `HTTP ${R.httpRtt}ms`, op: "≫", right: `握手 ${R.srvTcpRtt}ms` };
       }
       case "webrtc": {
-        if (R.v6mac) return { single: "IPv6 暴露 MAC" };
         const lk = getLeakedWebrtcIps();
         const lkCC = lk.length ? candidateCC(lk[0]) : "";
         if (lkCC && R.ipCC && lkCC !== R.ipCC) {
           return { left: `网页 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: `STUN ${flagEmoji(lkCC)}${lkCC}` };
         }
-        return { single: "STUN 漏真实 IP" };
+        return { single: "STUN 候选与 HTTP 不同" };
       }
       case "dc":
         return { single: `${R.netKind === "dc" ? "IDC 机房段" : "共享代理"} ${R.asn || ""}`.trim() };
@@ -7678,11 +7677,7 @@
       realClientGeo = originShort;
       leakBadge = "直连漏底";
     } else if (leakedRtc.length > 0) {
-      realClientIp = leakedRtc.find(x => !x.includes(":")) || leakedRtc[0];
-      const rtcCC = candidateCC(realClientIp);
-      const rtcMeta = R.ipMeta?.[cleanIp(realClientIp)];
-      realClientGeo = [rtcCC ? `${flagEmoji(rtcCC)} ${countryName(rtcCC)}` : "", rtcMeta?.org || rtcMeta?.isp || ""].filter(Boolean).join(" · ") || originShort;
-      leakBadge = "STUN 漏底";
+      leakBadge = "STUN 候选不同";
     } else if (origin?.cc && R.ipCC && origin.cc !== R.ipCC) {
       const splitHit = Object.entries(R.exits || {}).find(([k, v]) => v?.ip && !isSafariSubprobeRelay(k, v) && v.cc === origin.cc && cleanIp(v.ip) !== cleanIp(R.ip));
       if (splitHit) {
@@ -7701,7 +7696,7 @@
     if (snapOriginEl) {
       const originPrimary = realClientIp
         ? realClientIp
-        : (!R.finished ? `${originShort} · 探测中…` : `${originShort} · 未暴露真实IP`);
+        : (!R.finished ? `${originShort} · 探测中…` : `${originShort} · 无法确定终端公网 IP`);
       snapOriginEl.textContent = originPrimary;
       snapOriginEl.title = originPrimary;
     }
@@ -7746,13 +7741,20 @@
         l1Line.setAttribute("class", "topo-flow-anim stroke-amber-500");
         l1Arrow.setAttribute("class", "stroke-amber-500");
         if (l1Sub) l1Sub.textContent = `分流至 ${spTopo?.distinctCount || 2} 个出口`;
-      } else if (R.exitsDone) {
-        l1Badge.textContent = "全局一致";
+      } else if (splitLv === "ok") {
+        l1Badge.textContent = "已测一致";
         l1Badge.className = "py-0.5 px-2 rounded-full text-[10.5px] font-semibold whitespace-nowrap bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300";
         l1Line.removeAttribute("stroke-dasharray");
         l1Line.setAttribute("class", "stroke-emerald-500");
         l1Arrow.setAttribute("class", "stroke-emerald-500");
-        if (l1Sub) l1Sub.textContent = `${Math.max(1, spTopo?.validExits?.length || 1)} 路同出口`;
+        if (l1Sub) l1Sub.textContent = `${spTopo.validExits.length} 路同出口`;
+      } else {
+        l1Badge.textContent = R.exitsDone ? "样本不足" : "待核验";
+        l1Badge.className = "py-0.5 px-2 rounded-full text-[10.5px] font-semibold whitespace-nowrap text-zinc-500";
+        l1Line.setAttribute("stroke-dasharray", "4 4");
+        l1Line.setAttribute("class", "stroke-zinc-400");
+        l1Arrow.setAttribute("class", "stroke-zinc-400");
+        if (l1Sub) l1Sub.textContent = "等待有效对照";
       }
     }
 
@@ -7828,7 +7830,7 @@
         else if (checks.tamper?.level === "bad" || checks.tamper?.level === "warn") { alertTone = checks.tamper.level; head = "检测到浏览器原型钩子或请求头不一致"; }
         else if ((R.unverifiedCnt || 0) > 0) {
           alertTone = "warn";
-          head = R.sparseCnt === R.unverifiedCnt ? "出口信誉源覆盖不足，可单项重测" : `${R.unverifiedCnt} 项网络情报探针超时，可单项重测`;
+          head = R.sparseCnt === R.unverifiedCnt ? "网络检测证据覆盖不足，可单项重测" : `${R.unverifiedCnt} 项网络检测超时或缺少有效样本，可单项重测`;
         }
 
         wowEl.className = "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs max-w-full " + (

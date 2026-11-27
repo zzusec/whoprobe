@@ -1,5 +1,11 @@
 # Changelog
 
+## [v7.9.13] - 2026-11-27
+
+- 修复 iOS / iPadOS 26 及 27+ 系统在 Safari 与第三方浏览器下被误识别为 `iOS 18.6` / `iOS 18.7` 的问题：Apple 自 iOS 26 起将 WebKit User-Agent 中的 `CPU iPhone OS` 字段永久冻结在 `18_6` / `18_7`（并在 Safari 中隐藏第 3 位补丁号如 `.1`），现双向对比 `CPU OS` 与 `Safari Version/` 三段式版本号（保留 `27.2.1` / `27.0.1` 等小版本），并对不含 `Version/` 的第三方 iOS 浏览器（`CriOS` / `FxiOS` / `EdgiOS` / `WKWebView`）通过系统 WebKit 原生特性（`::field-content`、`appearance: base-select`、`ariaNotify`、`anchor-name`）反推真实系统大版本。
+
+---
+
 ## [v7.9.12] - 2026-11-27
 
 - 修复海外手机卡在中国大陆国际漫游（S8HR 归属地路由，如新加坡 CMLink / 中国移动国际等）时被误报「国内外分流 (`海外 SG ≠ 直连 CN`)」的问题：`ipip.net` 属地解析仅匹配国家/省份字段（不再因运营商名含「中国移动/电信/联通」误标 `CN`），`iqiyi` 探针与 `analyzeExitSplit` 严格排除与主出口同 IP / 同子网 / 同运营商的回显，避免同一漫游出口自相矛盾扣分；同时补充国际漫游下基站 NITZ 自动下发驻留地时区（如 `Asia/Shanghai` vs `Asia/Singapore`）的说明与 iOS/Android 改法指引。

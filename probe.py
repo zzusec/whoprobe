@@ -3359,6 +3359,20 @@ def run_self_test() -> None:
                     assert "wp_adm=" in set_ck and "HttpOnly" in set_ck
                     adm_cookie = set_ck.split(";", 1)[0]
 
+                # 校验 iOS 26/27+ 冻结 CPU iPhone OS 18_7 与三段式版本号解析
+                assert admin_store.parse_ua_brief(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Mobile/15E148 Safari/604.1"
+                ) == ("iOS 27.2", "Safari 27.2")
+                assert admin_store.parse_ua_brief(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0.1 Mobile/15E148 Safari/604.1"
+                ) == ("iOS 27.0.1", "Safari 27.0")
+                assert admin_store.parse_ua_brief(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 27_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.80"
+                ) == ("iOS 27.2.1", "微信 8.0")
+                assert admin_store.parse_ua_brief(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_16 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6.2 Mobile/15E148 Safari/604.1"
+                ) == ("iOS 16.7.16", "Safari 16.6")
+
                 # 模拟真实访客检测与打开分享页
                 GEO_CACHE.set("36.21.224.142", {"ok": True, "countryCode": "CN", "city": "Hangzhou", "asn": "AS140486", "isp": "China Telecom"})
                 ADMIN_STORE.record_visit(

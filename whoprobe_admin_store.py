@@ -60,15 +60,30 @@ def parse_ua_brief(ua_raw: str) -> tuple[str, str]:
         if bot_kw in low and bot_kw != "micromessenger":
             return "Bot / CLI", bot_name
 
-    # OS detection
+    def _ver_tuple(raw: str) -> tuple[tuple[int, int, int], str]:
+        parts = [int(x) for x in re.split(r"[._]", raw) if x.isdigit()]
+        while len(parts) < 3:
+            parts.append(0)
+        maj, mn, pat = parts[0], parts[1], parts[2]
+        return (maj, mn, pat), (f"{maj}.{mn}.{pat}" if pat > 0 else f"{maj}.{mn}")
+
+    # OS detection (handles Apple's frozen CPU iPhone OS 18_6/18_7 in iOS/iPadOS 26+ & Mac OS X 10_15_7)
     os_lbl = "未知系统"
-    m_ios = re.search(r"(?:iPhone|iPad|iPod).*?OS (\d+[._]\d+)", ua)
+    m_ios = re.search(r"(?:iPhone|iPad|iPod)[^)]*?OS (\d+(?:[._]\d+){1,2})", ua)
+    m_ios_saf = (
+        re.search(r"\bVersion/(\d+\.\d+(?:\.\d+)?)", ua)
+        if ("Safari/" in ua and not re.search(r"\b(?:CriOS|FxiOS|EdgiOS|OPiOS|Android)\b", ua))
+        else None
+    )
     m_and = re.search(r"Android (\d+(?:\.\d+)?)", ua)
     m_mac = re.search(r"Mac OS X (\d+[._]\d+)", ua)
-    if m_ios:
+    if m_ios or ("iPad" in ua and m_ios_saf):
         dev = "iPadOS" if "iPad" in ua else "iOS"
-        os_lbl = f"{dev} {m_ios.group(1).replace('_', '.')}"
-    elif "HarmonyOS" in ua:
+        v_os = _ver_tuple(m_ios.group(1)) if m_ios else None
+        v_sf = _ver_tuple(m_ios_saf.group(1)) if m_ios_saf else None
+        ver_s = v_sf[1] if (v_sf and (not v_os or v_sf[0] > v_os[0])) else (v_os[1] if v_os else "")
+        os_lbl = f"{dev} {ver_s}".strip()
+    elif "HarmonyOS" in ua or "OpenHarmony" in ua:
         os_lbl = "HarmonyOS"
     elif m_and:
         os_lbl = f"Android {m_and.group(1)}"
@@ -77,7 +92,8 @@ def parse_ua_brief(ua_raw: str) -> tuple[str, str]:
     elif "Windows NT" in ua:
         os_lbl = "Windows"
     elif m_mac:
-        os_lbl = f"macOS {m_mac.group(1).replace('_', '.')}"
+        mac_v = m_mac.group(1).replace("_", ".")
+        os_lbl = "macOS 11+" if mac_v == "10.15" else f"macOS {mac_v}"
     elif "CrOS" in ua:
         os_lbl = "ChromeOS"
     elif "Linux" in ua:

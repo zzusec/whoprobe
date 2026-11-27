@@ -460,8 +460,34 @@
     } catch (e) { return tz || "未知时区"; }
   }
 
+  function parseVerMatch(m) {
+    if (!m) return null;
+    const maj = parseInt(m[1], 10), min = parseInt(m[2] ?? "0", 10), pat = parseInt(m[3] ?? "0", 10);
+    if (Number.isNaN(maj)) return null;
+    return {
+      tuple: [maj, Number.isNaN(min) ? 0 : min, Number.isNaN(pat) ? 0 : pat],
+      str: !Number.isNaN(pat) && pat > 0 ? `${maj}.${min}.${pat}` : m[2] != null ? `${maj}.${min}` : `${maj}`
+    };
+  }
+  function cmpVerTuple(a, b) {
+    for (let i = 0; i < 3; i++) {
+      const d = (a[i] || 0) - (b[i] || 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  }
+  function inferWebKitIosFloor() {
+    try {
+      if (typeof CSS === "undefined" || typeof CSS.supports !== "function") return "";
+      if (CSS.supports("selector(::field-content)")) return "27.2+";
+      if (CSS.supports("appearance: base-select") || (typeof Element !== "undefined" && "ariaNotify" in Element.prototype)) return "27+";
+      if (CSS.supports("anchor-name: --a")) return "26+";
+    } catch (e) {}
+    return "";
+  }
+
   function detectDevice(ua = "", hi = {}, touch = 0) {
-    let os = null, osv = "", kind = "pc", model = hi.model || "";
+    let os = null, osv = "", kind = "pc", model = hi.model || "", uaFrozenOs = "";
     const plat = hi.platform || "", pv = hi.platformVersion || "";
     if (/^(HarmonyOS|OpenHarmony)$/i.test(plat) || /OpenHarmony|HarmonyOS|ArkWeb/.test(ua)) {
       os = "HarmonyOS";
@@ -479,8 +505,22 @@
       const ipad = /iPad/.test(ua) || /Macintosh/.test(ua);
       os = ipad ? "iPadOS" : "iOS";
       kind = ipad ? "tablet" : "phone";
-      const m = ua.match(/OS (\d+)[_.](\d+)/) || ua.match(/Version\/(\d+)\.(\d+)/);
-      osv = m ? `${m[1]}.${m[2]}` : "";
+      const vOs = parseVerMatch(ua.match(/(?:iPhone|iPad|iPod|CPU)[^)]*?OS (\d+)[_.](\d+)(?:[_.](\d+))?/));
+      const vSaf = /\bSafari\//.test(ua) && !/\b(?:CriOS|FxiOS|EdgiOS|OPiOS|Android)\b/.test(ua)
+        ? parseVerMatch(ua.match(/\bVersion\/(\d+)\.(\d+)(?:\.(\d+))?/))
+        : null;
+      if (vOs && vSaf) {
+        if (cmpVerTuple(vSaf.tuple, vOs.tuple) > 0) {
+          osv = vSaf.str;
+          if (vOs.tuple[0] === 18 && vSaf.tuple[0] >= 26) uaFrozenOs = vOs.str;
+        } else {
+          osv = vOs.str;
+        }
+      } else if (vSaf) {
+        osv = vSaf.str;
+      } else if (vOs) {
+        osv = vOs.str;
+      }
       model = ipad ? "iPad" : "iPhone";
     } else if (plat === "macOS" || /Macintosh|Mac OS X/.test(ua)) {
       os = "macOS";
@@ -503,7 +543,7 @@
     } else if (plat === "Linux" || /Linux/.test(ua)) {
       os = "Linux";
     }
-    return { os, osv, kind, model };
+    return uaFrozenOs ? { os, osv, kind, model, uaFrozenOs } : { os, osv, kind, model };
   }
 
   const IN_APPS = [
@@ -538,7 +578,7 @@
       ["Samsung Internet", /SamsungBrowser\/(\d+)/],
       ["Firefox", /(?:Firefox|FxiOS)\/(\d+)/],
       ["Chrome", /(?:Chrome|CriOS)\/(\d+)/],
-      ["Safari", /Version\/(\d+).*Safari/]
+      ["Safari", /Version\/(\d+(?:\.\d+)?).*Safari/]
     ];
     for (const [name, re] of rules) {
       const m = ua.match(re);
@@ -3085,11 +3125,25 @@
     if (dev.os === "macOS" && dev.osv === "10.15" && !hi.platformVersion && R.engine && R.engine !== "V8") {
       dev.osv = "11+";
     }
+    // Apple 自 iOS/iPadOS 26 起将 WebKit UA 中的 CPU iPhone OS 冻结在 18_6 / 18_7：
+    // Safari 已由 Version/26+ / 27+ 直接还原；对不含 Version/ 的第三方浏览器 (CriOS / FxiOS / EdgiOS / WKWebView)，通过系统 WebKit 原生特性反推真实大版本。
+    const isJscOrIosWk = R.engine === "JavaScriptCore" || (!R.engine && /\bAppleWebKit\//.test(ua) && !/\b(?:Chrome|Chromium|Firefox)\//.test(ua));
+    if ((dev.os === "iOS" || dev.os === "iPadOS") && /^18\.[67](?:\.|$)/.test(dev.osv || "") && isJscOrIosWk) {
+      const wkFloor = inferWebKitIosFloor();
+      if (wkFloor) {
+        dev.uaFrozenOs = dev.osv;
+        dev.osv = wkFloor;
+      }
+    }
     R.dev = dev;
     const osLabel = [dev.os, dev.osv].filter(Boolean).join(" ") + (dev.model ? ` (${dev.model})` : "");
     R.osLabel = osLabel || navigator.platform || "未知系统";
+    const osWhy = dev.uaFrozenOs
+      ? `Apple 自 iOS 26 起将 UA 中的 CPU OS 字段冻结为 ${dev.uaFrozenOs}，且 Safari 默认隐藏第 3 位补丁号（如 .1）；已结合 WebKit Version/ 与原生引擎特性还原真实系统版本`
+      : undefined;
     setProbe("os", R.osFontMismatch ? `${R.osLabel} (${R.osFontMismatch})` : `${R.osLabel} · platform=${navigator.platform || "–"}`, {
-      tone: R.osFontMismatch ? "bad" : "neutral"
+      tone: R.osFontMismatch ? "bad" : "neutral",
+      why: osWhy
     });
 
     const br = detectBrowser(ua, hi.fullVersionList || navigator.userAgentData?.brands || []);

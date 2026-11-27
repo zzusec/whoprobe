@@ -18,6 +18,9 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
     readMqScreen: probeMqScreen,
     readFontLocal: probeFontLocal,
     readHeaders: probeHeaderForensics,
+    readHighEntropy: probeHighEntropyHints,
+    detectDevice,
+    detectBrowser,
     applyIntel: applyIntelToProbes,
     updateUdp: updateUdpRttProbe,
     setIceTiming: value => { R.stunRttMs = value; },
@@ -32,8 +35,7 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
 })();`);
 assert.notEqual(instrumented, app, "browser closure to exercise was not found");
 
-function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIntel", shared, readings = {}, state = {} } = {}) {
-  const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)";
+function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIntel", userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", cssSupports, shared, readings = {}, state = {} } = {}) {
   const navigator = Object.create({ userAgent, platform: mainPlatform, language: "en-US", languages: ["en-US"], hardwareConcurrency: 8, deviceMemory: mainMemory });
   const screen = Object.create({ width: 1440, height: 900 });
   const iframe = {
@@ -57,6 +59,7 @@ function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIn
   };
   const sandbox = {
     document, navigator, screen, window: { Worker, Blob }, Worker, Blob, URL, Intl,
+    CSS: cssSupports ? { supports: cssSupports } : undefined,
     location: { hostname: "localhost", href: "http://localhost/", search: "" },
     setTimeout() {}, // the fake worker sends its reply in a microtask; no timeout needs to fire
   };
@@ -596,4 +599,56 @@ test("reverse handshake inflation (28ms HTTP vs 317ms SYN->ClientHello), local C
   assert.equal(roamChecks.split.level, "ok");
   assert.equal(roamChecks.tz.level, "warn");
   assert.match(roamChecks.tz.summary, /漫游/);
+});
+
+test("iOS 26/27+ frozen CPU iPhone OS 18_7 UA resolves real iOS version across Safari, WeChat, and CriOS", async () => {
+  const base = harness();
+
+  // 1) Safari on iOS 27.2.1 (Apple freezes CPU iPhone OS 18_7 and emits Version/27.2)
+  const uaSaf272 = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Mobile/15E148 Safari/604.1";
+  const dev272 = base.detectDevice(uaSaf272, {}, 5);
+  assert.equal(dev272.os, "iOS");
+  assert.equal(dev272.osv, "27.2");
+  assert.equal(dev272.uaFrozenOs, "18.7");
+  assert.deepEqual({ ...base.detectBrowser(uaSaf272, []) }, { name: "Safari", v: "27.2", inApp: false });
+
+  // 2) Safari on iOS 27.0.1 (3-segment Version/27.0.1)
+  const uaSaf2701 = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0.1 Mobile/15E148 Safari/604.1";
+  assert.equal(base.detectDevice(uaSaf2701, {}, 5).osv, "27.0.1");
+
+  // 3) WeChat in-app container on iOS 27.2.1 (UIDevice reports 27_2_1, no Version/)
+  const uaWx2721 = "Mozilla/5.0 (iPhone; CPU iPhone OS 27_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.80(0x18005041)";
+  assert.equal(base.detectDevice(uaWx2721, {}, 5).osv, "27.2.1");
+
+  // 4) Extended security update iOS 16.7.16 where OS token is newer than Safari Version/16.6.2
+  const uaIos167 = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_16 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6.2 Mobile/15E148 Safari/604.1";
+  assert.equal(base.detectDevice(uaIos167, {}, 5).osv, "16.7.16");
+
+  // 5) iPadOS 27.2 desktop-class Safari (Macintosh + maxTouchPoints > 1 + Version/27.2)
+  const uaIpad272 = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Safari/605.1.15";
+  const devIpad = base.detectDevice(uaIpad272, {}, 5);
+  assert.equal(devIpad.os, "iPadOS");
+  assert.equal(devIpad.osv, "27.2");
+
+  // 6) Chrome on iOS 27.2 (CriOS omits Version/ and inherits frozen CPU iPhone OS 18_7 -> WebKit ::field-content upgrades to 27.2+)
+  const uaCriOS = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/148.0.6998.89 Mobile/15E148 Safari/604.1";
+  const hCriOS = harness({
+    mainPlatform: "iPhone",
+    userAgent: uaCriOS,
+    cssSupports: q => q === "selector(::field-content)" || q === "appearance: base-select" || q === "anchor-name: --a",
+    state: { finished: true, values: {}, engine: "JavaScriptCore" },
+  });
+  await hCriOS.readHighEntropy();
+  assert.equal(hCriOS.getState().osLabel, "iOS 27.2+ (iPhone)");
+
+  // 7) Genuine iOS 18.7 without iOS 26/27 WebKit features stays 18.7
+  const uaReal187 = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
+  const hReal187 = harness({
+    mainPlatform: "iPhone",
+    userAgent: uaReal187,
+    cssSupports: () => false,
+    state: { finished: true, values: {}, engine: "JavaScriptCore" },
+  });
+  await hReal187.readHighEntropy();
+  assert.equal(hReal187.getState().osLabel, "iOS 18.7 (iPhone)");
 });

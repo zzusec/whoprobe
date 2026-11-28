@@ -31,6 +31,8 @@ const instrumented = app.replace(/\}\)\(\);\s*$/, `
     setIceTiming: value => { R.stunRttMs = value; },
     check: evaluateAllChecks,
     score: () => { renderChecksAndScore(); return R.score; },
+    portrait: renderPortrait,
+    setScene: scene => { currentScene = scene; },
     read: id => R.values[id],
     setState: state => { R = state; },
     getState: () => R,
@@ -57,6 +59,7 @@ function harness({ mainMemory, workerMemory, iframeMemory, mainPlatform = "MacIn
   }
   const nodes = Object.fromEntries([
     "sceneBadge", "topGiveaway", "scoreSub", "issueCount", "cntBad", "cntWarn", "cntOk", "splitSummaryBadge", "tabRoutesBadge",
+    "scoreNum", "gradeBadge", "snapOrigin", "snapExit", "snapDevice", "snapGpu", "topoClientTag", "wowAlert", "wowIcon", "wowTitle", "storyProse", "personaTags",
   ].map(id => [`#${id}`, {}]));
   const document = {
     querySelector: key => nodes[key] || null, querySelectorAll: () => [], addEventListener() {},
@@ -787,4 +790,209 @@ test("iOS 26/27+ frozen CPU iPhone OS 18_7 UA resolves real iOS version across S
   });
   await hReal187.readHighEntropy();
   assert.equal(hReal187.getState().osLabel, "iOS 18.7 (iPhone)");
+});
+
+test("real IP leaks cap score to D/F in both disguise and privacy perspectives, and better disguise strictly earns higher scores", () => {
+  const cleanIntel = {
+    ok: true,
+    ipVersion: 4,
+    consensus: { country: "US", isNative: true },
+    asnProfile: { inferred: { cls: "isp" } },
+    purity: { score: 96, grade: "S", uncertain: false, coverage: { known: 46, unknown: 0, notApplicable: 2, applicable: 46, ratio: 1 } },
+    votes: { proxy: { of: 5, E: 0 }, hosting: { of: 5, E: 0.02 }, vpn: { of: 5, E: 0 }, tor: { of: 5, E: 0 } },
+    dnsbl: { total: 12, listedCount: 0 },
+    cidr: { hits: [], neighbours: { dirtyCount: 0, wholeBlockListed: [] } },
+    tls443: { probed: false },
+  };
+  const dcIntel = {
+    ...cleanIntel,
+    asnProfile: { inferred: { cls: "hosting" } },
+    purity: { score: 80, grade: "B", uncertain: false, coverage: { known: 46, unknown: 0, notApplicable: 2, applicable: 46, ratio: 1 } },
+    votes: { proxy: { of: 5, E: 0.2 }, hosting: { of: 5, E: 0.92 }, vpn: { of: 5, E: 0.1 }, tor: { of: 5, E: 0 } },
+  };
+
+  // 1) Exact broken split-tunnel proxy scenario (US IDC + Mainland CN direct leak + Shanghai TZ + zh-CN + Linux SYN on macOS + RTT gap + STUN mismatch)
+  //    MUST fail hard (F grade, <= 15) in BOTH privacy ("防追踪") and disguise ("伪装自检"), never 91/A!
+  const brokenSplitState = {
+    finished: true,
+    values: {},
+    ip: "198.51.100.129",
+    ipCC: "US",
+    ipTz: "America/Los_Angeles",
+    ipTzOff: -480,
+    tz: "Asia/Shanghai",
+    tzOff: 480,
+    dateOff: 480,
+    langs: ["zh-CN", "en-US"],
+    dnsCC: "US",
+    dnsCountries: ["US"],
+    exitsDone: true,
+    exits: {
+      ex_self: { ip: "198.51.100.129", cc: "US", label: "美国 · Los Angeles" },
+      ex_cn: { ip: "203.0.113.126", cc: "CN", label: "中国 · ZheJiang · CMNET" },
+      ex_gpt: { ip: "198.51.100.200", cc: "US", label: "美国" },
+    },
+    stack: { v4: "198.51.100.129", v6: "" },
+    latDone: true,
+    httpRtt: 258,
+    srvTcpRtt: 117,
+    rtcDone: true,
+    rtc: ["198.51.100.200"],
+    netKind: "dc",
+    asn: "AS9009",
+    org: "Example Datacenter",
+    intel: dcIntel,
+    srv: {
+      geo: { city: "Los Angeles", timezone: "America/Los_Angeles" },
+      packet: { tcp: { osFamily: "linux", osGuess: "Linux", initialTtl: 64, mtu: 1500 }, tlsClientHello: { hasGrease: true } },
+      headers: {},
+    },
+    fontRast: { engine: "CoreText", rgbRatio: 0 },
+    scrollbarW: 0,
+    cpuBench: { stealRatio: 1.1, simdOk: true },
+    hwCodecs: 4,
+    dev: { os: "macOS" },
+    osLabel: "macOS 15",
+    engine: "V8",
+    hwId: "00c7dd20abcdef12",
+  };
+  const hBroken = harness({ state: brokenSplitState });
+  hBroken.setScene("privacy");
+  const privBrokenScore = hBroken.score();
+  assert.ok(privBrokenScore <= 15, `expected privacy score <= 15 on real-IP split leak, got ${privBrokenScore}`);
+  assert.equal(hBroken.getState().grade, "F");
+  assert.match(hBroken.node("topGiveaway").textContent, /分流/);
+  hBroken.portrait();
+  assert.equal(hBroken.node("snapOrigin").textContent, "203.0.113.126");
+  assert.equal(hBroken.node("topoClientTag").textContent, "直连漏底");
+  assert.match(hBroken.node("wowTitle").textContent, /分流漏底/);
+
+  hBroken.setScene("disguise");
+  const disgBrokenScore = hBroken.score();
+  assert.ok(disgBrokenScore <= 15, `expected disguise score <= 15 on real-IP split leak, got ${disgBrokenScore}`);
+  assert.equal(hBroken.getState().grade, "F");
+
+  // 2) Single-point real-IP leak veto: even if every other setting is 100% clean residential US,
+  //    leaking real IP via forward split, reverse split, WebRTC STUN, or Mainland DNS caps score <= 55 (D/F) in BOTH scenes!
+  const perfectProxyBase = {
+    finished: true,
+    values: {},
+    ip: "198.51.100.50",
+    ipCC: "US",
+    ipTz: "America/Los_Angeles",
+    ipTzOff: -480,
+    tz: "America/Los_Angeles",
+    tzOff: -480,
+    dateOff: -480,
+    langs: ["en-US"],
+    dnsCC: "US",
+    dnsCountries: ["US"],
+    exitsDone: true,
+    exits: {
+      ex_self: { ip: "198.51.100.50", cc: "US" },
+      ex_intl: { ip: "198.51.100.50", cc: "US" },
+      ex_cf: { ip: "198.51.100.50", cc: "US" },
+    },
+    stack: { v4: "198.51.100.50", v6: "" },
+    latDone: true,
+    httpRtt: 42,
+    srvTcpRtt: 38,
+    rtcDone: true,
+    rtc: ["198.51.100.50"],
+    netKind: "isp",
+    asn: "AS7922",
+    org: "Example Residential ISP",
+    intel: cleanIntel,
+    srv: {
+      geo: { city: "Los Angeles", timezone: "America/Los_Angeles" },
+      packet: { tcp: { osFamily: "apple", osGuess: "macOS", initialTtl: 64, mtu: 1500 }, tlsClientHello: { hasGrease: true } },
+      headers: {},
+    },
+    fontRast: { engine: "CoreText", rgbRatio: 0 },
+    scrollbarW: 0,
+    cpuBench: { stealRatio: 1.1, simdOk: true },
+    hwCodecs: 4,
+    dev: { os: "macOS" },
+    osLabel: "macOS 15",
+    engine: "V8",
+    shieldKind: "brave",
+    shieldLabel: "Brave Farbling",
+    hwId: "00c7dd20abcdef12",
+  };
+
+  const singlePointLeaks = [
+    ["forward CN split", { exits: { ...perfectProxyBase.exits, ex_cn: { ip: "203.0.113.126", cc: "CN", label: "中国 · 浙江移动" } } }],
+    ["reverse CN split", {
+      ip: "203.0.113.126", ipCC: "CN", ipTz: "Asia/Shanghai", ipTzOff: 480, tz: "Asia/Shanghai", tzOff: 480, dateOff: 480, langs: ["zh-CN"], dnsCC: "CN", dnsCountries: ["CN"],
+      exits: { ex_self: { ip: "203.0.113.126", cc: "CN" }, ex_gpt: { ip: "198.51.100.50", cc: "US" } },
+      stack: { v4: "203.0.113.126", v6: "" }, rtc: ["203.0.113.126"],
+    }],
+    ["cross-country STUN leak", { rtc: ["203.0.113.126"], ipMeta: { "203.0.113.126": { cc: "CN", asn: "AS9808", hosting: false } } }],
+    ["Mainland DNS leak", { dnsCC: "CN", dnsCountries: ["CN"], dnsIp: "223.5.5.5" }],
+  ];
+  for (const [label, patch] of singlePointLeaks) {
+    const hLeak = harness({ state: { ...perfectProxyBase, ...patch } });
+    for (const scene of ["disguise", "privacy"]) {
+      hLeak.setScene(scene);
+      const sc = hLeak.score();
+      assert.ok(sc <= 55, `${label} (${scene}) must cap score <= 55, got ${sc}`);
+      assert.match(hLeak.getState().grade, /^[DF]$/, `${label} (${scene}) must cap grade to D/F, got ${hLeak.getState().grade}`);
+    }
+  }
+
+  // 3) Monotonic disguise progression: the better the disguise, the higher the score in BOTH perspectives!
+  const tier2TunIdc = {
+    ...brokenSplitState,
+    exits: { ex_self: { ip: "198.51.100.129", cc: "US" }, ex_intl: { ip: "198.51.100.129", cc: "US" }, ex_cn: { ip: "198.51.100.129", cc: "US" } },
+    rtc: ["198.51.100.129"],
+    httpRtt: 135,
+    srvTcpRtt: 117,
+  };
+  const tier3AlignedLocale = {
+    ...tier2TunIdc,
+    tz: "America/Los_Angeles",
+    tzOff: -480,
+    dateOff: -480,
+    langs: ["en-US"],
+  };
+  const tier4ResidentialChrome = {
+    ...perfectProxyBase,
+    shieldKind: "none",
+    shieldLabel: "",
+  };
+  const tier5ResidentialShielded = {
+    ...perfectProxyBase,
+    shieldKind: "brave",
+    shieldLabel: "Brave Farbling",
+  };
+
+  for (const scene of ["disguise", "privacy"]) {
+    const evalTier = st => {
+      const h = harness({ state: st });
+      h.setScene(scene);
+      return h.score();
+    };
+    const s1 = evalTier(brokenSplitState);
+    const s2 = evalTier(tier2TunIdc);
+    const s3 = evalTier(tier3AlignedLocale);
+    const s4 = evalTier(tier4ResidentialChrome);
+    const s5 = evalTier(tier5ResidentialShielded);
+    assert.ok(s1 < s2 && s2 < s3 && s3 < s4 && s4 <= s5, `expected strictly improving scores in ${scene}, got ${[s1, s2, s3, s4, s5].join(" -> ")}`);
+    if (scene === "disguise") {
+      assert.equal(s4, 100);
+      assert.equal(s5, 100);
+    } else {
+      assert.ok(s4 >= 92 && s4 < s5, `expected shielded privacy score (${s5}) > unshielded Chrome (${s4})`);
+      assert.equal(s5, 100);
+    }
+  }
+
+  // 4) Stateless ETag cache resurrection after clearing LocalStorage penalizes privacy mode as high-risk ("bad")
+  const hResurrect = harness({
+    state: { ...tier5ResidentialShielded, traceSurvived: [], etag: { seen: true, id: "deadbeef" } },
+  });
+  hResurrect.setScene("privacy");
+  const resScore = hResurrect.score();
+  assert.equal(hResurrect.check().fp.level, "bad");
+  assert.ok(resScore < 90 && hResurrect.getState().grade === "B", `expected cache resurrection to drop privacy grade to B, got ${resScore}/${hResurrect.getState().grade}`);
 });

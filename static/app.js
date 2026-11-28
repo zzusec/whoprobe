@@ -410,27 +410,28 @@
     ["sensors", "fp", "陀螺仪与加速度计噪声（需授权）", false, "移动端手动点击采集 1.5 秒运动传感器采样频率与零偏标准差硬件指纹，纯本地计算不上传。"]
   ];
 
-  // 20 Core Disguise, Deep Stack & Reputation Checks + 4 Protocol Security Checks = 24 Checks
+  // 20 Core Disguise, Deep Stack, Anti-Tracking & Reputation Checks + 4 Protocol Security Checks = 24 Checks
   const CORE_CHECKS = [
-    ["tz", "时区与出口 IP 对齐", ["disguise"]],
-    ["lang", "浏览器语言与出口对齐", ["disguise"]],
-    ["syslang", "系统底层语种（字库/语音/键位）", ["disguise"]],
+    ["tz", "时区与出口 IP 对齐", ["disguise", "privacy"]],
+    ["lang", "浏览器语言与出口对齐", ["disguise", "privacy"]],
+    ["syslang", "系统底层语种（字库/语音/键位）", ["disguise", "privacy"]],
     ["dns", "DNS 解析器与 ECS 子网泄漏", ["disguise", "privacy"]],
-    ["split", "国内外与 AI 多路分流一致性", ["disguise"]],
-    ["conn", "底层 TCP/TLS 协议栈与自报系统", ["disguise"]],
-    ["synspoof", "IP/TCP 内核时钟连续性与防改包", ["disguise"]],
-    ["reality", "出口主动回探（:443 Reality 与代理端口）", ["disguise"]],
-    ["rtt", "HTTP 耗时与传输层时序对照", ["disguise"]],
+    ["split", "国内外与 AI 多路分流一致性", ["disguise", "privacy"]],
+    ["conn", "底层 TCP/TLS 协议栈与自报系统", ["disguise", "privacy"]],
+    ["synspoof", "IP/TCP 内核时钟连续性与防改包", ["disguise", "privacy"]],
+    ["reality", "出口主动回探（:443 Reality 与代理端口）", ["disguise", "privacy"]],
+    ["rtt", "HTTP 耗时与传输层时序对照", ["disguise", "privacy"]],
     ["webrtc", "WebRTC STUN 真实 IP 与网卡 MAC 泄漏", ["disguise", "privacy"]],
-    ["dc", "出口 IP 机房 / 原生住宅多源投票", ["disguise"]],
-    ["lease", "伪家宽自报冲突、IP 租赁段与广播属性", ["disguise"]],
-    ["reputation", "欺诈风险、黑名单与同 /24 脏邻居连坐", ["disguise"]],
-    ["subpixel", "字体光栅化、原生控件与滚动条跨系统核验", ["disguise"]],
-    ["hwvirt", "虚拟化抢占抖动与显卡硬解芯片核验", ["disguise"]],
-    ["tamper", "浏览器环境篡改与谎言检测", ["disguise"]],
-    ["fpb", "浏览器平台与跨线程一致性", ["disguise"]],
-    ["ua", "UA、Client Hints 与显卡系统一致性", ["disguise"]],
-    ["bot", "自动化控制与无头浏览器痕迹", ["disguise"]]
+    ["dc", "出口 IP 机房 / 原生住宅多源投票", ["disguise", "privacy"]],
+    ["lease", "伪家宽自报冲突、IP 租赁段与广播属性", ["disguise", "privacy"]],
+    ["reputation", "欺诈风险、黑名单与同 /24 脏邻居连坐", ["disguise", "privacy"]],
+    ["subpixel", "字体光栅化、原生控件与滚动条跨系统核验", ["disguise", "privacy"]],
+    ["hwvirt", "虚拟化抢占抖动与显卡硬解芯片核验", ["disguise", "privacy"]],
+    ["tamper", "浏览器环境篡改与谎言检测", ["disguise", "privacy"]],
+    ["fpb", "浏览器平台与跨线程一致性", ["disguise", "privacy"]],
+    ["ua", "UA、Client Hints 与显卡系统一致性", ["disguise", "privacy"]],
+    ["bot", "自动化控制与无头浏览器痕迹", ["disguise", "privacy"]],
+    ["fp", "防指纹护盾与无状态留痕隔离", ["privacy"]]
   ];
 
   const PROTO_CHECKS = [
@@ -909,6 +910,17 @@
           && !isSameCarrierCandidate(v.ip)
         )
       : null;
+    const reverseCnPair = (R.ipCC === "CN" && R.ip)
+      ? enrichedExits.find(([k, v]) =>
+          k !== "ex_self"
+          && !isSafariSubprobeRelay(k, v)
+          && v.cc
+          && v.cc !== "CN"
+          && cleanIp(v.ip) !== cleanIp(R.ip)
+          && netPrefix(v.ip) !== netPrefix(R.ip)
+          && !isSameCarrierCandidate(v.ip)
+        )
+      : null;
 
     const bucketCount = list => {
       const buckets = new Set();
@@ -942,6 +954,19 @@
         state: "cn-leak",
         leakedKey: leakedCnPair[0],
         leakedExit: leakedCnPair[1],
+        countries: allCountries,
+        distinctCount: Math.max(2, bucketCount(enrichedExits), allCountries.size),
+        validExits: enrichedExits
+      };
+    }
+    if (reverseCnPair && enrichedExits.length >= 2) {
+      const allCountries = new Set(enrichedExits.map(([, v]) => v.cc).filter(Boolean));
+      return {
+        state: "cn-leak",
+        reverseCnLeak: true,
+        leakedKey: "ex_self",
+        leakedExit: { ip: cleanIp(R.ip), cc: "CN", label: [R.srv?.geo?.city, R.org].filter(Boolean).join(" · ") },
+        proxyExit: reverseCnPair[1],
         countries: allCountries,
         distinctCount: Math.max(2, bucketCount(enrichedExits), allCountries.size),
         validExits: enrichedExits
@@ -2803,13 +2828,20 @@
     }
     const leaked = getLeakedWebrtcIps();
     const directSame = comparable.every(addr => addr === cleanIp(R.ip));
+    const hardRtcLeak = leaked.some(ip => {
+      const cc = candidateCC(ip);
+      const m = R.ipMeta?.[cleanIp(ip)];
+      return (cc && R.ipCC && cc !== R.ipCC)
+        || ((R.netKind === "dc" || R.netKind === "relay") && m && m.hosting === false && m.cc)
+        || (m?.asn && R.asn && String(m.asn).replace(/^AS/i, "") !== String(R.asn).replace(/^AS/i, ""));
+    });
     const suffix = leaked.length
-      ? " (存在与本站 HTTP 出口不同的反射候选)"
+      ? (hardRtcLeak ? " (跨网/异自治系统漏出不同公网出口！)" : " (存在与本站 HTTP 出口不同的反射候选)")
       : directSame
       ? " (同族候选与本站出口一致)"
       : " (候选地址不同，网段或运营商线索相近)";
     setProbe("webrtc", pubList.join(" · ") + suffix + (comparable.length < pubList.length ? "；另一地址族未核对" : ""), {
-      tone: leaked.length ? "warn" : directSame ? "ok" : "neutral"
+      tone: hardRtcLeak ? "bad" : leaked.length ? "warn" : directSame ? "ok" : "neutral"
     });
   }
 
@@ -6184,10 +6216,10 @@
   }
 
 
-  /* ---------- 23 Cross-Layer Disguise, Deep Stack, Reputation & Protocol Checks Evaluator ---------- */
+  /* ---------- 24 Cross-Layer Disguise, Deep Stack, Anti-Tracking & Protocol Checks Evaluator ---------- */
   const CHECK_WEIGHTS = {
-    bot: 9, webrtc: 9, reality: 9, conn: 8, split: 8, reputation: 8,
-    dns: 7, tz: 7, tamper: 7, fpb: 7, synspoof: 6, ua: 6,
+    split: 9, webrtc: 9, bot: 9, reality: 9, conn: 8, reputation: 8,
+    dns: 7, tz: 7, tamper: 7, fpb: 7, fp: 7, synspoof: 6, ua: 6,
     dc: 6, rtt: 5, lease: 5, subpixel: 5, hwvirt: 4, lang: 4, syslang: 3
   };
 
@@ -6299,6 +6331,11 @@
         "大厂同款清单：BotD / PerimeterX / Akamai / TikTok 会扫描 60 余个框架全局变量（$cdc_、__nightmare、Cypress、%hammerhead%…）、Node / Electron 宿主、ActiveText 纯红与破损图 0×0 等无头渲染特征，以及 stealth 插件留下的 webdriver=undefined、伪造 window.chrome、srcdoc iframe 代理与 Proxy 错误栈——打补丁只会留下更多破绽，建议直接使用真实有界面浏览器。",
         "正常使用请直接双击打开原生浏览器；自动化测试需配合底层 C++ 级补丁或真实无注入隔离环境。"
       ],
+      fp: [
+        "隐藏真实公网 IP：开启代理客户端的「TUN 虚拟网卡 + 全局模式 (Global)」，或使用 Apple iCloud 专用代理等隐私中继，杜绝无代理直连或「绕过大陆」分流把真实家宽/蜂窝 IP 暴露给网站。",
+        "阻断跨站硬件指纹锁定：普通 Chrome / Edge 的 Canvas、WebGL 与音频特征在清 Cookie 甚至无痕模式下仍保持固定哈希；强防追踪场景可使用 Brave（内置 Farbling 动态随机加噪）、Firefox（开启 privacy.resistFingerprinting）或 Safari 高级防追踪与防指纹保护。",
+        "清理无状态回访留痕：切换身份前需同时清空「Cookie 及其他网站数据」与「缓存的图片和文件」（含 HTTP ETag 缓存），或使用全新独立浏览器配置。"
+      ],
       pq: [
         "现代 Chrome 124+ / Edge / Firefox 已默认支持 X25519MLKEM768 后量子混合密钥交换；若显示未启用，通常是中间代理节点或旧版 TLS 库降级了握手。"
       ],
@@ -6313,6 +6350,105 @@
       ]
     };
     return GUIDE[id] || ["保持真实原生系统与纯净网络出口地区自然对齐即可。"];
+  }
+
+  function detectProxyAndRealIpLeak(checks = R.checks || {}) {
+    const sys = inferSystemLangs({ os: R.dev?.os, sysFonts: R.fonts || [], voices: R.voices || [], kbd: R.kbd });
+    const origin = inferOrigin({
+      langs: R.langs || [],
+      tz: R.tz,
+      ipcc: R.ipCC,
+      sys,
+      ios: /^(iOS|iPadOS)$/.test(R.dev?.os || "")
+    });
+    const sp = R.exitsDone ? analyzeExitSplit() : null;
+    const leakedRtc = getLeakedWebrtcIps();
+
+    const forwardCnLeak = sp?.state === "cn-leak" && !sp.reverseCnLeak && sp.leakedExit?.ip ? sp.leakedExit : null;
+    const reverseCnLeak = sp?.state === "cn-leak" && sp.reverseCnLeak && R.ip
+      ? { ip: cleanIp(R.ip), cc: "CN", label: sp.leakedExit?.label || R.org || "" }
+      : null;
+    const originSplitHit = (!forwardCnLeak && !reverseCnLeak && origin?.cc && R.ipCC && origin.cc !== R.ipCC)
+      ? Object.entries(R.exits || {}).find(([k, v]) =>
+          k !== "ex_self"
+          && v?.ip
+          && !isSafariSubprobeRelay(k, v)
+          && (R.ipMeta?.[cleanIp(v.ip)]?.cc || v.cc) === origin.cc
+          && cleanIp(v.ip) !== cleanIp(R.ip)
+          && (!R.ip || netPrefix(v.ip) !== netPrefix(R.ip))
+          && !isSameCarrierCandidate(v.ip)
+        )?.[1] || null
+      : null;
+
+    const rtcLeakIp = leakedRtc.find(ip => {
+      const cc = candidateCC(ip);
+      const meta = R.ipMeta?.[cleanIp(ip)];
+      if (cc && R.ipCC && cc !== R.ipCC && !(R.ipCC === "CN" && cc !== "CN")) return true;
+      if ((R.netKind === "dc" || R.netKind === "relay") && meta && meta.hosting === false && meta.cc) return true;
+      if (forwardCnLeak?.ip && cleanIp(ip) === cleanIp(forwardCnLeak.ip)) return true;
+      return false;
+    }) || "";
+    const rtcReverseProxyIp = (!rtcLeakIp && R.ipCC === "CN")
+      ? (leakedRtc.find(ip => { const cc = candidateCC(ip); return cc && cc !== "CN"; }) || "")
+      : "";
+
+    const dnsCountries = R.dnsCountries || (R.dnsCC ? [R.dnsCC] : []);
+    const ecsHost = R.ecsIp ? cleanIp(String(R.ecsIp).split("/")[0]) : "";
+    const ecsCC = ecsHost ? candidateCC(ecsHost) : "";
+    const dnsMainlandLeak = !!(
+      R.ipCC && R.ipCC !== "CN" && (
+        (dnsCountries.length > 0 && dnsCountries.every(c => c === "CN")) ||
+        ecsCC === "CN"
+      )
+    );
+
+    const isProxySession = !!(
+      R.netKind === "dc" ||
+      R.netKind === "relay" ||
+      (R.intel?.votes?.hosting?.E || 0) >= 0.55 ||
+      (R.intel?.votes?.vpn?.E || 0) >= 0.45 ||
+      (R.intel?.votes?.proxy?.E || 0) >= 0.45 ||
+      (R.intel?.votes?.tor?.E || 0) >= 0.4 ||
+      checks.conn?.level === "bad" ||
+      checks.reality?.level === "bad" ||
+      checks.lease?.level === "bad" ||
+      checks.tz?.level === "bad" ||
+      checks.split?.level === "bad" ||
+      checks.rtt?.level === "bad" ||
+      forwardCnLeak ||
+      reverseCnLeak ||
+      originSplitHit ||
+      rtcLeakIp ||
+      rtcReverseProxyIp ||
+      dnsMainlandLeak ||
+      (origin?.cc && R.ipCC && origin.cc !== R.ipCC)
+    );
+
+    const realIpLeaked = !!(
+      forwardCnLeak ||
+      reverseCnLeak ||
+      originSplitHit ||
+      rtcLeakIp ||
+      rtcReverseProxyIp ||
+      dnsMainlandLeak
+    );
+    const directIpExposed = !!(R.ip && !isProxySession && R.netKind !== "relay");
+
+    return {
+      sys,
+      origin,
+      sp,
+      leakedRtc,
+      forwardCnLeak,
+      reverseCnLeak,
+      originSplitHit,
+      rtcLeakIp,
+      rtcReverseProxyIp,
+      dnsMainlandLeak,
+      isProxySession,
+      realIpLeaked,
+      directIpExposed
+    };
   }
 
   function evaluateAllChecks() {
@@ -6372,7 +6508,16 @@
     // 4. dns: Recursive DNS Resolver & EDNS Client Subnet vs Exit IP
     const dnsCountries = R.dnsCountries || (R.dnsCC ? [R.dnsCC] : []);
     const differentDns = dnsCountries.filter(country => ipCC && country !== ipCC);
-    if (differentDns.length) {
+    const ecsHost = R.ecsIp ? cleanIp(String(R.ecsIp).split("/")[0]) : "";
+    const ecsCC = ecsHost ? candidateCC(ecsHost) : "";
+    const cnDnsLeak = !!(ipCC && ipCC !== "CN" && ((dnsCountries.length > 0 && dnsCountries.every(c => c === "CN")) || ecsCC === "CN"));
+    if (cnDnsLeak) {
+      out.dns = {
+        level: "bad",
+        realIpLeaked: true,
+        summary: `致命 DNS 漏底：本站出口在 ${ipCountry}，但递归 DNS 解析${ecsCC === "CN" && R.ecsIp ? `与 ECS 客户端子网 (${R.ecsIp}) ` : ""}落在中国大陆 (${R.dnsIp || "CN"})！`
+      };
+    } else if (differentDns.length) {
       out.dns = { level: "warn", summary: `递归 DNS 估算地区 (${differentDns.map(countryName).join(" / ")}) 与本站出口 (${ipCountry}) 不同；不能据此判断 DNS 劫持或直连${R.ecsIp ? `。本轮报告 ECS 子网 ${R.ecsIp}` : ""}` };
     } else if (R.ecsIp) {
       out.dns = { level: "warn", summary: `本轮递归查询报告了 ECS 客户端子网 ${R.ecsIp}；不等于浏览器的完整地址或物理位置` };
@@ -6386,16 +6531,38 @@
     const ex = R.exits || {};
     const cnIp = ex.ex_cn;
     const sp = analyzeExitSplit();
+    const originEst = inferOrigin({ langs: R.langs || [], tz: R.tz, ipcc: ipCC, sys, ios: /^(iOS|iPadOS)$/.test(R.dev?.os || "") });
+    const originSplitLeak = sp.state === "multi-country" && originEst?.cc && ipCC && originEst.cc !== ipCC
+      ? sp.validExits.find(([k, v]) => k !== "ex_self" && v.cc === originEst.cc && cleanIp(v.ip) !== cleanIp(R.ip) && !isSameCarrierCandidate(v.ip))?.[1]
+      : null;
     const exitNameMap = { ex_self: "本站", ex_cn: "国内流媒体", ex_cn_alt: "国内测速", ex_intl: "国际", ex_gpt: "ChatGPT", ex_claude: "Claude", ex_cf: "CF", stack_v4: "IPv4", stack_v6: "IPv6" };
 
     if (!R.exitsDone) {
       out.split = { level: "info", summary: "正在并发比对国内外与 AI 平台分流出口…" };
     } else if (sp.state === "insufficient") {
       out.split = { level: "info", coverageSparse: true, summary: `仅有 ${sp.validExits.length} 个独立目标返回可比较的地址，无法判定多目标出口是否一致` };
+    } else if (sp.state === "cn-leak" && sp.reverseCnLeak) {
+      const pEx = sp.proxyExit || {};
+      const multiTail = sp.distinctCount >= 3 ? `（全局共分流至 ${sp.distinctCount} 个不同出口）` : "";
+      out.split = {
+        level: "bad",
+        realIpLeaked: true,
+        summary: `规则分流直接露底：海外链路走 ${countryName(pEx.cc)} 代理 (${pEx.ip || ""})，但访问本站直连暴露了真实大陆宽带 (${R.ip || ""})${multiTail}！`
+      };
     } else if (sp.state === "cn-leak" && (sp.leakedExit || cnIp)) {
       const lk = sp.leakedExit || cnIp;
       const multiTail = sp.distinctCount >= 3 ? `（全局共分流至 ${sp.distinctCount} 个不同出口）` : "";
-      out.split = { level: "bad", summary: `规则分流直接露底：本站走 ${ipCountry}，但国内/双栈链路直连暴露真实大陆宽带 (${lk.ip}${lk.label ? " · " + lk.label : ""})${multiTail}！` };
+      out.split = {
+        level: "bad",
+        realIpLeaked: true,
+        summary: `规则分流直接露底：本站走 ${ipCountry}，但国内/双栈链路直连暴露真实大陆宽带 (${lk.ip}${lk.label ? " · " + lk.label : ""})${multiTail}！`
+      };
+    } else if (originSplitLeak) {
+      out.split = {
+        level: "bad",
+        realIpLeaked: true,
+        summary: `跨国分流直接露底：本站走 ${ipCountry}，但分流探针暴露了原属地 ${countryName(originEst.cc)} 网络 (${originSplitLeak.ip})！`
+      };
     } else if (sp.state === "multi-country" || sp.state === "multi-prefix" || sp.state === "dual-stack-mismatch") {
       const detail = sp.validExits.map(([k, v]) => `${exitNameMap[k] || k}:${v.cc || "?"}`).join(" / ");
       out.split = {
@@ -6574,7 +6741,37 @@
     if ((!R.rtcDone || (rtcList.length && !R.ip)) && !R.finished) {
       out.webrtc = { level: "info", summary: "正在执行 STUN UDP 候选穿透与出口运营商同源核查…" };
     } else if (leakedRtc.length) {
-      out.webrtc = { level: "warn", summary: `STUN 反射候选 (${leakedRtc.join(", ")}) 与本站 HTTP 出口不同；不能据此断言使用代理、位置泄漏或实际选中的通话路径` };
+      const crossCountryIp = leakedRtc.find(ip => { const cc = candidateCC(ip); return cc && ipCC && cc !== ipCC; }) || "";
+      const crossCC = crossCountryIp ? candidateCC(crossCountryIp) : "";
+      const ispBypassIp = (R.netKind === "dc" || R.netKind === "relay")
+        ? (leakedRtc.find(ip => { const m = R.ipMeta?.[cleanIp(ip)]; return m && m.hosting === false && m.cc; }) || "")
+        : "";
+      const matchedCnSplit = sp.state === "cn-leak" && sp.leakedExit?.ip
+        ? (leakedRtc.find(ip => cleanIp(ip) === cleanIp(sp.leakedExit.ip)) || "")
+        : "";
+      const diffAsnIp = leakedRtc.find(ip => {
+        const m = R.ipMeta?.[cleanIp(ip)];
+        return m?.asn && R.asn && String(m.asn).replace(/^AS/i, "") !== String(R.asn).replace(/^AS/i, "");
+      }) || "";
+      if (crossCountryIp || ispBypassIp || matchedCnSplit) {
+        const reverseRtc = ipCC === "CN" && crossCC && crossCC !== "CN";
+        out.webrtc = {
+          level: "bad",
+          realIpLeaked: true,
+          summary: reverseRtc
+            ? `TCP/UDP 分流漏底：本站 HTTP 直连大陆 (${R.ip})，但 WebRTC STUN 暴露了 ${countryName(crossCC)} 代理出口 (${leakedRtc.join(", ")})！`
+            : crossCC
+            ? `WebRTC STUN 跨国漏底：本站 HTTP 出口在 ${ipCountry}，但 UDP STUN 穿透暴露了 ${countryName(crossCC)} 网络地址 (${leakedRtc.join(", ")})！`
+            : `WebRTC STUN 穿透漏底：本站 HTTP 走机房/中继出口，但 UDP STUN 暴露了宽带/移动公网地址 (${leakedRtc.join(", ")})！`
+        };
+      } else if (diffAsnIp) {
+        out.webrtc = {
+          level: "bad",
+          summary: `WebRTC STUN 出口分裂：UDP 反射候选 (${leakedRtc.join(", ")}) 与本站 HTTP 出口分属不同自治系统网络`
+        };
+      } else {
+        out.webrtc = { level: "warn", summary: `STUN 反射候选 (${leakedRtc.join(", ")}) 与本站 HTTP 出口不同；不能据此断言使用代理、位置泄漏或实际选中的通话路径` };
+      }
     } else if (!rtcList.length || !R.ip) {
       out.webrtc = { level: "info", summary: !rtcList.length
         ? "未获得公网 ICE 候选；当前条件下无法判定 WebRTC 出口"
@@ -6868,6 +7065,40 @@
     const lsCleared = !R.traceSurvived || !R.traceSurvived.includes("LocalStorage");
     R.cacheResurrected = R.finished && lsCleared && (!!R.etag?.seen || (R.traceSurvived || []).length > 0);
 
+    // 20. fp: Anti-Fingerprinting Shield, LAN Masking & Stateless Tracking Isolation (Privacy Perspective)
+    const leakSnap = detectProxyAndRealIpLeak(out);
+    const fpProtected = ["brave", "rfp", "fpp", "atfp"].includes(R.shieldKind);
+    const realLanIps = (R.lan || []).filter(x => x && !x.endsWith(".local"));
+    if (!R.hwId && !R.finished) {
+      out.fp = { level: "info", summary: "正在核验跨站硬件指纹护盾、局域网 mDNS 掩码与无状态缓存留痕…" };
+    } else if (leakSnap.realIpLeaked) {
+      out.fp = {
+        level: "bad",
+        realIpLeaked: true,
+        summary: "真实网络身份已漏底：虽使用了代理分流，但国内直连 / WebRTC STUN / DNS 通道仍向网站暴露了真实端侧网络！"
+      };
+    } else if (R.cacheResurrected) {
+      out.fp = {
+        level: "bad",
+        summary: "无状态缓存追踪命中：本地存储虽已清除，但 HTTP ETag 或深层缓存仍认出本次回访身份"
+      };
+    } else if (realLanIps.length) {
+      out.fp = {
+        level: "warn",
+        summary: `WebRTC 主机候选暴露了未由 mDNS 隐藏的局域网内网地址 (${realLanIps.join(", ")})`
+      };
+    } else if (!fpProtected) {
+      out.fp = {
+        level: "warn",
+        summary: `浏览器未启用动态防指纹随机化护盾，清 Cookie 甚至跨浏览器后物理硬件码 (#${(R.hwId || "").slice(0, 8) || "--"}) 仍固定可关联`
+      };
+    } else {
+      out.fp = {
+        level: "ok",
+        summary: `已启用 ${R.shieldLabel || "防指纹护盾"} 动态随机化保护，局域网地址已隐藏且未检出缓存复活追踪`
+      };
+    }
+
     // 4 Protocol Checks (Informational / Transport Diagnostics)
     const edgeKex = R.cfEdge?.kex || "";
     const pqOk = /MLKEM|Kyber/i.test(edgeKex);
@@ -6897,10 +7128,7 @@
   function isCheckCounted(id) {
     const def = CORE_CHECKS.find(c => c[0] === id);
     if (!def) return false;
-    if (currentScene === "privacy") {
-      return ["webrtc", "dns", "fpb", "tamper", "bot"].includes(id);
-    }
-    return def[2].includes("disguise");
+    return def[2].includes(currentScene === "privacy" ? "privacy" : "disguise");
   }
 
   const SHORT_CHECK_TITLE = {
@@ -6922,7 +7150,8 @@
     tamper: "环境篡改检测",
     fpb: "浏览器读数不一致",
     ua: "UA 与高熵头",
-    bot: "自动化痕迹"
+    bot: "自动化痕迹",
+    fp: "防指纹与留痕"
   };
 
   function shortTzCity(tz) {
@@ -6953,6 +7182,7 @@
         case "dc": return { single: R.netKind === "mobile" ? "蜂窝移动/ISP" : "原生宽带/ISP" };
         case "lease": return { single: "原生直配段" };
         case "reputation": return { single: `纯净 ${R.intel?.purity?.score ?? "--"}` };
+        case "fp": return { single: `${R.shieldLabel || "防指纹护盾"}` };
         default: return { single: "通过" };
       }
     }
@@ -6967,7 +7197,9 @@
         return { left: "系统字库/语音", op: "≠", right: R.ipCC ? `${flagEmoji(R.ipCC)} ${R.ipCC}` : "出口" };
       case "dns": {
         const different = (R.dnsCountries || [R.dnsCC]).find(country => country && R.ipCC && country !== R.ipCC);
-        return different ? { left: `DNS ${flagEmoji(different)}${different}`, op: "≠", right: `出口 ${flagEmoji(R.ipCC)}${R.ipCC}` } : { single: "观测到 ECS 子网" };
+        if (different) return { left: `DNS ${flagEmoji(different)}${different}`, op: "≠", right: `出口 ${flagEmoji(R.ipCC)}${R.ipCC}` };
+        if (res?.realIpLeaked) return { left: "ECS 🇨🇳CN", op: "≠", right: `出口 ${flagEmoji(R.ipCC)}${R.ipCC}` };
+        return { single: "观测到 ECS 子网" };
       }
       case "split": {
         const spNow = analyzeExitSplit();
@@ -6975,10 +7207,14 @@
           return { left: `海外 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: spNow.distinctCount >= 3 ? `直连 🇨🇳CN (${spNow.distinctCount}出口)` : "直连 🇨🇳CN" };
         }
         const foreignEx = R.ipCC === "CN"
-          ? spNow.validExits?.find(([, v]) => v?.cc && v.cc !== "CN")?.[1]
+          ? (spNow.proxyExit || spNow.validExits?.find(([, v]) => v?.cc && v.cc !== "CN")?.[1])
           : null;
         if (foreignEx) {
           return { left: "直连 🇨🇳CN", op: "≠", right: `代理 ${flagEmoji(foreignEx.cc)}${foreignEx.cc}` };
+        }
+        if (res?.realIpLeaked) {
+          const orig = detectProxyAndRealIpLeak(R.checks || {}).originSplitHit;
+          if (orig?.cc && R.ipCC) return { left: `出口 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: `漏底 ${flagEmoji(orig.cc)}${orig.cc}` };
         }
         return { single: `分流到 ${spNow.distinctCount || 2} 个出口` };
       }
@@ -7019,10 +7255,13 @@
       }
       case "webrtc": {
         const lk = getLeakedWebrtcIps();
-        const lkCC = lk.length ? candidateCC(lk[0]) : "";
+        const lkCross = lk.find(ip => { const cc = candidateCC(ip); return cc && R.ipCC && cc !== R.ipCC; });
+        const lkCC = lkCross ? candidateCC(lkCross) : (lk.length ? candidateCC(lk[0]) : "");
         if (lkCC && R.ipCC && lkCC !== R.ipCC) {
           return { left: `网页 ${flagEmoji(R.ipCC)}${R.ipCC}`, op: "≠", right: `STUN ${flagEmoji(lkCC)}${lkCC}` };
         }
+        if (res?.realIpLeaked) return { single: "STUN 漏真实宽带" };
+        if (res?.level === "bad") return { single: "TCP/UDP 异网分裂" };
         return { single: "STUN 候选与 HTTP 不同" };
       }
       case "dc":
@@ -7077,6 +7316,13 @@
                 : "匀速机械轨迹"
             }
           : { single: (R.inputUntrusted || 0) > 0 && !(R.botHits || []).length ? "合成输入事件" : "暴露自动化特征" };
+      case "fp": {
+        const lkFp = detectProxyAndRealIpLeak(R.checks || {});
+        if (lkFp.realIpLeaked) return { single: "代理漏出真实 IP" };
+        if (R.cacheResurrected) return { single: "ETag 缓存认出回访" };
+        if ((R.lan || []).some(x => x && !x.endsWith(".local"))) return { single: "暴露局域网内网 IP" };
+        return { single: "固定硬件指纹" };
+      }
       default:
         return { single: lv === "bad" ? "高危冲突" : "可疑" };
     }
@@ -7130,7 +7376,7 @@
       }
     };
 
-    const RETESTABLE = new Set(["tz", "lang", "syslang", "dns", "split", "conn", "synspoof", "reality", "rtt", "webrtc", "dc", "lease", "reputation", "subpixel", "hwvirt"]);
+    const RETESTABLE = new Set(["tz", "lang", "syslang", "dns", "split", "conn", "synspoof", "reality", "rtt", "webrtc", "dc", "lease", "reputation", "subpixel", "hwvirt", "fp"]);
     const TIMEOUT_SENSITIVE = new Set(["tz", "lang", "split", "reality", "rtt", "dc", "lease", "reputation"]);
 
     const allDefs = [...CORE_CHECKS, ...PROTO_CHECKS];
@@ -7159,6 +7405,7 @@
 
       const seg = $(`#segBar [data-seg="${id}"]`);
       if (seg) {
+        seg.hidden = isCore && !active;
         seg.className = R.finished
           ? `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`
           : `flex-1 h-full rounded-full transition-colors ${active ? "bg-zinc-200 dark:bg-zinc-800" : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`;
@@ -7251,13 +7498,26 @@
       return;
     }
 
+    const leakState = detectProxyAndRealIpLeak(checks);
+    if (leakState.realIpLeaked) {
+      // One-vote veto: if the website can observe the visitor's real/origin network IP via split/STUN/DNS leak,
+      // disguise has critically failed regardless of other passing browser checks.
+      penalty += 28;
+    }
+
     // Fail-closed uncertainty penalty
     if (unverifiedCnt > 0) {
       penalty += unverifiedCnt * 5.5 + (!R.ipCC ? 14 : 0);
     }
 
-    const score = Math.max(5, Math.min(100, Math.round(100 - penalty)));
+    let score = Math.max(5, Math.min(100, Math.round(100 - penalty)));
+    if (leakState.realIpLeaked) {
+      score = Math.min(score, 55);
+    }
     let grade = score >= 92 && badCnt === 0 ? "A+" : score >= 85 && badCnt === 0 ? "A" : score >= 75 ? "B" : score >= 60 ? "C" : score >= 42 ? "D" : "F";
+    if (leakState.realIpLeaked && (grade === "A+" || grade === "A" || grade === "B" || grade === "C")) {
+      grade = score >= 42 ? "D" : "F";
+    }
     if (unverifiedCnt > 0) {
       if (!R.ipCC || unverifiedCnt >= 5) {
         if (grade === "A+" || grade === "A" || grade === "B") grade = "C";
@@ -7306,12 +7566,14 @@
       );
     }
 
-    $("#scoreSub").textContent = totalIssues === 0 && unverifiedCnt > 0
+    $("#scoreSub").textContent = leakState.realIpLeaked
+      ? `真实请求网络已漏底 · 共 ${badCnt} 项高危破绽`
+      : totalIssues === 0 && unverifiedCnt > 0
       ? (onlySparse ? `${unverifiedCnt} 项情报源覆盖不足，已按不确定性降级` : `${unverifiedCnt} 项网络探针超时，已按不确定性降级`)
       : totalIssues === 0
       ? (isPriv ? "已核验项未见明显追踪暴露" : "已核验项未见明显冲突")
       : badCnt > 0
-      ? (isPriv ? `${badCnt} 项高危隐私暴露` : `${badCnt} 项高危冲突 · 易触发验证码或风控拦截`)
+      ? (isPriv ? `${badCnt} 项高危隐私暴露 · 易被还原真实环境或锁定` : `${badCnt} 项高危冲突 · 易触发验证码或风控拦截`)
       : `${warnCnt} 项细节可疑 · 无致命协议冲突`;
 
     $("#issueCount").textContent = String(totalIssues);
@@ -7338,9 +7600,9 @@
 
     // Crisp Visual Conflict Diff Rows (Zero Paragraphs!)
     const rankedIssues = CORE_CHECKS
-      .map(([id, title]) => ({ id, title, lv: checks[id]?.level }))
+      .map(([id, title]) => ({ id, title, lv: checks[id]?.level, leaked: !!checks[id]?.realIpLeaked }))
       .filter(x => isCheckCounted(x.id) && (x.lv === "bad" || x.lv === "warn"))
-      .sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1) || (CHECK_WEIGHTS[b.id] || 0) - (CHECK_WEIGHTS[a.id] || 0));
+      .sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1) || (b.leaked ? 1 : 0) - (a.leaked ? 1 : 0) || (CHECK_WEIGHTS[b.id] || 0) - (CHECK_WEIGHTS[a.id] || 0));
 
     $("#topGiveaway").textContent = rankedIssues.length ? rankedIssues[0].title : "已核验项未见明显冲突";
 
@@ -7655,19 +7917,10 @@
     const exitCity = R.srv?.geo?.city || R.ipCity || R.intel?.consensus?.city || "";
     const exitText = R.ipCC ? `${flagEmoji(R.ipCC)} ${[exitCity, countryName(R.ipCC)].filter(Boolean).join(", ")}` : (R.finished ? "出口查询超时" : "读取中…");
 
-    // 1. Update Live 3-Node Topology Diagram (Resolve Real Client-Side IP: CN Direct Leak > WebRTC STUN Leak > Split Exit > Direct Terminal IP)
-    const leakedRtc = getLeakedWebrtcIps();
-    const isProxySession = !!(
-      R.netKind === "dc" ||
-      R.netKind === "relay" ||
-      checks.conn?.level === "bad" ||
-      checks.reality?.level === "bad" ||
-      checks.lease?.level === "bad" ||
-      checks.tz?.level === "bad" ||
-      checks.split?.level === "bad" ||
-      checks.rtt?.level === "bad" ||
-      (origin?.cc && R.ipCC && origin.cc !== R.ipCC)
-    );
+    // 1. Update Live 3-Node Topology Diagram (Resolve Real Client-Side IP: CN Direct Leak > Reverse CN Split Leak > WebRTC STUN Leak > Origin Split > Direct Terminal IP)
+    const leakTopo = detectProxyAndRealIpLeak(checks);
+    const leakedRtc = leakTopo.leakedRtc;
+    const isProxySession = leakTopo.isProxySession;
 
     let realClientIp = "";
     let realClientGeo = originShort;
@@ -7676,15 +7929,26 @@
       realClientIp = R.exits.ex_cn.ip;
       realClientGeo = originShort;
       leakBadge = "直连漏底";
+    } else if (leakTopo.forwardCnLeak?.ip) {
+      realClientIp = leakTopo.forwardCnLeak.ip;
+      realClientGeo = `🇨🇳 ${(leakTopo.forwardCnLeak.label || "中国大陆").replace(/^中国\s*[·-]?\s*/, "")}`;
+      leakBadge = "直连漏底";
+    } else if (leakTopo.reverseCnLeak?.ip) {
+      realClientIp = leakTopo.reverseCnLeak.ip;
+      realClientGeo = `🇨🇳 ${[R.srv?.geo?.city, R.org].filter(Boolean).join(" · ") || "中国大陆"}`;
+      leakBadge = "直连漏底";
+    } else if (leakTopo.rtcLeakIp) {
+      realClientIp = leakTopo.rtcLeakIp;
+      const rtcCC = candidateCC(realClientIp);
+      const rtcMeta = R.ipMeta?.[cleanIp(realClientIp)];
+      realClientGeo = [rtcCC ? `${flagEmoji(rtcCC)} ${countryName(rtcCC)}` : "", rtcMeta?.org || rtcMeta?.isp || ""].filter(Boolean).join(" · ") || originShort;
+      leakBadge = "STUN 漏底";
+    } else if (leakTopo.originSplitHit?.ip) {
+      realClientIp = leakTopo.originSplitHit.ip;
+      realClientGeo = `${flagEmoji(leakTopo.originSplitHit.cc)} ${(leakTopo.originSplitHit.label || countryName(leakTopo.originSplitHit.cc)).replace(/^中国\s*[·-]?\s*/, "")}`;
+      leakBadge = "分流漏底";
     } else if (leakedRtc.length > 0) {
       leakBadge = "STUN 候选不同";
-    } else if (origin?.cc && R.ipCC && origin.cc !== R.ipCC) {
-      const splitHit = Object.entries(R.exits || {}).find(([k, v]) => v?.ip && !isSafariSubprobeRelay(k, v) && v.cc === origin.cc && cleanIp(v.ip) !== cleanIp(R.ip));
-      if (splitHit) {
-        realClientIp = splitHit[1].ip;
-        realClientGeo = `${flagEmoji(splitHit[1].cc)} ${(splitHit[1].label || countryName(splitHit[1].cc)).replace(/^中国\s*[·-]?\s*/, "")}`;
-        leakBadge = "分流漏底";
-      }
     } else if (!isProxySession && R.ip) {
       realClientIp = R.ip;
       realClientGeo = originShort;
@@ -7733,7 +7997,7 @@
         l1Line.setAttribute("stroke-dasharray", "4 4");
         l1Line.setAttribute("class", "topo-flow-anim stroke-rose-500");
         l1Arrow.setAttribute("class", "stroke-rose-500");
-        if (l1Sub) l1Sub.textContent = spTopo?.distinctCount >= 3 ? `分流至 ${spTopo.distinctCount} 个出口` : "国内直连暴露";
+        if (l1Sub) l1Sub.textContent = spTopo?.distinctCount >= 3 ? `分流至 ${spTopo.distinctCount} 个出口` : (spTopo?.reverseCnLeak ? "本站直连暴露" : "国内直连暴露");
       } else if (splitLv === "warn") {
         l1Badge.textContent = "多路分流";
         l1Badge.className = "py-0.5 px-2 rounded-full text-[10.5px] font-semibold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300";
@@ -7808,18 +8072,26 @@
         wowTitle.className = "font-semibold truncate text-zinc-900 dark:text-zinc-100";
       } else {
         let alertTone = "ok", head = "已核验项未见明显冲突";
-        if (checks.reality?.level === "bad") { alertTone = "bad"; head = "反向 :443 穿透抓获 Reality 偷证书伪装"; }
-        else if (checks.conn?.level === "bad") { alertTone = "bad"; head = `TCP 协议栈穿帮：自报 ${R.dev?.os || "端侧"}，实测 ${tcpShort || "Linux"} 代发连接`; }
-        else if (checks.synspoof?.level === "bad") { alertTone = "bad"; head = "跨包 TSval 时钟拆穿无状态 SYN 改包"; }
-        else if (checks.split?.level === "bad") { alertTone = "bad"; head = "规则分流漏底：海外走代理，国内直连暴露宽带"; }
+        if (checks.split?.level === "bad") {
+          alertTone = "bad";
+          head = leakTopo.reverseCnLeak
+            ? "规则分流漏底：海外目标走代理，但访问本站直连暴露宽带"
+            : "规则分流漏底：海外走代理，国内直连暴露宽带";
+        }
         else if (checks.webrtc?.level === "bad") {
           const lk = getLeakedWebrtcIps();
           const lkCC = lk.length ? candidateCC(lk[0]) : "";
           alertTone = "bad";
           head = (R.ipCC === "CN" && lkCC && lkCC !== "CN")
             ? "分流规则不一致：当前网页走直连，但 UDP/部分域名走了代理"
-            : "WebRTC / IPv6 穿透暴露真实底层网络";
+            : checks.webrtc.realIpLeaked
+            ? "WebRTC STUN 穿透漏底：UDP 暴露真实端侧网络"
+            : "WebRTC STUN 与 HTTP 出口分属不同网络";
         }
+        else if (checks.dns?.level === "bad") { alertTone = "bad"; head = "致命 DNS 漏底：网页走海外，但递归 DNS 落在中国大陆"; }
+        else if (checks.reality?.level === "bad") { alertTone = "bad"; head = "反向 :443 穿透抓获 Reality 偷证书伪装"; }
+        else if (checks.conn?.level === "bad") { alertTone = "bad"; head = `TCP 协议栈穿帮：自报 ${R.dev?.os || "端侧"}，实测 ${tcpShort || "Linux"} 代发连接`; }
+        else if (checks.synspoof?.level === "bad") { alertTone = "bad"; head = "跨包 TSval 时钟拆穿无状态 SYN 改包"; }
         else if (checks.lease?.level === "bad") { alertTone = "bad"; head = "PeeringDB 流量画像拆穿伪家宽机房"; }
         else if (checks.reputation?.level === "bad") { alertTone = "bad"; head = "出口命中实时黑名单或同 C 段高危污染"; }
         else if (checks.fpb?.level === "bad") { alertTone = "bad"; head = "浏览器的线程或平台读数不一致"; }
@@ -8006,7 +8278,8 @@
     if (R.intel?.asnProfile?.inferred?.conflict) tags.push(["伪家宽冲突", "bad"]);
     if (R.intel?.consensus?.isNative === false) tags.push(["跨国广播 IP", "warn"]);
     if ((R.intel?.cidr?.neighbours?.dirtyCount || 0) > 0) tags.push([`脏邻居 ${R.intel.cidr.neighbours.dirtyCount}`, "warn"]);
-    if (R.exits?.ex_cn?.cc === "CN" && R.ipCC && R.ipCC !== "CN") tags.push(["分流漏底", "bad"]);
+    if (checks.split?.realIpLeaked) tags.push(["分流漏底", "bad"]);
+    else if (checks.webrtc?.realIpLeaked) tags.push(["STUN 漏底", "bad"]);
     if (/^(macOS|iOS|iPadOS)/.test(R.dev?.os || "")) tags.push(["Apple 生态", "info"]);
     if (isHighRig) tags.push(["高算力终端", "info"]);
     if (R.multiScreen) tags.push(["多屏办公", "info"]);
@@ -8299,7 +8572,8 @@
       lease: [probeIntel],
       reputation: [probeIntel],
       subpixel: [probeDeviceAndSpecs, probeSubpixelAndEngine],
-      hwvirt: [probeGraphics, probeAsyncHardware, probeSubpixelAndEngine]
+      hwvirt: [probeGraphics, probeAsyncHardware, probeSubpixelAndEngine],
+      fp: [probeEtag, probeTraces, probeShield, probeCompositeIds]
     };
 
     const onCheckContainerClick = async e => {
@@ -8633,9 +8907,9 @@
     });
 
     const rankedIssues = CORE_CHECKS
-      .map(([id, title]) => ({ id, title: SHORT_CHECK_TITLE[id] || title, lv: checks[id]?.level }))
+      .map(([id, title]) => ({ id, title: SHORT_CHECK_TITLE[id] || title, lv: checks[id]?.level, leaked: !!checks[id]?.realIpLeaked }))
       .filter(x => isCheckCounted(x.id) && (x.lv === "bad" || x.lv === "warn"))
-      .sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1) || (CHECK_WEIGHTS[b.id] || 0) - (CHECK_WEIGHTS[a.id] || 0))
+      .sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1) || (b.leaked ? 1 : 0) - (a.leaked ? 1 : 0) || (CHECK_WEIGHTS[b.id] || 0) - (CHECK_WEIGHTS[a.id] || 0))
       .slice(0, 4)
       .map(item => ({
         id: item.id,
@@ -9070,7 +9344,10 @@
       const active = item.counted !== false;
 
       const seg = $(`#segBar [data-seg="${id}"]`);
-      if (seg) seg.className = `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`;
+      if (seg) {
+        seg.hidden = isCore && !active;
+        seg.className = `flex-1 h-full rounded-full transition-colors ${active ? st.segCls : "bg-zinc-200 opacity-40 dark:bg-zinc-800"}`;
+      }
 
       const row = CHECK_EL[id];
       if (!row) continue;
@@ -9129,7 +9406,7 @@
           <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
         </div>
         <h3 class="text-sm font-semibold text-zinc-950 dark:text-white">原始 IP 与底层硬件探针明细已隐私隔离</h3>
-        <p class="max-w-md mx-auto text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">为确保分享链接绝不泄露分享者的真实公网 IP、国内分流宽带与唯一硬件哈希，公开快照仅保留脱敏后的 23 项风控体检结论与场景评分。</p>
+        <p class="max-w-md mx-auto text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">为确保分享链接绝不泄露分享者的真实公网 IP、国内分流宽带与唯一硬件哈希，公开快照仅保留脱敏后的 24 项风控与隐私体检结论及场景评分。</p>
         <div class="pt-1">
           <a href="./" class="inline-flex items-center gap-1.5 py-2 px-4 rounded-lg text-xs font-semibold bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">实时检测我的当前环境 →</a>
         </div>

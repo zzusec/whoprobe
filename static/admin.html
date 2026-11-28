@@ -35,8 +35,11 @@
           <span id="admLastSync" class="hidden md:inline text-xs font-mono text-zinc-500 dark:text-zinc-400"></span>
         </div>
 
+        <nav id="admHostSwitch" hidden class="inline-flex flex-wrap rounded-lg bg-zinc-200/65 p-0.5 dark:bg-[#15181F] text-xs" aria-label="站点范围切换"></nav>
+
         <div class="flex items-center gap-2">
-          <a href="./" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-zinc-700 bg-white ring-1 ring-zinc-950/[0.08] hover:bg-zinc-50 transition dark:bg-[#14171C] dark:text-zinc-300 dark:ring-white/[0.08] dark:hover:bg-white/[0.05]">打开检测站 ↗</a>
+          <a id="btnOpenFront" href="./" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-zinc-700 bg-white ring-1 ring-zinc-950/[0.08] hover:bg-zinc-50 transition dark:bg-[#14171C] dark:text-zinc-300 dark:ring-white/[0.08] dark:hover:bg-white/[0.05]">打开检测站 ↗</a>
+          <a id="btnOpenSiblingIp" href="./" hidden target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="py-1.5 px-2.5 rounded-lg text-xs font-medium text-zinc-700 bg-white ring-1 ring-zinc-950/[0.08] hover:bg-zinc-50 transition dark:bg-[#14171C] dark:text-zinc-300 dark:ring-white/[0.08] dark:hover:bg-white/[0.05]">IP 查询站 ↗</a>
           <button id="btnRefreshAdm" type="button" class="py-1.5 px-3 inline-flex items-center gap-1.5 text-xs font-medium rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">
             <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
             <span>刷新数据</span>

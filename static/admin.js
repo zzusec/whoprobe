@@ -59,6 +59,7 @@
 
   const STATE = {
     tab: "visits",
+    host: "",
     day: "",
     event: "",
     q: "",
@@ -83,8 +84,46 @@
     return j?.ok ? j : null;
   }
 
+  function renderHostSwitch(hosts) {
+    const nav = $("#admHostSwitch");
+    const activeHost = STATE.host || location.host;
+    const isLocal = /^(localhost|127\.|\[::1\])/i.test(activeHost);
+    const proto = isLocal ? location.protocol : "https:";
+    const frontBtn = $("#btnOpenFront");
+    if (frontBtn) {
+      frontBtn.href = STATE.host ? `${proto}//${activeHost}/` : "./";
+      frontBtn.textContent = STATE.host ? `检测站 (${STATE.host.split(".")[1] || STATE.host}) ↗` : "打开检测站 ↗";
+    }
+    const ipBtn = $("#btnOpenSiblingIp");
+    if (ipBtn) {
+      if (/^who\./i.test(activeHost)) {
+        const ipHost = activeHost.replace(/^who\./i, "ip.");
+        ipBtn.href = `https://${ipHost}/`;
+        ipBtn.hidden = false;
+      } else {
+        ipBtn.hidden = true;
+      }
+    }
+    if (!nav) return;
+    const list = Array.isArray(hosts) ? hosts : [];
+    if (!list.length) {
+      nav.hidden = true;
+      nav.innerHTML = "";
+      return;
+    }
+    nav.hidden = false;
+    const pillCls = on => "py-1 px-2.5 rounded-md font-medium transition " + (
+      on ? "bg-white text-zinc-950 shadow-2xs dark:bg-zinc-800 dark:text-white" : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-400"
+    );
+    nav.innerHTML = [
+      `<button type="button" data-hosttab="" class="${pillCls(STATE.host === "")}">全部站点</button>`,
+      ...list.map(h => `<button type="button" data-hosttab="${esc(h.host)}" class="${pillCls(STATE.host === h.host)}">${esc(h.host)} <span class="font-mono text-[10.5px] text-zinc-400">${Number(h.pv || 0)}</span></button>`)
+    ].join("");
+  }
+
   function renderOverview(ov) {
     STATE.overview = ov;
+    renderHostSwitch(ov.hosts || []);
     const k = ov.kpis || {};
     $("#kpiTodayUv").textContent = String(k.todayUv ?? 0);
     $("#kpiTodaySub").textContent = `总访问 ${k.todayPv ?? 0} 次 · 检测 ${k.todayScans ?? 0} 次`;
@@ -175,6 +214,7 @@
     const qs = new URLSearchParams({
       day: STATE.day,
       event: STATE.event,
+      host: STATE.host,
       q: STATE.q,
       limit: String(STATE.limit),
       offset: String(STATE.offset)
@@ -212,10 +252,14 @@
           detailHtml = `<a href="./?ip=${encodeURIComponent(r.targetIp)}" target="_blank" rel="noopener" class="font-mono text-blue-600 hover:underline dark:text-blue-400">查 ${esc(r.targetIp)} ↗</a>`;
         }
 
+        const hostBadge = r.host
+          ? `<button type="button" data-selecthost="${esc(r.host)}" class="ms-1 py-0.5 px-1.5 rounded font-mono text-[10px] bg-zinc-100 text-zinc-600 hover:text-zinc-950 dark:bg-zinc-800 dark:text-zinc-300" title="筛选该域名">${esc(r.host)}</button>`
+          : "";
+
         return `
           <tr class="hover:bg-zinc-50/80 dark:hover:bg-white/[0.02] transition">
             <td class="py-2.5 px-4 font-mono whitespace-nowrap text-zinc-600 dark:text-zinc-400">${esc(fmtTime(r.ts))}</td>
-            <td class="py-2.5 px-3 whitespace-nowrap"><span class="py-0.5 px-2 rounded-md text-[11px] font-semibold ${evCls}">${esc(evLabel)}</span></td>
+            <td class="py-2.5 px-3 whitespace-nowrap"><span class="py-0.5 px-2 rounded-md text-[11px] font-semibold ${evCls}">${esc(evLabel)}</span>${hostBadge}</td>
             <td class="py-2.5 px-3 whitespace-nowrap">
               <div class="inline-flex items-center gap-1.5">
                 <button type="button" data-filterip="${esc(r.ip)}" class="font-mono font-semibold text-zinc-950 hover:text-blue-600 dark:text-white dark:hover:text-blue-400" title="筛选此 IP 的全部轨迹">${esc(r.ip)}</button>
@@ -239,7 +283,7 @@
   }
 
   async function loadShares() {
-    const qs = new URLSearchParams({ q: STATE.q, limit: "80", offset: "0" });
+    const qs = new URLSearchParams({ q: STATE.q, host: STATE.host, limit: "80", offset: "0" });
     const res = await apiGet(`./api/who/admin/shares?${qs}`);
     if (!res) return;
     $("#badgeSharesCnt").textContent = String(res.total || 0);
@@ -259,6 +303,11 @@
         ? `被打开 ${s.viewCount} 次 · 最近 ${fmtTime(s.lastViewedAt)}${s.lastViewerIp ? " (" + s.lastViewerIp + ")" : ""}`
         : "暂无人打开过此链接";
 
+      const hostTag = s.creatorHost
+        ? `<span class="py-0.5 px-1.5 rounded font-mono text-[10px] bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">${esc(s.creatorHost)}</span>`
+        : "";
+      const publicHref = s.creatorHost ? `https://${encodeURIComponent(s.creatorHost)}/r/${esc(s.id)}` : `./r/${esc(s.id)}`;
+
       return `
         <article class="surface-sheet rounded-2xl overflow-hidden flex flex-col justify-between">
           <div>
@@ -272,6 +321,7 @@
                 <div class="flex items-center gap-2">
                   <span class="font-mono font-bold text-zinc-950 dark:text-white">#${esc(s.id)}</span>
                   <span class="py-0.5 px-1.5 rounded font-mono text-[10.5px] font-bold ${gradePillCls(s.grade)}">${esc(s.score ?? "--")} 分 · ${esc(s.grade)} 级</span>
+                  ${hostTag}
                   <span class="text-zinc-400 font-mono text-[11px]">${esc(fmtTime(s.createdAt))}</span>
                 </div>
                 <span class="py-0.5 px-2 rounded-full font-mono text-[11px] font-semibold ${s.viewCount > 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"}">浏览 ${s.viewCount} 次</span>
@@ -287,7 +337,7 @@
           <div class="px-4 py-2.5 bg-zinc-50/70 border-t border-zinc-950/[0.05] dark:bg-white/[0.02] dark:border-white/[0.06] flex items-center justify-between gap-2 text-xs">
             <button type="button" data-previewshare="${esc(s.id)}" class="py-1 px-2.5 rounded-lg font-semibold bg-zinc-900 text-white hover:bg-zinc-800 transition dark:bg-zinc-100 dark:text-zinc-950">查看完整详情与访客列表</button>
             <div class="flex items-center gap-2">
-              <a href="./r/${esc(s.id)}" target="_blank" rel="noopener" class="py-1 px-2.5 rounded-lg font-medium ring-1 ring-zinc-950/[0.1] bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">打开原网页 ↗</a>
+              <a href="${publicHref}" target="_blank" rel="noopener" class="py-1 px-2.5 rounded-lg font-medium ring-1 ring-zinc-950/[0.1] bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-800 dark:ring-white/[0.1] dark:text-zinc-200">打开原网页 ↗</a>
             </div>
           </div>
         </article>
@@ -310,6 +360,7 @@
 
     tbody.innerHTML = list.map(x => {
       const geo = [x.cc ? `${flagEmoji(x.cc)} ${countryName(x.cc)}` : "", x.city, x.asn, x.org].filter(Boolean).join(" · ") || "–";
+      const hostBadges = (x.hosts || []).map(h => `<button type="button" data-selecthost="${esc(h)}" class="ms-1 py-0.5 px-1.5 rounded font-mono text-[10px] bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">${esc(h)}</button>`).join("");
       const sharesHtml = (x.shareIds || []).length
         ? x.shareIds.map(sid => `<button type="button" data-previewshare="${esc(sid)}" class="py-0.5 px-1.5 rounded font-mono text-[11px] font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300">#${esc(sid)}</button>`).join(" ")
         : `<span class="text-zinc-400">–</span>`;
@@ -319,6 +370,7 @@
           <td class="py-2.5 px-4 whitespace-nowrap">
             <button type="button" data-filterip="${esc(x.ip)}" class="font-mono font-semibold text-zinc-950 hover:text-blue-600 dark:text-white dark:hover:text-blue-400">${esc(x.ip)}</button>
             <a href="./?ip=${encodeURIComponent(x.ip)}" target="_blank" rel="noopener" class="ms-1.5 text-[10px] text-blue-600 hover:underline dark:text-blue-400">信誉↗</a>
+            ${hostBadges}
           </td>
           <td class="py-2.5 px-3 max-w-[260px] truncate text-zinc-700 dark:text-zinc-300" title="${esc(geo)}">${esc(geo)}</td>
           <td class="py-2.5 px-3 whitespace-nowrap text-zinc-600 dark:text-zinc-400">${esc([x.os, x.browser].filter(Boolean).join(" · "))}</td>
@@ -472,7 +524,9 @@
   }
 
   async function refreshAll() {
-    const ov = await apiGet("./api/who/admin/overview?days=30");
+    const qs = new URLSearchParams({ days: "30" });
+    if (STATE.host) qs.set("host", STATE.host);
+    const ov = await apiGet(`./api/who/admin/overview?${qs}`);
     if (!ov) return;
     renderOverview(ov);
     await Promise.all([
@@ -499,6 +553,14 @@
     $("#btnRefreshAdm")?.addEventListener("click", () => {
       refreshAll();
       toast("已刷新最新访问与分享数据");
+    });
+
+    $("#admHostSwitch")?.addEventListener("click", e => {
+      const btn = e.target.closest("[data-hosttab]");
+      if (!btn) return;
+      STATE.host = btn.dataset.hosttab || "";
+      STATE.offset = 0;
+      refreshAll();
     });
 
     // Tabs
@@ -584,6 +646,14 @@
       const cIp = e.target.closest("[data-copyip]");
       if (cIp) {
         copyText(cIp.dataset.copyip, `已复制 IP ${cIp.dataset.copyip}`);
+        return;
+      }
+      const selHost = e.target.closest("[data-selecthost]");
+      if (selHost) {
+        const h = selHost.dataset.selecthost || "";
+        STATE.host = STATE.host === h ? "" : h;
+        STATE.offset = 0;
+        refreshAll();
       }
     });
 

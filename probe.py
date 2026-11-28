@@ -194,6 +194,7 @@ def record_admin_visit_async(
     *,
     ip: str,
     event: str,
+    host: str = "",
     ua: str = "",
     geo: dict | None = None,
     tcp_os: str = "",
@@ -215,6 +216,7 @@ def record_admin_visit_async(
             store.record_visit(
                 ip=ip,
                 event=event,
+                host=host,
                 ua=ua,
                 geo=geo,
                 tcp_os=tcp_os,
@@ -235,6 +237,7 @@ def record_admin_visit_async(
             store.record_visit(
                 ip=ip,
                 event=event,
+                host=host,
                 ua=ua,
                 geo=g,
                 tcp_os=tcp_os,
@@ -2515,20 +2518,28 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                     days = int((qs.get("days") or ["30"])[0])
                 except ValueError:
                     days = 30
-                ov = ADMIN_STORE.get_overview(days=days, total_shares_in_store=get_share_store().count_active())
+                host_f = (qs.get("host") or [""])[0].strip()
+                req_h = admin_store.clean_host(self.headers.get("Host") or "")
+                ov = ADMIN_STORE.get_overview(
+                    days=days,
+                    total_shares_in_store=get_share_store().count_active(),
+                    host=host_f,
+                    seed_hosts=[req_h] if req_h else None,
+                )
                 self._send_json({"ok": True, **ov}, cache_control="no-store", extra_headers=adm_hdrs)
                 return
 
             if path == "/api/who/admin/visits":
                 day_f = (qs.get("day") or [""])[0].strip()
                 ev_f = (qs.get("event") or [""])[0].strip()
+                host_f = (qs.get("host") or [""])[0].strip()
                 q_f = (qs.get("q") or [""])[0].strip()
                 try:
                     lim = int((qs.get("limit") or ["80"])[0])
                     off = int((qs.get("offset") or ["0"])[0])
                 except ValueError:
                     lim, off = 80, 0
-                total, items = ADMIN_STORE.query_visits(day=day_f, event=ev_f, q=q_f, limit=lim, offset=off)
+                total, items = ADMIN_STORE.query_visits(day=day_f, event=ev_f, host=host_f, q=q_f, limit=lim, offset=off)
                 sh_cache: dict[str, dict | None] = {}
                 sstore = get_share_store()
                 for it in items:
@@ -2558,6 +2569,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
 
             if path == "/api/who/admin/shares":
                 q_f = (qs.get("q") or [""])[0].strip().lower().lstrip("#")
+                host_f = admin_store.clean_host((qs.get("host") or [""])[0])
                 try:
                     lim = int((qs.get("limit") or ["80"])[0])
                     off = int((qs.get("offset") or ["0"])[0])
@@ -2571,6 +2583,9 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                     sid = r["id"]
                     rep = r.get("report") if isinstance(r.get("report"), dict) else {}
                     meta = meta_map.get(sid, {})
+                    creator_h = meta.get("creatorHost") or ""
+                    if host_f and creator_h != host_f:
+                        continue
                     topo = rep.get("topo") if isinstance(rep.get("topo"), dict) else {}
                     vd = rep.get("verdict") if isinstance(rep.get("verdict"), dict) else {}
                     card = {
@@ -2588,6 +2603,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                         "deviceSub": topo.get("deviceSub") or "",
                         "verdictTone": vd.get("tone") or "ok",
                         "verdictText": vd.get("text") or rep.get("summary") or "",
+                        "creatorHost": creator_h,
                         "creatorIp": meta.get("creatorIp") or "",
                         "creatorCc": meta.get("creatorCc") or "",
                         "creatorCity": meta.get("creatorCity") or "",
@@ -2597,7 +2613,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                         "lastViewerIp": meta.get("lastViewerIp") or "",
                     }
                     if q_f:
-                        blob = f"{sid} {card['creatorIp']} {card['creatorCity']} {card['creatorOrg']} {card['exitRegion']} {card['verdictText']} {card['grade']} {card['lastViewerIp']}".lower()
+                        blob = f"{sid} {creator_h} {card['creatorIp']} {card['creatorCity']} {card['creatorOrg']} {card['exitRegion']} {card['verdictText']} {card['grade']} {card['lastViewerIp']}".lower()
                         if q_f not in blob:
                             continue
                     cards.append(card)
@@ -2646,6 +2662,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 record_admin_visit_async(
                     ip=self._extract_client_ip(),
                     event="share_view",
+                    host=self.headers.get("Host") or "",
                     ua=self.headers.get("User-Agent") or "",
                     share_id=sid,
                     dedup_sec=10.0,
@@ -2673,6 +2690,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                     record_admin_visit_async(
                         ip=self._extract_client_ip(),
                         event="share_view",
+                        host=self.headers.get("Host") or "",
                         ua=self.headers.get("User-Agent") or "",
                         share_id=sid,
                         dedup_sec=10.0,
@@ -2817,6 +2835,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
                 record_admin_visit_async(
                     ip=self._extract_client_ip(),
                     event="ip_query",
+                    host=self.headers.get("Host") or "",
                     ua=self.headers.get("User-Agent") or "",
                     target_ip=str(intel_payload.get("targetIp") or target_ip),
                     dedup_sec=5.0,
@@ -2900,6 +2919,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
             record_admin_visit_async(
                 ip=client_ip,
                 event="scan",
+                host=self.headers.get("Host") or "",
                 ua=self.headers.get("User-Agent") or "",
                 geo=geo,
                 tcp_os=str(tcp_info.get("osGuess") or ""),
@@ -3044,6 +3064,7 @@ class WhoProbeHandler(BaseHTTPRequestHandler):
         record_admin_visit_async(
             ip=client_ip,
             event="share_create",
+            host=self.headers.get("Host") or "",
             ua=self.headers.get("User-Agent") or "",
             share_id=sid,
             score=int(clean_rep.get("score") or 0),
@@ -3382,11 +3403,14 @@ def run_self_test() -> None:
                 ADMIN_STORE.record_visit(
                     ip="36.21.224.142",
                     event="scan",
+                    host="who.alpha.example.test",
                     ua="Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Version/18.7 Safari/604.1",
                     geo=GEO_CACHE.get("36.21.224.142"),  # type: ignore[arg-type]
                     tcp_os="macOS / iOS (Darwin)",
                     dedup_sec=0.0,
                 )
+                assert ADMIN_STORE.get_overview(days=30, host="who.alpha.example.test")["kpis"]["todayPv"] == 1
+                assert ADMIN_STORE.get_overview(days=30, host="who.beta.example.test")["kpis"]["todayPv"] == 0
                 req_view = urllib.request.Request(
                     f"http://127.0.0.1:{port}/r/{sid}",
                     headers={"X-Real-IP": "36.21.224.142", "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) Chrome/136.0.0.0"},

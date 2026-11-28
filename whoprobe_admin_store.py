@@ -29,6 +29,27 @@ from pathlib import Path
 TZ_CN = datetime.timezone(datetime.timedelta(hours=8))
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SHARE_ID_RE = re.compile(r"^[A-Za-z0-9]{6,16}$")
+HOST_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,118}[a-z0-9])?$")
+
+
+def clean_host(raw: object) -> str:
+    if raw is None:
+        return ""
+    s = str(raw).strip().lower()
+    if not s:
+        return ""
+    if s.startswith("["):
+        end = s.find("]")
+        if end > 0:
+            return ""
+    elif ":" in s:
+        s = s.split(":", 1)[0].strip()
+    s = s.rstrip(".")
+    if len(s) < 3 or len(s) > 120 or s == "localhost" or "." not in s or ".." in s:
+        return ""
+    if re.fullmatch(r"\d+(?:\.\d+){3}", s):
+        return ""
+    return s if HOST_RE.fullmatch(s) else ""
 
 
 def cn_day_str(ts: int | float | None = None) -> str:
@@ -56,6 +77,7 @@ def parse_ua_brief(ua_raw: str) -> tuple[str, str]:
         ("python-requests", "Python requests"),
         ("go-http-client", "Go HTTP 客户端"),
         ("uptimerobot", "UptimeRobot 监控"),
+        ("simbrowser-", "SimBrowser 预检"),
     ):
         if bot_kw in low and bot_kw != "micromessenger":
             return "Bot / CLI", bot_name
@@ -275,6 +297,7 @@ class AdminStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ts INTEGER NOT NULL,
                     day TEXT NOT NULL,
+                    host TEXT NOT NULL DEFAULT '',
                     ip TEXT NOT NULL,
                     event TEXT NOT NULL,
                     share_id TEXT NOT NULL DEFAULT '',
@@ -297,6 +320,7 @@ class AdminStore:
                 CREATE TABLE IF NOT EXISTS share_meta (
                     share_id TEXT PRIMARY KEY,
                     created_at INTEGER NOT NULL,
+                    creator_host TEXT NOT NULL DEFAULT '',
                     creator_ip TEXT NOT NULL DEFAULT '',
                     creator_cc TEXT NOT NULL DEFAULT '',
                     creator_city TEXT NOT NULL DEFAULT '',
@@ -311,6 +335,13 @@ class AdminStore:
                 CREATE INDEX IF NOT EXISTS idx_smeta_viewed ON share_meta(last_viewed_at DESC);
                 """
             )
+            v_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(visits)").fetchall()}
+            if "host" not in v_cols:
+                self._conn.execute("ALTER TABLE visits ADD COLUMN host TEXT NOT NULL DEFAULT ''")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_visits_host_day ON visits(host, day, ip)")
+            s_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(share_meta)").fetchall()}
+            if "creator_host" not in s_cols:
+                self._conn.execute("ALTER TABLE share_meta ADD COLUMN creator_host TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
 
     def _should_skip_dup(self, key: str, window_sec: float) -> bool:
@@ -358,6 +389,7 @@ class AdminStore:
         *,
         ip: str,
         event: str,
+        host: str = "",
         ua: str = "",
         geo: dict | None = None,
         tcp_os: str = "",
@@ -371,10 +403,11 @@ class AdminStore:
         clean_ip = _clean_str(ip, 64)
         if not clean_ip:
             return False
+        h = clean_host(host)
         ev = _clean_str(event, 24)
         sid = _clean_str(share_id, 20)
         tgt = _clean_str(target_ip, 64)
-        dedup_key = f"{clean_ip}|{ev}|{sid}|{tgt}"
+        dedup_key = f"{clean_ip}|{h}|{ev}|{sid}|{tgt}"
         if self._should_skip_dup(dedup_key, dedup_sec):
             return False
 
@@ -388,18 +421,19 @@ class AdminStore:
         with self._lock:
             self._conn.execute(
                 """
-                INSERT INTO visits (ts, day, ip, event, share_id, target_ip, cc, city, asn, org, os, browser, tcp_os, ua)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO visits (ts, day, host, ip, event, share_id, target_ip, cc, city, asn, org, os, browser, tcp_os, ua)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (now, day, clean_ip, ev, sid, tgt, cc, city, asn, org, os_lbl, br_lbl, clean_tcp_os, clean_ua),
+                (now, day, h, clean_ip, ev, sid, tgt, cc, city, asn, org, os_lbl, br_lbl, clean_tcp_os, clean_ua),
             )
             if ev == "share_create" and sid:
                 self._conn.execute(
                     """
                     INSERT INTO share_meta (
-                        share_id, created_at, creator_ip, creator_cc, creator_city, creator_org, creator_ua, score, grade
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        share_id, created_at, creator_host, creator_ip, creator_cc, creator_city, creator_org, creator_ua, score, grade
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(share_id) DO UPDATE SET
+                        creator_host=CASE WHEN excluded.creator_host != '' THEN excluded.creator_host ELSE share_meta.creator_host END,
                         creator_ip=excluded.creator_ip,
                         creator_cc=excluded.creator_cc,
                         creator_city=excluded.creator_city,
@@ -408,7 +442,7 @@ class AdminStore:
                         score=excluded.score,
                         grade=excluded.grade
                     """,
-                    (sid, now, clean_ip, cc, city, org, clean_ua, int(score or 0), _clean_str(grade, 8)),
+                    (sid, now, h, clean_ip, cc, city, org, clean_ua, int(score or 0), _clean_str(grade, 8)),
                 )
             elif ev == "share_view" and sid:
                 # Avoid counting preview bots toward human view_count if obvious bot, or count all views cleanly
@@ -427,8 +461,15 @@ class AdminStore:
             self._conn.commit()
         return True
 
-    def get_overview(self, days: int = 30, total_shares_in_store: int = 0) -> dict:
+    def get_overview(
+        self,
+        days: int = 30,
+        total_shares_in_store: int = 0,
+        host: str = "",
+        seed_hosts: list[str] | None = None,
+    ) -> dict:
         days = max(7, min(90, int(days)))
+        hf = clean_host(host)
         now_dt = datetime.datetime.now(tz=TZ_CN)
         today_str = now_dt.strftime("%Y-%m-%d")
         yesterday_str = (now_dt - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
@@ -436,9 +477,24 @@ class AdminStore:
         start_day = day_list[0]
         day7_start = (now_dt - datetime.timedelta(days=6)).strftime("%Y-%m-%d")
 
+        host_sql = " AND host = ?" if hf else ""
+        host_params = (hf,) if hf else ()
+
         with self._lock:
-            daily_rows = self._conn.execute(
+            host_rows = self._conn.execute(
                 """
+                SELECT host, COUNT(DISTINCT ip) AS uv, COUNT(*) AS pv
+                FROM visits
+                WHERE day >= ? AND host != ''
+                GROUP BY host
+                ORDER BY pv DESC
+                LIMIT 16
+                """,
+                (start_day,),
+            ).fetchall()
+
+            daily_rows = self._conn.execute(
+                f"""
                 SELECT
                     day,
                     COUNT(DISTINCT ip) AS uv,
@@ -448,38 +504,44 @@ class AdminStore:
                     SUM(CASE WHEN event = 'share_create' THEN 1 ELSE 0 END) AS share_creates,
                     SUM(CASE WHEN event = 'ip_query' THEN 1 ELSE 0 END) AS ip_queries
                 FROM visits
-                WHERE day >= ?
+                WHERE day >= ?{host_sql}
                 GROUP BY day
                 """,
-                (start_day,),
+                (start_day, *host_params),
             ).fetchall()
 
             w7 = self._conn.execute(
-                "SELECT COUNT(DISTINCT ip) AS uv, COUNT(*) AS pv FROM visits WHERE day >= ?",
-                (day7_start,),
+                f"SELECT COUNT(DISTINCT ip) AS uv, COUNT(*) AS pv FROM visits WHERE day >= ?{host_sql}",
+                (day7_start, *host_params),
             ).fetchone()
             w30 = self._conn.execute(
-                "SELECT COUNT(DISTINCT ip) AS uv, COUNT(*) AS pv FROM visits WHERE day >= ?",
-                (start_day,),
+                f"SELECT COUNT(DISTINCT ip) AS uv, COUNT(*) AS pv FROM visits WHERE day >= ?{host_sql}",
+                (start_day, *host_params),
             ).fetchone()
-            tot_views_row = self._conn.execute(
-                "SELECT COALESCE(SUM(view_count), 0) AS tv FROM share_meta"
-            ).fetchone()
+            if hf:
+                tot_views_row = self._conn.execute(
+                    "SELECT COALESCE(SUM(view_count), 0) AS tv FROM share_meta WHERE creator_host = ?",
+                    (hf,),
+                ).fetchone()
+            else:
+                tot_views_row = self._conn.execute(
+                    "SELECT COALESCE(SUM(view_count), 0) AS tv FROM share_meta"
+                ).fetchone()
 
             top_cc_rows = self._conn.execute(
-                """
+                f"""
                 SELECT cc, COUNT(DISTINCT ip) AS uv, COUNT(*) AS pv
                 FROM visits
-                WHERE day >= ? AND cc != ''
+                WHERE day >= ? AND cc != ''{host_sql}
                 GROUP BY cc
                 ORDER BY uv DESC, pv DESC
                 LIMIT 10
                 """,
-                (start_day,),
+                (start_day, *host_params),
             ).fetchall()
 
             top_ip_rows = self._conn.execute(
-                """
+                f"""
                 SELECT
                     ip,
                     MAX(cc) AS cc,
@@ -494,15 +556,30 @@ class AdminStore:
                     SUM(CASE WHEN event = 'share_create' THEN 1 ELSE 0 END) AS share_creates,
                     MIN(ts) AS first_seen,
                     MAX(ts) AS last_seen,
-                    GROUP_CONCAT(DISTINCT CASE WHEN share_id != '' THEN share_id END) AS share_ids
+                    GROUP_CONCAT(DISTINCT CASE WHEN share_id != '' THEN share_id END) AS share_ids,
+                    GROUP_CONCAT(DISTINCT CASE WHEN host != '' THEN host END) AS hosts
                 FROM visits
-                WHERE day >= ?
+                WHERE day >= ?{host_sql}
                 GROUP BY ip
                 ORDER BY last_seen DESC
                 LIMIT 50
                 """,
-                (start_day,),
+                (start_day, *host_params),
             ).fetchall()
+
+        host_map = {r["host"]: {"host": r["host"], "uv": int(r["uv"]), "pv": int(r["pv"])} for r in host_rows}
+        ordered_hosts: list[dict] = []
+        seen_hosts: set[str] = set()
+        for raw_sh in (seed_hosts or []):
+            sh = clean_host(raw_sh)
+            if sh and sh not in seen_hosts:
+                seen_hosts.add(sh)
+                ordered_hosts.append(host_map.get(sh, {"host": sh, "uv": 0, "pv": 0}))
+        for r in host_rows:
+            h_name = r["host"]
+            if h_name not in seen_hosts:
+                seen_hosts.add(h_name)
+                ordered_hosts.append(host_map[h_name])
 
         by_day = {r["day"]: dict(r) for r in daily_rows}
         daily_series = []
@@ -524,6 +601,7 @@ class AdminStore:
         top_ips = []
         for r in top_ip_rows:
             sids = [x for x in (r["share_ids"] or "").split(",") if x][:8]
+            hlist = [x for x in (r["hosts"] or "").split(",") if x][:6]
             top_ips.append({
                 "ip": r["ip"],
                 "cc": r["cc"] or "",
@@ -539,10 +617,13 @@ class AdminStore:
                 "firstSeen": int(r["first_seen"] or 0),
                 "lastSeen": int(r["last_seen"] or 0),
                 "shareIds": sids,
+                "hosts": hlist,
             })
 
         return {
             "today": today_str,
+            "activeHost": hf,
+            "hosts": ordered_hosts,
             "kpis": {
                 "todayUv": int(td.get("uv") or 0),
                 "todayPv": int(td.get("pv") or 0),
@@ -570,6 +651,7 @@ class AdminStore:
         *,
         day: str = "",
         event: str = "",
+        host: str = "",
         q: str = "",
         limit: int = 80,
         offset: int = 0,
@@ -579,6 +661,10 @@ class AdminStore:
         clauses: list[str] = []
         params: list[object] = []
 
+        hf = clean_host(host)
+        if hf:
+            clauses.append("host = ?")
+            params.append(hf)
         if day and DAY_RE.match(day):
             clauses.append("day = ?")
             params.append(day)
@@ -589,9 +675,9 @@ class AdminStore:
         if q_clean:
             like = f"%{q_clean}%"
             clauses.append(
-                "(ip LIKE ? OR share_id LIKE ? OR target_ip LIKE ? OR cc LIKE ? OR city LIKE ? OR asn LIKE ? OR org LIKE ? OR os LIKE ? OR browser LIKE ?)"
+                "(host LIKE ? OR ip LIKE ? OR share_id LIKE ? OR target_ip LIKE ? OR cc LIKE ? OR city LIKE ? OR asn LIKE ? OR org LIKE ? OR os LIKE ? OR browser LIKE ?)"
             )
-            params.extend([like] * 9)
+            params.extend([like] * 10)
 
         where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         with self._lock:
@@ -600,7 +686,7 @@ class AdminStore:
             ).fetchone()
             rows = self._conn.execute(
                 f"""
-                SELECT id, ts, day, ip, event, share_id, target_ip, cc, city, asn, org, os, browser, tcp_os, ua
+                SELECT id, ts, day, host, ip, event, share_id, target_ip, cc, city, asn, org, os, browser, tcp_os, ua
                 FROM visits
                 {where_sql}
                 ORDER BY id DESC
@@ -614,6 +700,7 @@ class AdminStore:
                 "id": int(r["id"]),
                 "ts": int(r["ts"]),
                 "day": r["day"],
+                "host": r["host"],
                 "ip": r["ip"],
                 "event": r["event"],
                 "shareId": r["share_id"],
@@ -644,6 +731,7 @@ class AdminStore:
         out: dict[str, dict] = {}
         for r in rows:
             out[r["share_id"]] = {
+                "creatorHost": r["creator_host"],
                 "creatorIp": r["creator_ip"],
                 "creatorCc": r["creator_cc"],
                 "creatorCity": r["creator_city"],
@@ -663,7 +751,7 @@ class AdminStore:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT id, ts, day, ip, event, cc, city, asn, org, os, browser, ua
+                SELECT id, ts, day, host, ip, event, cc, city, asn, org, os, browser, ua
                 FROM visits
                 WHERE share_id = ?
                 ORDER BY id DESC
@@ -676,6 +764,7 @@ class AdminStore:
                 "id": int(r["id"]),
                 "ts": int(r["ts"]),
                 "day": r["day"],
+                "host": r["host"],
                 "ip": r["ip"],
                 "event": r["event"],
                 "cc": r["cc"],
